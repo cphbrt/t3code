@@ -75,6 +75,8 @@ The canonical setup is:
 
 This path has been verified end to end for pairing, environment discovery, authentication, WebSocket reconnection, transcript loading, new turns, streamed command and file-edit activity, and the mobile terminal. The iOS client may intentionally present activity differently from CPH Code—for example, collapsing tool calls or omitting CPH's inline diff treatment. Preserve functional and wire-protocol compatibility, not UI parity. Treat changes to shared contracts, environment discovery, pairing/auth, HTTP routes, WebSocket behavior, or transcript/activity payloads as affecting this path and keep them backward-compatible with the released iOS app. T3 Connect may be explored later, but it is not the canonical remote path today.
 
+CPH Code treats the transcript as a durable, inspectable record. Keep meaningful agent activity—including commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. Coalesce provider lifecycle churn, and let users collapse large details explicitly, but do not automatically hide semantic activity behind summaries or elapsed-time rows.
+
 When an upstream T3 Code default conflicts with this smaller scope, prefer the fork's goals unless Chris explicitly asks otherwise.
 
 ## Upstream synchronization

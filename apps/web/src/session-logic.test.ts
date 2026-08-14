@@ -928,6 +928,67 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.command).toBe("bun run lint");
   });
 
+  it("does not repeat a truncated wrapped command as its detail", () => {
+    const wrappedCommand = '/bin/zsh -lc "find . -maxdepth 1 -type f"';
+    for (const detail of [wrappedCommand, '/bin/zsh -lc "find . -maxdepth 1…']) {
+      const activities: OrchestrationThreadActivity[] = [
+        makeActivity({
+          id: "wrapped-command",
+          kind: "tool.completed",
+          summary: "Ran command",
+          payload: {
+            itemType: "command_execution",
+            detail,
+            data: {
+              item: { command: wrappedCommand },
+              output: "./README.md",
+            },
+          },
+        }),
+      ];
+
+      const [entry] = deriveWorkLogEntries(activities);
+      expect(entry).toMatchObject({
+        command: "find . -maxdepth 1 -type f",
+        rawCommand: wrappedCommand,
+        output: "./README.md",
+      });
+      expect(entry?.detail).toBeUndefined();
+    }
+  });
+
+  it("preserves command output when collapsing tool lifecycle entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-started",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.started",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: "tool-command-1", command: "bun test" },
+        },
+      }),
+      makeActivity({
+        id: "command-completed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: "tool-command-1", output: "12 tests passed" },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      id: "command-completed",
+      output: "12 tests passed",
+    });
+  });
+
   it("extracts failed tool lifecycle status from item payloads", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

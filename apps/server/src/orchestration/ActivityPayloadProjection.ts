@@ -252,6 +252,22 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   return projectedData;
 }
 
+const COMMAND_OUTPUT_MAX_CHARS = 1_000;
+
+function projectCommandOutputText(data: Record<string, unknown>): string | undefined {
+  const text =
+    asTrimmedString(asRecord(data.item)?.aggregatedOutput) ??
+    extractMcpResultText(data.result) ??
+    asTrimmedString(asRecord(data.rawOutput)?.stdout) ??
+    asTrimmedString(asRecord(data.rawOutput)?.content);
+  if (!text) {
+    return undefined;
+  }
+  return text.length <= COMMAND_OUTPUT_MAX_CHARS
+    ? text
+    : `${text.slice(0, COMMAND_OUTPUT_MAX_CHARS)}\n… [output truncated]`;
+}
+
 function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
   const direct = asTrimmedString(value);
   if (direct) {
@@ -360,6 +376,13 @@ export function projectActivityPayload(
   const rawOutput = projectRawOutput(data.rawOutput) ?? projectAcpContent(data.content);
   if (rawOutput) {
     projectedData.rawOutput = rawOutput;
+  }
+
+  if (payload.itemType === "command_execution") {
+    const output = projectCommandOutputText(data);
+    if (output) {
+      projectedData.output = output;
+    }
   }
 
   return {
