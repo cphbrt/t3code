@@ -3,13 +3,13 @@
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
 T3 Code is a server runtime that owns agent sessions, workspaces, and version control, plus clients
-(web, desktop, mobile) that talk to it over one authenticated Effect RPC WebSocket. The server is the
+(web and desktop) that talk to it over one authenticated Effect RPC WebSocket. The server is the
 execution boundary: every provider process, terminal, git operation, and filesystem read happens
 there, never in the client.
 
 ```
 ┌────────────────────────────────────────────────┐
-│ Clients: apps/web, apps/desktop, apps/mobile   │
+│ Clients: apps/web, apps/desktop                │
 │ shared runtime: packages/client-runtime        │
 │  connection supervisor, RPC session, Atom state│
 └──────────────────┬─────────────────────────────┘
@@ -50,12 +50,9 @@ to the connection supervisor.
 ## Shared client runtime
 
 `packages/client-runtime` holds every non-visual client concern: connection lifecycle,
-authentication, RPC, cached environment data, and domain state as Atom factories. Web and mobile
-compose it the same way (`apps/web/src/connection/runtime.ts` and
-`apps/mobile/src/connection/runtime.ts` mirror each other, differing only in platform-specific
-background-activity layers) and differ beyond that only in the platform layer they supply and the
-UI they build on top. React components never construct transports, retry loops,
-or RPC clients. See [connection-runtime.md](./connection-runtime.md).
+authentication, RPC, cached environment data, and domain state as Atom factories. The web client
+composes it at its application root; the desktop shell loads that web client. React components never
+construct transports, retry loops, or RPC clients. See [connection-runtime.md](./connection-runtime.md).
 
 ## Orchestration is event-sourced
 
