@@ -70,6 +70,11 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.backendCwd, "/repo");
       assert.equal(environment.appUserModelId, "com.t3tools.t3code.dev");
       assert.equal(environment.linuxWmClass, "t3code-dev");
+      assert.deepEqual(environment.branding, {
+        baseName: "CPH Code",
+        stageLabel: "Dev",
+        displayName: "CPH Code (Dev)",
+      });
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),
         Option.some("http://localhost:5173/"),
@@ -96,6 +101,25 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
       assert.equal(environment.browserArtifactsDir, "/tmp/t3/userdata/browser-artifacts");
       assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
+      assert.deepEqual(environment.branding, {
+        baseName: "CPH Code",
+        stageLabel: "Alpha",
+        displayName: "CPH Code",
+      });
+    }),
+  );
+
+  it.effect("keeps nightly builds visibly distinct", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        appVersion: "0.0.22-nightly.20260813.1",
+      });
+
+      assert.deepEqual(environment.branding, {
+        baseName: "CPH Code",
+        stageLabel: "Nightly",
+        displayName: "CPH Code (Nightly)",
+      });
     }),
   );
 

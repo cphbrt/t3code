@@ -36,3 +36,8 @@ node_modules/
 *.log
 .env*
 !.env.example
+
+# Local agent instruction overrides
+CLAUDE.local.md
+.claude/CLAUDE.local.md
+AGENTS.override.md
