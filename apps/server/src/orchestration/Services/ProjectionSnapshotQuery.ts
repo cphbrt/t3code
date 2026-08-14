@@ -8,6 +8,7 @@
  */
 import type {
   CheckpointRef,
+  EventId,
   OrchestrationCheckpointSummary,
   OrchestrationProject,
   OrchestrationProjectShell,
@@ -21,6 +22,7 @@ import type {
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  ToolFileChange,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -169,6 +171,12 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /** Read applied file patches for one persisted tool activity. */
+  readonly getActivityFileChanges?: (
+    threadId: ThreadId,
+    activityId: EventId,
+  ) => Effect.Effect<Option.Option<ReadonlyArray<ToolFileChange>>, ProjectionRepositoryError>;
 
   /**
    * Read a single active thread detail together with the projection snapshot

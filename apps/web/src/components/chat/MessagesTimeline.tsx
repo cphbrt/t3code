@@ -1,10 +1,13 @@
 import {
+  EventId,
   type EnvironmentId,
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type TurnId,
+  type ToolFileChange,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
@@ -29,6 +32,8 @@ import {
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { FileDiff } from "@pierre/diffs/react";
 import {
   deriveTimelineEntries,
@@ -107,6 +112,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import { activityFileChangesEnvironment } from "~/state/threads";
 
 import {
   buildInlineTerminalContextText,
@@ -2068,14 +2074,97 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
 });
 
+function buildToolFileRenderablePatch(
+  change: ToolFileChange,
+  workspaceRoot: string | undefined,
+): string {
+  const diff = change.diff.trim();
+  if (diff.startsWith("diff --git ")) {
+    return diff;
+  }
+  const currentPath = formatWorkspaceRelativePath(change.path, workspaceRoot).replaceAll("\\", "/");
+  const previousPath = formatWorkspaceRelativePath(
+    change.previousPath ?? change.path,
+    workspaceRoot,
+  ).replaceAll("\\", "/");
+  const oldHeader = change.kind === "add" ? "/dev/null" : `a/${previousPath}`;
+  const newHeader = change.kind === "delete" ? "/dev/null" : `b/${currentPath}`;
+  return [
+    `diff --git a/${previousPath} b/${currentPath}`,
+    `--- ${oldHeader}`,
+    `+++ ${newHeader}`,
+    diff,
+  ].join("\n");
+}
+
+const ToolFileChangesBody = memo(function ToolFileChangesBody(props: {
+  environmentId: EnvironmentId;
+  threadId: ScopedThreadRef["threadId"];
+  activityId: string;
+  resolvedTheme: "light" | "dark";
+  workspaceRoot: string | undefined;
+}) {
+  const result = useAtomValue(
+    activityFileChangesEnvironment.detail({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.threadId,
+        activityId: EventId.make(props.activityId),
+      },
+    }),
+  );
+  const response = Option.getOrNull(AsyncResult.value(result));
+  if (response === null) {
+    return (
+      <p className="py-1 font-mono text-secondary-label text-[11px]">
+        {result._tag === "Failure" ? "Diff unavailable." : "Loading diff…"}
+      </p>
+    );
+  }
+  if (response.changes.length === 0) {
+    return <p className="py-1 text-secondary-label text-[11px]">No applied patch available.</p>;
+  }
+
+  return response.changes.map((change, index) => {
+    const changeKey = `${change.kind}:${change.previousPath ?? ""}:${change.path}`;
+    const renderable = getRenderablePatch(
+      buildToolFileRenderablePatch(change, props.workspaceRoot),
+      `tool-file-change:${props.activityId}:${index}`,
+    );
+    if (renderable?.kind === "files") {
+      return renderable.files.map((fileDiff) => (
+        <FileDiff
+          key={`${changeKey}:${resolveFileDiffPath(fileDiff)}`}
+          fileDiff={fileDiff}
+          options={{
+            collapsed: false,
+            diffStyle: "unified",
+            theme: resolveDiffThemeName(props.resolvedTheme),
+          }}
+        />
+      ));
+    }
+    return renderable?.kind === "raw" ? (
+      <pre
+        key={changeKey}
+        className="cursor-text whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed select-text"
+      >
+        {renderable.text}
+      </pre>
+    ) : null;
+  });
+});
+
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
 }) {
   const { workEntry, workspaceRoot } = props;
+  const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
   const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
-  const expanded = expandedOverride ?? workLogEntryIsCommand(workEntry);
+  const expanded =
+    expandedOverride ?? (workLogEntryIsCommand(workEntry) || workEntry.itemType === "file_change");
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
   const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
@@ -2089,7 +2178,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null;
+  const canExpand = expandedBody !== null || workEntry.hasFileDiff === true;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -2219,10 +2308,18 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           onClick={stopRowToggle}
           onPointerDown={stopRowToggle}
         >
-          {expandedBody.content ? (
+          {workEntry.hasFileDiff && ctx.threadRef ? (
+            <ToolFileChangesBody
+              environmentId={ctx.activeThreadEnvironmentId}
+              threadId={ctx.threadRef.threadId}
+              activityId={workEntry.id}
+              resolvedTheme={ctx.resolvedTheme}
+              workspaceRoot={ctx.workspaceRoot}
+            />
+          ) : expandedBody.content ? (
             <pre className={toolCallExpandedBodyClassName}>{expandedBody.content}</pre>
           ) : null}
-          {expandedBody.content && expandedBody.output ? (
+          {!workEntry.hasFileDiff && expandedBody.content && expandedBody.output ? (
             <hr className="my-2 border-0 border-t border-border/45" />
           ) : null}
           {expandedBody.output ? (

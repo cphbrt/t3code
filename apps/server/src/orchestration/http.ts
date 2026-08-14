@@ -89,6 +89,27 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "activityFileChanges",
+        Effect.fn("environment.orchestration.activityFileChanges")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const changes = yield* (
+            projectionSnapshotQuery.getActivityFileChanges?.(
+              args.params.threadId,
+              args.params.activityId,
+            ) ?? Effect.succeed(Option.none())
+          ).pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_activity_file_changes_failed", cause),
+            ),
+          );
+          if (Option.isNone(changes)) {
+            return yield* failEnvironmentNotFound("activity_not_found");
+          }
+          return { changes: changes.value };
+        }),
+      )
+      .handle(
         "dispatch",
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
