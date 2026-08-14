@@ -29,6 +29,7 @@ export default defineConfig({
       ".reference",
       ".repos/**",
       ".alchemy",
+      ".plans",
       "dist",
       "dist-electron",
       "node_modules",

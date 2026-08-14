@@ -34,13 +34,6 @@ the task commands.
 - `packages/effect-codex-app-server` (`effect-codex-app-server`): Effect client for the
   `codex app-server` JSON-RPC protocol.
 
-## infra
-
-- `infra/relay` (`t3code-relay`): the hosted T3 Connect relay, deployed with Alchemy. Handles
-  environment discovery, cloud-side records, and mobile notifications. It is not in the hot path;
-  after connect, client traffic goes directly to the environment. See
-  [t3-connect.md](./t3-connect.md).
-
 ## Other top-level directories
 
 - `scripts/`: workspace tooling run through `vp run`. Dev runner, desktop artifact builds, release
