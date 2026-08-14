@@ -32,7 +32,7 @@ function makeElectronAppLayer(
 
   return Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
-    name: Effect.succeed("T3 Code"),
+    name: Effect.succeed("CPH Code"),
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
     quit,
@@ -49,7 +49,6 @@ function makeElectronAppLayer(
     setDockIcon: () => Effect.void,
     appendCommandLineSwitch: () => Effect.void,
     removeCommandLineSwitch: () => Effect.void,
-    onBeforeQuitForUpdate: (listener) => registerListener("before-quit-for-update", listener),
     on: (eventName, listener) =>
       registerListener(eventName, listener as unknown as (...args: readonly unknown[]) => void),
   } satisfies ElectronApp.ElectronApp["Service"]);
@@ -88,7 +87,7 @@ function makeDesktopWindowLayer(
     revealOrCreateMain: Effect.die("unexpected window creation"),
     activate: input.activate ?? Effect.void,
     createMainIfBackendReady: Effect.void,
-    showConnectingSplash: Effect.void,
+    showStartupSplash: Effect.void,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: input.flushMainWindowBounds ?? Effect.void,
@@ -99,51 +98,6 @@ function makeDesktopWindowLayer(
 }
 
 describe("DesktopLifecycle", () => {
-  for (const platform of ["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>) {
-    it.effect(`lets the updater's quit event proceed on ${platform}`, () => {
-      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
-      const environmentLayer = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
-        platform,
-        isDevelopment: false,
-      } as DesktopEnvironment.DesktopEnvironment["Service"]);
-
-      const layer = DesktopLifecycle.layer.pipe(
-        Layer.provideMerge(makeElectronAppLayer(appListeners)),
-        Layer.provideMerge(electronThemeLayer),
-        Layer.provideMerge(makeElectronWindowLayer()),
-        Layer.provideMerge(makeDesktopWindowLayer()),
-        Layer.provideMerge(environmentLayer),
-        Layer.provideMerge(DesktopShutdown.layer),
-        Layer.provideMerge(DesktopState.layer),
-      );
-
-      return Effect.scoped(
-        Effect.gen(function* () {
-          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-          yield* lifecycle.register;
-
-          appListeners.get("before-quit-for-update")?.();
-
-          let prevented = false;
-          const event = {
-            preventDefault: () => {
-              prevented = true;
-            },
-          } as Electron.Event;
-          appListeners.get("before-quit")?.(event);
-
-          assert.isFalse(
-            prevented,
-            "cancelling this event prevents the updater from completing its relaunch",
-          );
-
-          const state = yield* DesktopState.DesktopState;
-          assert.isTrue(yield* Ref.get(state.quitting));
-        }),
-      ).pipe(Effect.provide(layer));
-    });
-  }
-
   it.effect("destroys windows before waiting for backend shutdown", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
