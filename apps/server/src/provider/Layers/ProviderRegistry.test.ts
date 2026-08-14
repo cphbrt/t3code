@@ -34,7 +34,6 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
 import {
@@ -564,8 +563,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it("preserves previously discovered provider models when a refresh returns none", () => {
         const previousProvider = {
-          instanceId: ProviderInstanceId.make("cursor"),
-          driver: ProviderDriverKind.make("cursor"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
           status: "ready",
           enabled: true,
           installed: true,
@@ -602,180 +601,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
-      it("drops stale OpenCode models missing from a successful refresh", () => {
-        const previousProvider = {
-          instanceId: ProviderInstanceId.make("opencode"),
-          driver: ProviderDriverKind.make("opencode"),
-          status: "ready",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          checkedAt: "2026-07-17T00:00:00.000Z",
-          version: "1.0.0",
-          models: [
-            {
-              slug: "github/gpt-5",
-              name: "GPT-5",
-              subProvider: "GitHub",
-              isCustom: false,
-              capabilities: null,
-            },
-            {
-              slug: "removed-plugin/model",
-              name: "Removed Plugin Model",
-              subProvider: "Removed Plugin",
-              isCustom: false,
-              capabilities: null,
-            },
-          ],
-          slashCommands: [],
-          skills: [],
-        } as const satisfies ServerProvider;
-        const refreshedProvider = {
-          ...previousProvider,
-          checkedAt: "2026-07-17T00:01:00.000Z",
-          models: [
-            {
-              slug: "github/gpt-5",
-              name: "GPT-5",
-              subProvider: "GitHub",
-              isCustom: false,
-              capabilities: null,
-            },
-          ],
-        } satisfies ServerProvider;
-
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-          ...refreshedProvider.models,
-        ]);
-      });
-
-      it("retains stale OpenCode models when a refresh fails", () => {
-        const previousProvider = {
-          instanceId: ProviderInstanceId.make("opencode"),
-          driver: ProviderDriverKind.make("opencode"),
-          status: "ready",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          checkedAt: "2026-07-17T00:00:00.000Z",
-          version: "1.0.0",
-          models: [
-            {
-              slug: "github/gpt-5",
-              name: "GPT-5",
-              subProvider: "GitHub",
-              isCustom: false,
-              capabilities: null,
-            },
-          ],
-          slashCommands: [],
-          skills: [],
-        } as const satisfies ServerProvider;
-        const refreshedProvider = {
-          ...previousProvider,
-          status: "error",
-          auth: { status: "unknown" },
-          checkedAt: "2026-07-17T00:01:00.000Z",
-          models: [],
-          message: "Failed to refresh OpenCode models.",
-        } satisfies ServerProvider;
-
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, refreshedProvider).models, [
-          ...previousProvider.models,
-        ]);
-      });
-
-      it("classifies pending, logout, uninstall, and reconnect OpenCode inventories", () => {
-        const previousProvider = {
-          instanceId: ProviderInstanceId.make("opencode"),
-          driver: ProviderDriverKind.make("opencode"),
-          status: "ready",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          checkedAt: "2026-07-17T00:00:00.000Z",
-          version: "1.0.0",
-          models: [
-            {
-              slug: "github/gpt-5",
-              name: "GPT-5",
-              subProvider: "GitHub",
-              isCustom: false,
-              capabilities: null,
-            },
-            {
-              slug: "removed-plugin/model",
-              name: "Removed Plugin Model",
-              subProvider: "Removed Plugin",
-              isCustom: false,
-              capabilities: null,
-            },
-          ],
-          slashCommands: [],
-          skills: [],
-        } as const satisfies ServerProvider;
-        const pendingProvider = {
-          ...previousProvider,
-          status: "warning",
-          installed: false,
-          auth: { status: "unknown" },
-          checkedAt: "2026-07-17T00:01:00.000Z",
-          version: null,
-          models: [],
-          message: "OpenCode provider status has not been checked in this session yet.",
-        } satisfies ServerProvider;
-        const loggedOutProvider = {
-          ...previousProvider,
-          status: "warning",
-          auth: { status: "unknown" },
-          checkedAt: "2026-07-17T00:02:00.000Z",
-          models: [],
-          message: "OpenCode is available, but it did not report any connected upstream providers.",
-        } satisfies ServerProvider;
-        const missingProvider = {
-          ...previousProvider,
-          status: "error",
-          installed: false,
-          auth: { status: "unknown" },
-          checkedAt: "2026-07-17T00:03:00.000Z",
-          version: null,
-          models: [],
-          message: "OpenCode CLI (`opencode`) is not installed or not on PATH.",
-        } satisfies ServerProvider;
-        const authoritativeProvider = {
-          ...previousProvider,
-          checkedAt: "2026-07-17T00:04:00.000Z",
-          models: [previousProvider.models[0]!],
-        } satisfies ServerProvider;
-        const failedProvider = {
-          ...authoritativeProvider,
-          status: "error",
-          auth: { status: "unknown" },
-          checkedAt: "2026-07-17T00:05:00.000Z",
-          models: [],
-          message: "Failed to refresh OpenCode models.",
-        } satisfies ServerProvider;
-
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, pendingProvider).models, [
-          ...previousProvider.models,
-        ]);
-        assert.deepStrictEqual(
-          mergeProviderSnapshot(previousProvider, loggedOutProvider).models,
-          [],
-        );
-        assert.deepStrictEqual(mergeProviderSnapshot(previousProvider, missingProvider).models, []);
-
-        const afterRemoval = mergeProviderSnapshot(previousProvider, authoritativeProvider);
-        const afterFailure = mergeProviderSnapshot(afterRemoval, failedProvider);
-
-        assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
-      });
-
       it("fills missing capabilities from the previous provider snapshot", () => {
         const previousProvider = {
-          instanceId: ProviderInstanceId.make("cursor"),
-          driver: ProviderDriverKind.make("cursor"),
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          driver: ProviderDriverKind.make("claudeAgent"),
           status: "ready",
           enabled: true,
           installed: true,
@@ -897,11 +726,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
 
       it.effect("persists the merged snapshot when a live update has empty models", () =>
         Effect.gen(function* () {
-          const cursorDriver = ProviderDriverKind.make("cursor");
-          const cursorInstanceId = ProviderInstanceId.make("cursor");
+          const claudeDriver = ProviderDriverKind.make("claudeAgent");
+          const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
           const initialProvider = {
-            instanceId: cursorInstanceId,
-            driver: cursorDriver,
+            instanceId: claudeInstanceId,
+            driver: claudeDriver,
             status: "ready",
             enabled: true,
             installed: true,
@@ -932,17 +761,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           } satisfies ServerProvider;
           const changes = yield* PubSub.unbounded<ServerProvider>();
           const instance = {
-            instanceId: cursorInstanceId,
-            driverKind: cursorDriver,
+            instanceId: claudeInstanceId,
+            driverKind: claudeDriver,
             continuationIdentity: {
-              driverKind: cursorDriver,
-              continuationKey: "cursor:instance:cursor",
+              driverKind: claudeDriver,
+              continuationKey: "claudeAgent:instance:claudeAgent",
             },
             displayName: undefined,
             enabled: true,
             snapshot: {
               maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-                provider: cursorDriver,
+                provider: claudeDriver,
                 packageName: null,
               }),
               getSnapshot: Effect.succeed(initialProvider),
@@ -956,7 +785,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ProviderInstanceRegistry.ProviderInstanceRegistry,
             {
               getInstance: (instanceId) =>
-                Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
+                Effect.succeed(instanceId === claudeInstanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
@@ -985,7 +814,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const config = yield* ServerConfig.ServerConfig;
             const filePath = yield* resolveProviderStatusCachePath({
               cacheDir: config.providerStatusCacheDir,
-              instanceId: cursorInstanceId,
+              instanceId: claudeInstanceId,
             });
 
             assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
@@ -1010,144 +839,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             });
           }).pipe(Effect.provide(runtimeServices));
         }),
-      );
-
-      it.effect(
-        "persists authoritative OpenCode removals without resurrecting them on a failed live refresh",
-        () =>
-          Effect.gen(function* () {
-            const openCodeDriver = ProviderDriverKind.make("opencode");
-            const openCodeInstanceId = ProviderInstanceId.make("opencode");
-            const initialProvider = {
-              instanceId: openCodeInstanceId,
-              driver: openCodeDriver,
-              status: "ready",
-              enabled: true,
-              installed: true,
-              auth: { status: "authenticated" },
-              checkedAt: "2026-07-17T00:00:00.000Z",
-              version: "1.0.0",
-              models: [
-                {
-                  slug: "github/gpt-5",
-                  name: "GPT-5",
-                  subProvider: "GitHub",
-                  isCustom: false,
-                  capabilities: null,
-                },
-                {
-                  slug: "removed-plugin/model",
-                  name: "Removed Plugin Model",
-                  subProvider: "Removed Plugin",
-                  isCustom: false,
-                  capabilities: null,
-                },
-              ],
-              slashCommands: [],
-              skills: [],
-            } as const satisfies ServerProvider;
-            const authoritativeProvider = {
-              ...initialProvider,
-              checkedAt: "2026-07-17T00:01:00.000Z",
-              models: [initialProvider.models[0]!],
-            } satisfies ServerProvider;
-            const failedProvider = {
-              ...authoritativeProvider,
-              status: "error",
-              auth: { status: "unknown" },
-              checkedAt: "2026-07-17T00:02:00.000Z",
-              models: [],
-              message: "Failed to refresh OpenCode models.",
-            } satisfies ServerProvider;
-            const changes = yield* PubSub.unbounded<ServerProvider>();
-            const instance = {
-              instanceId: openCodeInstanceId,
-              driverKind: openCodeDriver,
-              continuationIdentity: {
-                driverKind: openCodeDriver,
-                continuationKey: "opencode:instance:opencode",
-              },
-              displayName: undefined,
-              enabled: true,
-              snapshot: {
-                maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
-                  provider: openCodeDriver,
-                  packageName: null,
-                }),
-                getSnapshot: Effect.succeed(initialProvider),
-                refresh: Effect.succeed(authoritativeProvider),
-                streamChanges: Stream.fromPubSub(changes),
-              },
-              adapter: {} as ProviderInstance["adapter"],
-              textGeneration: {} as ProviderInstance["textGeneration"],
-            } satisfies ProviderInstance;
-            const instanceRegistryLayer = Layer.succeed(
-              ProviderInstanceRegistry.ProviderInstanceRegistry,
-              {
-                getInstance: (instanceId) =>
-                  Effect.succeed(instanceId === openCodeInstanceId ? instance : undefined),
-                listInstances: Effect.succeed([instance]),
-                listUnavailable: Effect.succeed([]),
-                streamChanges: Stream.empty,
-                subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
-                  PubSub.subscribe(pubsub),
-                ),
-              },
-            );
-            const scope = yield* Scope.make();
-            yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-            const runtimeServices = yield* Layer.build(
-              ProviderRegistryLive.pipe(
-                Layer.provideMerge(instanceRegistryLayer),
-                Layer.provideMerge(
-                  ServerConfig.layerTest(process.cwd(), {
-                    prefix: "t3-provider-registry-opencode-authoritative-persist-",
-                  }),
-                ),
-                Layer.provideMerge(NodeServices.layer),
-              ),
-            ).pipe(Scope.provide(scope));
-
-            yield* Effect.gen(function* () {
-              const registry = yield* ProviderRegistry.ProviderRegistry;
-              const config = yield* ServerConfig.ServerConfig;
-              const filePath = yield* resolveProviderStatusCachePath({
-                cacheDir: config.providerStatusCacheDir,
-                instanceId: openCodeInstanceId,
-              });
-
-              yield* PubSub.publish(changes, authoritativeProvider);
-
-              let cachedProvider = yield* readProviderStatusCache(filePath);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== authoritativeProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
-
-              assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
-
-              yield* PubSub.publish(changes, failedProvider);
-              for (
-                let attempt = 0;
-                attempt < 50 && cachedProvider?.checkedAt !== failedProvider.checkedAt;
-                attempt += 1
-              ) {
-                yield* TestClock.adjust("10 millis");
-                yield* Effect.yieldNow;
-                cachedProvider = yield* readProviderStatusCache(filePath);
-              }
-
-              assert.deepStrictEqual(cachedProvider?.models, [authoritativeProvider.models[0]!]);
-              assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
-                authoritativeProvider.models[0]!,
-              ]);
-            }).pipe(Effect.provide(runtimeServices));
-          }),
       );
 
       it.effect("returns the cached provider list when a manual refresh fails", () =>
@@ -1371,16 +1062,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
                 providers: {
-                  // Disable every built-in probe that would otherwise spawn
+                  // Disable both built-in probes that would otherwise spawn
                   // on the CI host. `enabled: false` short-circuits each
                   // driver's probe *before* it touches the spawner, so the
                   // test environment stays isolated from the dev
                   // machine's PATH.
                   codex: { enabled: false },
                   claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
-                  grok: { enabled: false },
-                  opencode: { enabled: false },
                 },
                 // `providerInstances` keys are branded `ProviderInstanceId`;
                 // the branded index signature rejects plain string literals
@@ -1423,7 +1111,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
             // outer `NodeServices.layer` on `it.layer(...)` and will
@@ -1490,9 +1177,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 providers: {
                   codex: { enabled: true, binaryPath: firstMissing },
                   claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
-                  grok: { enabled: false },
-                  opencode: { enabled: false },
                 },
               }),
             ),
@@ -1516,7 +1200,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 spawnedCommands.push((command as { readonly command: string }).command);
@@ -1604,9 +1287,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 providers: {
                   codex: { enabled: false },
                   claudeAgent: { enabled: false },
-                  cursor: { enabled: false },
-                  grok: { enabled: false },
-                  opencode: { enabled: false },
                 },
                 providerInstances: {
                   ghost_main: {
@@ -1638,7 +1318,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ProviderEventLoggers.NoOpProviderEventLoggers,
               ),
             ),
-            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(NodeServices.layer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
           );
@@ -1657,105 +1336,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             assert.match(ghost?.unavailableReason ?? "", /ghostDriver/);
           }).pipe(Effect.provide(runtimeServices));
         }),
-      );
-
-      it.effect(
-        "keeps cursor disabled and skips probing when the provider setting is disabled",
-        () =>
-          Effect.gen(function* () {
-            const serverSettings = yield* makeMutableServerSettingsService(
-              decodeServerSettings(
-                deepMerge(encodedDefaultServerSettings, {
-                  providers: {
-                    codex: {
-                      enabled: false,
-                    },
-                    cursor: {
-                      enabled: false,
-                    },
-                    grok: {
-                      enabled: false,
-                    },
-                  },
-                }),
-              ),
-            );
-            let cursorSpawned = false;
-            const scope = yield* Scope.make();
-            yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-            const providerRegistryLayer = ProviderRegistryLive.pipe(
-              Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
-              Layer.provideMerge(
-                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
-              ),
-              Layer.provideMerge(
-                ServerConfig.layerTest(process.cwd(), {
-                  prefix: "t3-provider-registry-",
-                }),
-              ),
-              Layer.provideMerge(TestHttpClientLive),
-              Layer.provideMerge(
-                Layer.succeed(
-                  ProviderEventLoggers.ProviderEventLoggers,
-                  ProviderEventLoggers.NoOpProviderEventLoggers,
-                ),
-              ),
-              Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-              Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
-              Layer.provideMerge(
-                mockCommandSpawnerLayer((command, args) => {
-                  if (command === "cursor-agent") {
-                    cursorSpawned = true;
-                  }
-                  const joined = args.join(" ");
-                  if (joined === "--version") {
-                    return {
-                      stdout: `${command} 1.0.0\n`,
-                      stderr: "",
-                      code: 0,
-                    };
-                  }
-                  if (joined === "auth status") {
-                    return {
-                      stdout: '{"authenticated":true}\n',
-                      stderr: "",
-                      code: 0,
-                    };
-                  }
-                  throw new Error(`Unexpected args: ${command} ${joined}`);
-                }),
-              ),
-            );
-            const runtimeServices = yield* Layer.build(
-              Layer.mergeAll(
-                Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
-                providerRegistryLayer,
-              ),
-            ).pipe(Scope.provide(scope));
-
-            yield* Effect.gen(function* () {
-              const registry = yield* ProviderRegistry.ProviderRegistry;
-              const providers = yield* registry.getProviders;
-              const cursorProvider = providers.find(
-                (provider) => provider.instanceId === ProviderInstanceId.make("cursor"),
-              );
-
-              assert.deepStrictEqual(providers.map((provider) => provider.instanceId).toSorted(), [
-                "claudeAgent",
-                "codex",
-                "cursor",
-                "grok",
-                "opencode",
-              ]);
-              assert.strictEqual(cursorProvider?.enabled, false);
-              assert.strictEqual(cursorProvider?.status, "disabled");
-              assert.strictEqual(
-                cursorProvider?.message,
-                "Cursor is disabled in T3 Code settings.",
-              );
-              assert.strictEqual(cursorSpawned, false);
-            }).pipe(Effect.provide(runtimeServices));
-          }),
       );
 
       it.effect("skips codex probes entirely when the provider is disabled", () =>

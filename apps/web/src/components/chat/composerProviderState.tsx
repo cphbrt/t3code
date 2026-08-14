@@ -23,7 +23,6 @@ export type ComposerProviderStateInput = {
   models: ReadonlyArray<ServerProviderModel>;
   promptInjectionState?: ComposerPromptInjectionState;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
-  planModeEnabled: boolean;
 };
 
 export type ComposerPromptInjectionState = "none" | "ultrathink";
@@ -47,7 +46,6 @@ type TraitsRenderInput = {
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
-  planModeEnabled: boolean;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -61,9 +59,8 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     models,
     modelOptions,
     promptInjectionState = "none",
-    planModeEnabled,
   } = input;
-  const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
+  const caps = getProviderModelCapabilities(models, model, provider);
   const descriptors = getProviderOptionDescriptors({ caps, selections: modelOptions });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
@@ -103,7 +100,6 @@ function renderTraitsControl(
     modelOptions,
     prompt,
     onPromptChange,
-    planModeEnabled,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
@@ -114,7 +110,6 @@ function renderTraitsControl(
       model,
       modelOptions,
       prompt,
-      planModeEnabled,
     })
   ) {
     return null;
@@ -130,7 +125,6 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
-      planModeEnabled={planModeEnabled}
     />
   );
 }
