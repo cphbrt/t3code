@@ -9,8 +9,27 @@
 > - support OpenAI Codex and Anthropic Claude Code, not Cursor, Grok, or OpenCode;
 > - focus source control on Git and GitHub rather than GitLab, Azure DevOps, Bitbucket, or Jujutsu;
 > - minimize avoidable phone-home behavior by omitting upstream product analytics and automatic desktop-update traffic;
-> - remove unused surfaces and deployment machinery, including the mobile app, marketing site, and relay infrastructure; and
+> - remove unused surfaces and deployment machinery, including the in-repo mobile app, marketing site, and relay infrastructure, while retaining compatibility with the official T3 Code iOS client; and
 > - retain deliberately user-driven integrations: T3 Connect, Tailscale, SSH, and GitHub.
+
+## Canonical iPhone connection
+
+CPH Code's verified mobile setup uses the official T3 Code iOS app as a direct client of the CPH Code desktop backend through tailnet-only Tailscale Serve. It does not depend on the removed mobile source or relay infrastructure.
+
+1. Install Tailscale on the MacBook and iPhone, sign both into the same tailnet, and confirm that each device sees the other. Install the official T3 Code app from the iOS App Store.
+2. Keep CPH Code running and open **Settings → Connections → Tailscale HTTPS**. On the first setup, Tailscale may require one-time approval before the switch stays enabled. Run this on the Mac, then open and approve the consent URL it prints:
+
+   ```bash
+   tailscale serve --bg --https=443 http://127.0.0.1:3773
+   ```
+
+   Port `3773` is the current desktop backend port; use the loopback port shown in Connections if it changes. This must be Tailscale **Serve**, not Funnel, so the HTTPS endpoint remains available only inside the tailnet.
+
+3. Return to Connections, confirm **Tailscale HTTPS** is enabled, and turn ordinary **Network access** off. CPH Code then stays bound to loopback and is reached remotely only through Tailscale Serve.
+4. Under Authorized clients, click **Create link**. Open the pairing link on the iPhone and add the environment in T3 Code.
+5. Leave the Mac awake with CPH Code and Tailscale running. A useful final check is to disable iPhone Wi-Fi and send a turn over cellular.
+
+This exact route has been verified for pairing, reconnection, existing and new threads, streamed command and file-edit activity, and the mobile terminal. The iOS app has its own presentation—it may collapse tool calls or omit CPH Code's inline diff UI—but functional and protocol compatibility with this direct Tailscale path is a fork requirement. T3 Connect remains a possible future option rather than the current canonical setup.
 
 CPH Code carries those deviations as a deliberately curated patch series on top of `upstream/main`. Its commits describe product decisions rather than the chronology of implementation: related fixes are folded into the change they complete, while independent choices stay independently reviewable. This keeps upstream rebases tractable and makes useful changes legible enough to evaluate—or adopt—one commit at a time.
 
