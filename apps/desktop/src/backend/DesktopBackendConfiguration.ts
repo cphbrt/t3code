@@ -403,6 +403,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        NODE_COMPILE_CACHE: environment.path.join(environment.stateDir, "node-compile-cache"),
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
