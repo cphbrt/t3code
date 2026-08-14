@@ -499,7 +499,7 @@ describe("MessagesTimeline", () => {
               label: "Ran command",
               command: "find . -maxdepth 1",
               rawCommand: '/bin/zsh -lc "find . -maxdepth 1"',
-              output: "README.md",
+              output: { text: "README.md" },
               itemType: "command_execution",
               tone: "tool",
             },
@@ -511,6 +511,37 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("/bin/zsh -lc &quot;find . -maxdepth 1&quot;");
     expect(markup).toContain("<hr");
     expect(markup).toContain("README.md");
+  });
+
+  it("renders command truncation metadata as distinct UI chrome", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "command-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "command",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Ran command",
+              command: "find .",
+              output: { text: "README.md", omittedBytes: 4_310_909 },
+              itemType: "command_execution",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("<pre");
+    expect(markup).toContain("README.md</pre>");
+    expect(markup).toContain('role="note"');
+    expect(markup).toContain("border-dashed");
+    expect(markup).toContain("4,310,909 bytes omitted");
+    expect(markup).not.toContain("README.md\n4,310,909 bytes omitted");
   });
 
   it("opens file changes by default and requests their structured diff", () => {

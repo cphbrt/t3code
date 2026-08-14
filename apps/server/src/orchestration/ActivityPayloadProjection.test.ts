@@ -212,7 +212,7 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
-  it("keeps truncated Codex command output in the projected payload", () => {
+  it("keeps Codex command output and reports omitted bytes separately", () => {
     const projected = projectActivityPayload(
       activity({
         itemType: "command_execution",
@@ -226,7 +226,50 @@ describe("projectActivityPayload", () => {
       }),
     );
     const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
-    expect(data.output).toBe(`${"x".repeat(1_000)}\n… [output truncated]`);
+    expect(data.output).toBe("x".repeat(1_000));
+    expect(data.outputOmittedBytes).toBe(1);
+  });
+
+  it("truncates command output without splitting multibyte characters", () => {
+    for (const [character, characterBytes] of [
+      ["é", 2],
+      ["€", 3],
+      ["🙂", 4],
+    ] as const) {
+      const projected = projectActivityPayload(
+        activity({
+          itemType: "command_execution",
+          data: {
+            item: {
+              type: "commandExecution",
+              command: "printf output",
+              aggregatedOutput: `${"x".repeat(999)}${character}tail`,
+            },
+          },
+        }),
+      );
+      const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+      expect(data.output).toBe("x".repeat(999));
+      expect(data.outputOmittedBytes).toBe(characterBytes + 4);
+    }
+  });
+
+  it("counts trailing whitespace omitted from command output", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          item: {
+            type: "commandExecution",
+            command: "printf output",
+            aggregatedOutput: `${"x".repeat(999)}\n\n`,
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.output).toBe(`${"x".repeat(999)}\n`);
+    expect(data.outputOmittedBytes).toBe(1);
   });
 
   it("keeps Claude command output in the projected payload", () => {
@@ -243,6 +286,7 @@ describe("projectActivityPayload", () => {
     );
     const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
     expect(data.output).toBe("tests passed");
+    expect(data.outputOmittedBytes).toBeUndefined();
   });
 
   it("passes task lifecycle payloads (no data field) through untouched", () => {

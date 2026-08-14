@@ -2063,7 +2063,7 @@ function workEntryRawCommand(
 function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
-): { content: string | null; output: string | null } | null {
+): { content: string | null; output: TimelineWorkEntry["output"] | null } | null {
   const blocks: string[] = [];
   if (workEntry.itemType === "mcp_tool_call" && workEntry.toolData !== undefined) {
     blocks.push(`MCP call\n${JSON.stringify(workEntry.toolData, null, 2)}`);
@@ -2087,7 +2087,7 @@ function buildToolCallExpandedBody(
     );
   }
   const content = blocks.length > 0 ? blocks.join("\n\n") : null;
-  const output = workEntry.output?.trim() || null;
+  const output = workEntry.output?.text.trim() ? workEntry.output : null;
   return content || output ? { content, output } : null;
 }
 
@@ -2505,7 +2505,18 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
             <hr className="my-2 border-0 border-t border-border/45" />
           ) : null}
           {expandedBody.output ? (
-            <pre className={toolCallExpandedBodyClassName}>{expandedBody.output}</pre>
+            <>
+              <pre className={toolCallExpandedBodyClassName}>{expandedBody.output.text}</pre>
+              {expandedBody.output.omittedBytes !== undefined ? (
+                <div
+                  role="note"
+                  className="mt-2 border-t border-dashed border-border/60 pt-1.5 font-sans text-[10px] text-muted-foreground tabular-nums"
+                >
+                  {expandedBody.output.omittedBytes.toLocaleString()}{" "}
+                  {expandedBody.output.omittedBytes === 1 ? "byte" : "bytes"} omitted
+                </div>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}

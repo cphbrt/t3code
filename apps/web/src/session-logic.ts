@@ -56,7 +56,10 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   rawCommand?: string;
-  output?: string;
+  output?: {
+    text: string;
+    omittedBytes?: number;
+  };
   changedFiles?: ReadonlyArray<string>;
   hasFileDiff?: boolean;
   tone: "thinking" | "tool" | "info" | "error";
@@ -965,9 +968,18 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
   }
-  const outputText = asTrimmedString(asRecord(payload?.data)?.output);
+  const data = asRecord(payload?.data);
+  const rawOutputText = data?.output;
+  const outputText =
+    typeof rawOutputText === "string" && rawOutputText.trim().length > 0 ? rawOutputText : null;
   if (outputText) {
-    entry.output = outputText;
+    const omittedBytes = asNumber(data?.outputOmittedBytes);
+    entry.output = {
+      text: outputText,
+      ...(omittedBytes !== null && Number.isSafeInteger(omittedBytes) && omittedBytes > 0
+        ? { omittedBytes }
+        : {}),
+    };
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
@@ -979,7 +991,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.toolTitle = title;
   }
   if (itemType === "mcp_tool_call") {
-    const data = asRecord(payload?.data);
     if (data?.item !== undefined) {
       entry.toolData = data.item;
     }
