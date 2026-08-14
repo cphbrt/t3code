@@ -10,8 +10,6 @@ pushes to `main`:
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists and
   still exports its expected symbols.
 - **Test**: `vp run test` across the workspace.
-- **Mobile Native Static Analysis**: `vp run lint:mobile` on macOS, wrapping
-  `scripts/mobile-native-static-check.ts`.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 

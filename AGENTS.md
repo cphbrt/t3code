@@ -69,7 +69,7 @@ Continue using this rebase strategy while conflicts and patch maintenance remain
 
 # Upstream: T3 Code
 
-T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs (Codex, Claude Code, Cursor, Grok, OpenCode) and serves web, desktop, and mobile clients.
+T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and serves web and desktop clients.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
@@ -91,13 +91,11 @@ The architecture of T3 Code's websocket layer (npx t3) enables a lot of awesome 
 
 ### 4. Multi-surface
 
-T3 Code has 3 key app surfaces: **web**, **desktop**, and **mobile**.
+T3 Code has 2 key app surfaces: **web** and **desktop**.
 
 **Web** is kind of two surfaces, as we have the public facing "app.t3.codes" as well as locally hosting the web app through the `npx t3` command. Both need to be supported by all new features where reasonable.
 
-**Desktop** is the main surface most users install first. It's a full Electron app that bundles the server runner as well. The desktop app can also be used as the host server, allowing remote connections from app.t3.codes or the mobile app.
-
-**Mobile** is a React Native app for both iOS and Android, available on the App Store and Google Play. The mobile app allows for connecting to any T3 Code server to control work remotely.
+**Desktop** is the main surface most users install first. It's a full Electron app that bundles the server runner as well.
 
 ## A note from Theo
 
@@ -176,7 +174,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - **Do not run repo-wide checks.** No `vp check`, no `vp run -r test`, no `vp run -r typecheck` unless I ask. CI owns the full suite.
 - Backend behavior changes ship with focused tests for that behavior.
 - The server is event-sourced and its async flows emit typed receipts. Wait on receipts and worker drains, never on sleeps or polling. A test that needs a timeout to pass is wrong.
-- Upon request, user-visible frontend changes should get one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
+- Upon request, user-visible frontend changes should get one integrated pass in a real client with `test-t3-app`. The primary agent does this once after integrating. Subagents do not launch their own dev servers. Ask permission before doing computer use or spinning up browsers.
 
 ## Pull requests
 
@@ -196,10 +194,10 @@ Full glossary with file links: `docs/internals/glossary.md`
 ## Where code lives
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read `.repos/effect-smol/LLMS.md` before writing Effect code.
-- `apps/web` - React/Vite UI. `apps/desktop` wraps it, `apps/mobile` is React Native, `apps/marketing` is the site.
+- `apps/web` - React/Vite UI. `apps/desktop` wraps it; `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
-- `packages/client-runtime` - client code shared by web and mobile.
+- `packages/client-runtime` - client code used by the web app and desktop shell.
 - `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency.
 
 ## Taste
