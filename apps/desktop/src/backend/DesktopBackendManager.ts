@@ -25,6 +25,7 @@
 
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -64,6 +65,10 @@ const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
 const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
 const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
 const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
+const BACKEND_TERMINATION_OPTIONS = {
+  killSignal: "SIGTERM",
+  forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
+} satisfies ChildProcess.KillOptions;
 const DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT = Duration.seconds(5);
 const BACKEND_READINESS_PATH = "/.well-known/t3/environment";
 const { logWarning: logBackendProcessWarning } =
@@ -459,7 +464,6 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     if (options.bootstrap.desktopTelemetryFd !== undefined) {
       additionalFds[`fd${options.bootstrap.desktopTelemetryFd}`] = {
         type: "input",
-        stream: options.desktopTelemetryStream,
       };
     }
     if (options.bootstrap.desktopTelemetryControlFd !== undefined) {
@@ -477,8 +481,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     stdin: options.bootstrapDelivery === "stdin" ? bootstrapStream : "ignore",
     stdout: options.captureOutput ? "pipe" : "inherit",
     stderr: options.captureOutput ? "pipe" : "inherit",
-    killSignal: "SIGTERM",
-    forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
+    ...BACKEND_TERMINATION_OPTIONS,
     // wsl.exe drops additional file descriptors when forwarding to the Linux
     // side, so the WSL spawn path delivers the bootstrap envelope via stdin
     // (`--bootstrap-fd 0`) instead.
@@ -498,6 +501,39 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
+
+  if (options.bootstrapDelivery === "fd3" && options.bootstrap.desktopTelemetryFd !== undefined) {
+    const telemetryFd = options.bootstrap.desktopTelemetryFd;
+    const telemetryShutdown = yield* Deferred.make<void>();
+    const telemetryFiber = yield* options.desktopTelemetryStream.pipe(
+      Stream.interruptWhen(Deferred.await(telemetryShutdown)),
+      Stream.run(handle.getInputFd(telemetryFd)),
+      Effect.forkScoped,
+    );
+    // The backend reads this pipe with a long-lived blocking read. End the
+    // parent writer while terminating the child so neither side can prevent
+    // the other from making progress. In the normal path the writer reaches
+    // `finish` immediately; if it is backpressured by a wedged backend, the
+    // process kill still reaches forceKillAfter and releases the pipe.
+    yield* Effect.addFinalizer(() =>
+      Deferred.succeed(telemetryShutdown, undefined).pipe(
+        Effect.andThen(
+          Effect.all(
+            [
+              Fiber.await(telemetryFiber),
+              handle.isRunning.pipe(
+                Effect.flatMap((isRunning) =>
+                  isRunning ? handle.kill(BACKEND_TERMINATION_OPTIONS) : Effect.void,
+                ),
+                Effect.ignore,
+              ),
+            ],
+            { concurrency: "unbounded", discard: true },
+          ),
+        ),
+      ),
+    );
+  }
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
   if (
