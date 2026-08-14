@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
-import type { Thread } from "../types";
+import type { Project, Thread } from "../types";
 import {
   browseInputEndPaddingClass,
   buildBrowseGroups,
+  buildProjectActionItems,
   buildThreadActionItems,
   enumerateCommandPaletteItems,
   filterPinnedBrowseEntries,
@@ -38,6 +39,31 @@ describe("browseInputEndPaddingClass", () => {
         hasHighlightedBrowseItem: false,
       }),
     ).toContain("pe-24");
+  });
+});
+
+describe("buildProjectActionItems", () => {
+  it("uses a caller-provided display path without changing path search terms", () => {
+    const project = {
+      id: ProjectId.make("project-display-path"),
+      environmentId: EnvironmentId.make("environment-display-path"),
+      title: "config",
+      workspaceRoot: "/Users/chris/git/personal/config",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    } satisfies Project;
+    const [item] = buildProjectActionItems({
+      projects: [project],
+      valuePrefix: "project",
+      icon: () => null,
+      renderDescription: () => "~/git/personal/config",
+      runProject: async () => undefined,
+    });
+
+    expect(item?.description).toBe("~/git/personal/config");
+    expect(item?.searchTerms).toContain("/Users/chris/git/personal/config");
   });
 });
 

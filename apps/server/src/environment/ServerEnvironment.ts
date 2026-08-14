@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
@@ -142,6 +143,7 @@ export const make = Effect.gen(function* () {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
     },
+    homeDirectory: NodeOS.homedir(),
     serverVersion: packageJson.version,
     capabilities: {
       repositoryIdentity: true,
