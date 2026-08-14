@@ -1,7 +1,18 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRenameCommit, shouldShowOpenInPicker } from "./ChatHeader";
+import {
+  chatHeaderActionsPaddingClass,
+  resolveRenameCommit,
+  shouldShowOpenInPicker,
+} from "./ChatHeader";
+
+describe("chat header action spacing", () => {
+  it("reserves room for all three closed-panel layout controls", () => {
+    expect(chatHeaderActionsPaddingClass(false)).toBe("pr-[6.75rem] sm:pr-24");
+    expect(chatHeaderActionsPaddingClass(true)).toBe("pr-0");
+  });
+});
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");

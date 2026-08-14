@@ -274,6 +274,20 @@ export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
 }
 
+// Sidebar rows are focusable `[role="button"]` elements, so a clicked row keeps
+// DOM focus after it navigates. ChatView's type-to-focus rule ignores keys
+// dispatched from anything button-like, and the row itself claims Space as
+// activation, so the chat's "type to reveal the composer" route stays dead
+// until focus leaves the row. Call this only on the click path that opens a
+// thread: keyboard activation must leave focus on the row so arrow keys and
+// repeat activation keep working, and the modifier/double-click branches never
+// navigate.
+export function releaseSidebarRowFocus(row: EventTarget | null): void {
+  if (row == null || typeof row !== "object") return;
+  if (!("blur" in row) || typeof row.blur !== "function") return;
+  row.blur();
+}
+
 function nodeClosest(node: object | null, selector: string): unknown {
   if (node === null || !("closest" in node) || typeof node.closest !== "function") return null;
   return node.closest(selector);

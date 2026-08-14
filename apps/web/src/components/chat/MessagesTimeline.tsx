@@ -14,7 +14,6 @@ import {
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
 const NOOP_OPEN_AGENTS = () => {};
-import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import {
   createContext,
   Fragment,
@@ -186,7 +185,7 @@ function TimelineLoadEarlierHeader({
     </div>
   );
 }
-const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" data-timeline-list-footer />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
@@ -230,8 +229,7 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
-  anchorMessageId: MessageId | null;
-  onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
+  onContentGeometryChange: () => void;
   contentInsetEndAdjustment: number;
   /**
    * Whether the timeline should keep pinning to the live edge as content
@@ -276,8 +274,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
-  anchorMessageId,
-  onAnchorReady,
+  onContentGeometryChange,
   contentInsetEndAdjustment,
   liveFollowEnabled,
   onIsAtEndChange,
@@ -315,24 +312,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
-  const handleAnchorReady = useCallback(
-    (info: { anchorIndex: number | undefined }) => {
-      if (anchorMessageId !== null && info.anchorIndex !== undefined) {
-        onAnchorReady(anchorMessageId, info.anchorIndex);
-      }
-    },
-    [anchorMessageId, onAnchorReady],
-  );
-  const anchoredEndSpace = useMemo(() => {
-    const config = resolveChatListAnchoredEndSpace(rows, anchorMessageId, (row) =>
-      row.kind === "message" ? row.message.id : null,
-    );
-    return config ? { ...config, onReady: handleAnchorReady } : undefined;
-  }, [anchorMessageId, handleAnchorReady, rows]);
-
   const handleScroll = useCallback(() => {
-    const state = listRef.current?.getState?.();
-    const isAtEnd = resolveTimelineIsAtEnd(state, contentInsetEndAdjustment);
+    const list = listRef.current;
+    const scrollNode = list?.getScrollableNode();
+    const state = list?.getState?.();
+    const isAtEnd = resolveTimelineIsAtEnd(scrollNode ?? undefined);
     if (isAtEnd !== undefined) {
       onIsAtEndChange(isAtEnd);
     }
@@ -358,7 +342,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       strip.dataset.inView = inView ? "true" : "false";
     }
-  }, [contentInsetEndAdjustment, listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -377,6 +361,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth));
+      onContentGeometryChange();
     };
 
     const frame = requestAnimationFrame(measure);
@@ -388,7 +373,34 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [onContentGeometryChange, timelineViewportElement, rows.length]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const scrollNode = listRef.current?.getScrollableNode();
+    if (!scrollNode) {
+      return;
+    }
+
+    const measure = () => {
+      onContentGeometryChange();
+      handleScroll();
+    };
+    const frame = requestAnimationFrame(measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(scrollNode);
+    if (scrollNode.firstElementChild instanceof HTMLElement) {
+      observer.observe(scrollNode.firstElementChild);
+    }
+
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [handleScroll, listRef, onContentGeometryChange, rows.length]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -435,8 +447,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
-    ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+    ({ item, index }: { item: MessagesTimelineRow; index: number }) => (
+      <div
+        className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip"
+        data-timeline-root="true"
+        data-timeline-row-index={index}
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
@@ -466,12 +482,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             renderItem={renderItem}
             estimatedItemSize={90}
             initialScrollAtEnd
-            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            alignItemsAtEnd
             contentInsetEndAdjustment={contentInsetEndAdjustment}
-            maintainScrollAtEnd={
-              anchoredEndSpace || !liveFollowEnabled ? false : TIMELINE_MAINTAIN_SCROLL_AT_END
-            }
+            maintainScrollAtEnd={liveFollowEnabled ? TIMELINE_MAINTAIN_SCROLL_AT_END : false}
             maintainVisibleContentPosition={TIMELINE_MAINTAIN_VISIBLE_CONTENT_POSITION}
+            onItemSizeChanged={onContentGeometryChange}
             onScroll={handleScroll}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
@@ -984,7 +999,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         {row.showAssistantMeta ? (
-          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+          <div
+            data-assistant-message-footer="true"
+            className="mt-1.5 flex items-center gap-2 text-xs tabular-nums"
+          >
+            <span className="text-secondary-label">Done</span>
             <AssistantCopyButton row={row} />
             {!row.message.streaming && (
               <Tooltip>

@@ -107,6 +107,10 @@ export function shouldShowOpenInPicker(input: {
   return input.remoteOpenMode !== "local-exec";
 }
 
+export function chatHeaderActionsPaddingClass(rightPanelOpen: boolean): string {
+  return rightPanelOpen ? "pr-0" : "pr-[6.75rem] sm:pr-24";
+}
+
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
@@ -315,7 +319,7 @@ export const ChatHeader = memo(function ChatHeader({
         data-chat-header-actions
         className={cn(
           "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
-          rightPanelOpen ? "pr-0" : "pr-16",
+          chatHeaderActionsPaddingClass(rightPanelOpen),
         )}
       >
         {activeProjectScripts && (

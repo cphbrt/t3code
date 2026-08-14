@@ -1,10 +1,19 @@
-import { Maximize2Icon, Minimize2Icon, PanelBottomIcon, PanelRightIcon } from "lucide-react";
+import {
+  BookOpenIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  PanelBottomIcon,
+  PanelRightIcon,
+} from "lucide-react";
 import { memo } from "react";
 
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 interface PanelLayoutControlsProps {
+  readingFocusAvailable?: boolean;
+  readingFocus?: boolean;
+  readingFocusShortcutLabel?: string | null;
   showTerminalControl?: boolean;
   terminalAvailable: boolean;
   terminalOpen: boolean;
@@ -15,11 +24,15 @@ interface PanelLayoutControlsProps {
   rightPanelUnavailableLabel?: string;
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
   liveAgentCount: number;
+  onToggleReadingFocus?: () => void;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
+  readingFocusAvailable = false,
+  readingFocus = false,
+  readingFocusShortcutLabel = null,
   showTerminalControl = true,
   terminalAvailable,
   terminalOpen,
@@ -29,6 +42,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelShortcutLabel,
   rightPanelUnavailableLabel = "Right panel is unavailable",
   liveAgentCount,
+  onToggleReadingFocus,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
@@ -37,6 +51,33 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
+      {onToggleReadingFocus ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0 [-webkit-app-region:no-drag]"
+                pressed={readingFocus}
+                onPressedChange={onToggleReadingFocus}
+                aria-label={readingFocus ? "Show composer" : "Focus on transcript"}
+                variant="ghost"
+                size="sm"
+                disabled={!readingFocusAvailable}
+                data-chat-reading-focus-toggle
+              >
+                <BookOpenIcon className="size-3.5" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {readingFocusAvailable
+              ? `${readingFocus ? "Show composer" : "Focus on transcript"}${
+                  readingFocusShortcutLabel ? ` (${readingFocusShortcutLabel})` : ""
+                }`
+              : "Reading focus is available after the thread has messages"}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {showTerminalControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>
