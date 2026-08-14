@@ -177,6 +177,7 @@ import {
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../providerInstances";
+import { providerUsageLimitCountdown } from "../providerUsageLimit";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Button } from "./ui/button";
@@ -200,6 +201,18 @@ const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 // Keep the v2 key so existing preferences survive the v2-to-default rename.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:settled-expanded";
+
+function ProviderUsageLimitPill(props: { readonly label: string }) {
+  return (
+    <span
+      aria-label={`Provider available in ${props.label}`}
+      className="inline-flex h-4.5 shrink-0 items-center gap-0.5 rounded-full border border-amber-500/25 bg-amber-500/[0.04] px-1.5 text-[9px] font-medium leading-none text-amber-800 tabular-nums dark:text-amber-200/85"
+    >
+      <ClockIcon aria-hidden className="size-2.5 opacity-75" />
+      {props.label}
+    </span>
+  );
+}
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
 
 function compactSidebarTimeLabel(label: string): string {
@@ -742,6 +755,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   sortable?: SortablePinnedRowBag | undefined;
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
+  providerUsageLimitLabel: string | null;
   // When a snooze ended (timer or early wake); drives the Woke pill until
   // the user visits the thread.
   wokeAt: string | null;
@@ -1290,6 +1304,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {title}
             {pinIndicator}
             {terminalStatusIcon}
+            {props.providerUsageLimitLabel ? (
+              <ProviderUsageLimitPill label={props.providerUsageLimitLabel} />
+            ) : null}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
                 Regenerating title
@@ -1597,7 +1614,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   </span>
                 ) : null}
                 {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center">
+                  <span className="inline-flex shrink-0 items-center gap-1.5">
+                    {props.providerUsageLimitLabel ? (
+                      <ProviderUsageLimitPill label={props.providerUsageLimitLabel} />
+                    ) : null}
                     <ProviderInstanceIcon
                       driverKind={driverKind}
                       displayName={
@@ -1641,6 +1661,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   projectTitle: string | null;
   environmentLabel: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
+  providerUsageLimitLabel: string | null;
   isHighlighted: boolean;
   isRouteActive: boolean;
   resultId: string;
@@ -1717,6 +1738,9 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
             fallbackIcon={MessageSquareIcon}
           />
           <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+          {props.providerUsageLimitLabel ? (
+            <ProviderUsageLimitPill label={props.providerUsageLimitLabel} />
+          ) : null}
           <span className="shrink-0 text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
           </span>
@@ -2054,6 +2078,18 @@ export default function Sidebar() {
   // the partition works directly off live shells: no archived-snapshot
   // merging, no optimistic holds. Archived threads remain hidden here —
   // archive keeps its original "remove from sidebar" meaning.
+  const providerUsageLimitLabelByScopedInstance = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const [environmentId, config] of serverConfigs) {
+      for (const provider of config.providers) {
+        const countdown = providerUsageLimitCountdown(provider.usageLimit, nowMinute);
+        if (countdown) {
+          labels.set(`${environmentId}:${provider.instanceId}`, countdown.exact);
+        }
+      }
+    }
+    return labels;
+  }, [nowMinute, serverConfigs]);
   const {
     pinnedThreads,
     reorderablePinnedKeys,
@@ -3680,6 +3716,11 @@ export default function Sidebar() {
                           providerEntriesByEnvironment.get(thread.environmentId) ??
                           EMPTY_PROVIDER_ENTRIES
                         }
+                        providerUsageLimitLabel={
+                          providerUsageLimitLabelByScopedInstance.get(
+                            `${thread.environmentId}:${thread.session?.providerInstanceId ?? thread.modelSelection.instanceId}`,
+                          ) ?? null
+                        }
                         isHighlighted={activeSearchResultIndex === index}
                         isRouteActive={routeThreadKey === threadKey}
                         resultId={`sidebar-thread-search-result-${index}`}
@@ -3764,6 +3805,11 @@ export default function Sidebar() {
                                 now: new Date().toISOString(),
                               })
                             : null
+                        }
+                        providerUsageLimitLabel={
+                          providerUsageLimitLabelByScopedInstance.get(
+                            `${thread.environmentId}:${thread.session?.providerInstanceId ?? thread.modelSelection.instanceId}`,
+                          ) ?? null
                         }
                         // All sections: a woken thread can classify straight
                         // into the settled tail (PR merged while snoozed), and

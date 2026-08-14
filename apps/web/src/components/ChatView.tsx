@@ -202,6 +202,7 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { providerUsageLimitBannerMessage } from "../providerUsageLimit";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
@@ -1359,6 +1360,7 @@ function ChatViewContent(props: ChatViewProps) {
     (store) => store.setStickyModelSelection,
   );
   const timestampFormat = settings.timestampFormat;
+  const nowMinute = useNowMinute();
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
@@ -2831,6 +2833,26 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const providerUsageLimitError = providerUsageLimitBannerMessage(
+    activeProviderStatus?.usageLimit,
+    nowMinute,
+    timestampFormat,
+  );
+  const providerUsageLimitBannerKey = getThreadErrorBannerKey(
+    routeThreadKey,
+    providerUsageLimitError,
+  );
+  const visibleProviderUsageLimitError = shouldShowThreadErrorBanner(
+    routeThreadKey,
+    providerUsageLimitError,
+    isThreadErrorBannerDismissedForSession(providerUsageLimitBannerKey),
+  )
+    ? providerUsageLimitError
+    : null;
+  // The thread that discovered the limit already has the provider's native
+  // runtime error. Other threads on the same provider instance synthesize
+  // the same top-bar treatment from the shared provider reset state.
+  const visibleTopError = visibleThreadError ?? visibleProviderUsageLimitError;
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -2846,7 +2868,7 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner = Boolean(visibleTopError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -4289,7 +4311,6 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const supportsSettlement = serverConfig?.environment.capabilities.threadSettlement === true;
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
-  const nowMinute = useNowMinute();
   const snoozeNow = new Date().toISOString();
   const activeThreadSnoozed =
     activeThreadShell !== null &&
@@ -6636,10 +6657,13 @@ function ChatViewContent(props: ChatViewProps) {
         </WorkspacePageHeader>
 
         <ThreadErrorBanner
-          error={visibleThreadError}
+          error={visibleTopError}
           onDismiss={() => {
-            setThreadError(activeThread.id, null);
+            if (visibleThreadError !== null) {
+              setThreadError(activeThread.id, null);
+            }
             dismissThreadErrorBannerForSession(threadErrorBannerKey);
+            dismissThreadErrorBannerForSession(providerUsageLimitBannerKey);
             setThreadErrorBannerDismissTick((tick) => tick + 1);
           }}
         />

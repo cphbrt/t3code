@@ -40,6 +40,14 @@ When a Codex tool needs access to an app such as Safari, T3 Code shows the app n
 approval. You can approve, decline, or cancel the request from the desktop app, web app, or mobile
 app. Some tools also offer approval for the current session or permanent approval.
 
+## Usage-limit resets
+
+CPH Code is intended to give Codex the same explicit-reset handling as Claude: a shared countdown,
+an error on every affected thread, and **Send after usage resets** for idle existing threads. The
+provider-neutral state and UI are in place, but Codex normalization is not complete or validated
+against a real exhausted-account event yet. CPH Code does not guess from Codex's rolling-window
+telemetry because it does not identify which reset applies.
+
 ## I Want Work And Personal Codex Accounts
 
 Use one real Codex home and one shadow home.

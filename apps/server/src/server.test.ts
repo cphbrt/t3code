@@ -642,6 +642,7 @@ const buildAppUnderTest = (options?: {
                 makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
               ),
             setProviderMaintenanceActionState: () => Effect.succeed([]),
+            setProviderUsageLimitState: () => Effect.succeed([]),
             streamChanges: Stream.empty,
             ...options?.layers?.providerRegistry,
           }),

@@ -16,6 +16,7 @@ import {
   type SDKMessage,
   type SDKControlGetContextUsageResponse,
   type SDKResultMessage,
+  type SDKRateLimitEvent,
   type SettingSource,
   type SDKUserMessage,
   type ModelUsage,
@@ -106,6 +107,29 @@ type ClaudeToolResultStreamKind = Extract<
   "command_output" | "file_change_output"
 >;
 type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
+
+export function normalizeClaudeUsageLimit(
+  message: SDKRateLimitEvent,
+):
+  | { readonly status: "limited"; readonly resetsAt: string }
+  | { readonly status: "available" }
+  | undefined {
+  const info = message.rate_limit_info;
+  if (info.status === "allowed" || info.status === "allowed_warning") {
+    return { status: "available" };
+  }
+  if (
+    info.status !== "rejected" ||
+    info.resetsAt === undefined ||
+    !Number.isFinite(info.resetsAt)
+  ) {
+    return undefined;
+  }
+  return {
+    status: "limited",
+    resetsAt: DateTime.formatIso(DateTime.makeUnsafe(info.resetsAt * 1_000)),
+  };
+}
 
 function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
   const result = encodeUnknownJsonStringExit(input);
@@ -3666,11 +3690,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const usageLimit = normalizeClaudeUsageLimit(message);
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
         payload: {
           rateLimits: message,
+          ...(usageLimit ? { usageLimit } : {}),
         },
       });
       return;

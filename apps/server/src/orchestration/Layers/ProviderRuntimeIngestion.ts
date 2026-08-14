@@ -30,6 +30,7 @@ import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
@@ -900,6 +901,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
+  const providerRegistry = yield* ProviderRegistry;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
   const providerCommandId = (event: ProviderRuntimeEvent, tag: string) =>
@@ -1501,6 +1503,21 @@ const make = Effect.gen(function* () {
 
   const processRuntimeEvent = (event: ProviderRuntimeEvent) =>
     Effect.gen(function* () {
+      if (
+        event.type === "account.rate-limits.updated" &&
+        event.providerInstanceId !== undefined &&
+        event.payload.usageLimit !== undefined
+      ) {
+        yield* providerRegistry.setProviderUsageLimitState({
+          instanceId: event.providerInstanceId,
+          observedAt: event.createdAt,
+          state:
+            event.payload.usageLimit.status === "limited"
+              ? { resetsAt: event.payload.usageLimit.resetsAt }
+              : null,
+        });
+      }
+
       const thread = yield* resolveThreadShell(event.threadId);
       if (!thread) return;
 

@@ -6,6 +6,33 @@ import { classifyTaskAgentKind, ProviderRuntimeEvent } from "./providerRuntime.t
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("decodes normalized provider usage-limit updates alongside native data", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "account.rate-limits.updated",
+      eventId: "event-limit",
+      provider: "claudeAgent",
+      providerInstanceId: "claude_personal",
+      createdAt: "2026-08-14T17:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        rateLimits: { native: true },
+        usageLimit: {
+          status: "limited",
+          resetsAt: "2026-08-14T20:14:00.000Z",
+        },
+      },
+    });
+
+    expect(parsed.type).toBe("account.rate-limits.updated");
+    if (parsed.type !== "account.rate-limits.updated") {
+      throw new Error("expected account.rate-limits.updated");
+    }
+    expect(parsed.payload.usageLimit).toEqual({
+      status: "limited",
+      resetsAt: "2026-08-14T20:14:00.000Z",
+    });
+  });
+
   it("accepts fork-provided driver kinds as branded slugs", () => {
     const parsed = decodeRuntimeEvent({
       type: "session.started",

@@ -55,6 +55,8 @@ import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts"
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
+import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
   return ServerSettingsService.layerTest(overrides);
@@ -230,6 +232,10 @@ describe("ProviderRuntimeIngestion", () => {
     const workspaceRoot = makeTempDir("t3-provider-project-");
     NodeFS.mkdirSync(NodePath.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
+    const providerRegistry = makeProviderRegistryMock();
+    const usageLimitUpdates: Array<
+      Parameters<typeof providerRegistry.setProviderUsageLimitState>[0]
+    > = [];
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -251,6 +257,15 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ThreadPlanProgress.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
+      Layer.provideMerge(
+        Layer.succeed(ProviderRegistry, {
+          ...providerRegistry,
+          setProviderUsageLimitState: (input) => {
+            usageLimitUpdates.push(input);
+            return Effect.succeed([]);
+          },
+        }),
+      ),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(NodeServices.layer),
@@ -324,8 +339,37 @@ describe("ProviderRuntimeIngestion", () => {
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      usageLimitUpdates,
     };
   }
+
+  it("projects normalized usage-limit events onto the provider instance", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "account.rate-limits.updated",
+      eventId: asEventId("evt-usage-limit"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claude_personal"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-08-14T17:00:00.000Z",
+      payload: {
+        rateLimits: {},
+        usageLimit: {
+          status: "limited",
+          resetsAt: "2026-08-14T20:14:00.000Z",
+        },
+      },
+    });
+    await harness.drain();
+
+    expect(harness.usageLimitUpdates).toEqual([
+      {
+        instanceId: "claude_personal",
+        observedAt: "2026-08-14T17:00:00.000Z",
+        state: { resetsAt: "2026-08-14T20:14:00.000Z" },
+      },
+    ]);
+  });
 
   it("maps turn started/completed events into thread session updates", async () => {
     const harness = await createHarness();

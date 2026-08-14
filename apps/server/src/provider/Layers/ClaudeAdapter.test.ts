@@ -9,6 +9,7 @@ import type {
   PermissionMode,
   PermissionResult,
   SDKMessage,
+  SDKRateLimitEvent,
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
@@ -37,8 +38,40 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import {
+  makeClaudeAdapter,
+  normalizeClaudeUsageLimit,
+  type ClaudeAdapterLiveOptions,
+} from "./ClaudeAdapter.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+describe("normalizeClaudeUsageLimit", () => {
+  const message = (rateLimitInfo: SDKRateLimitEvent["rate_limit_info"]): SDKRateLimitEvent => ({
+    type: "rate_limit_event",
+    rate_limit_info: rateLimitInfo,
+    uuid: "00000000-0000-4000-8000-000000000001",
+    session_id: "session-1",
+  });
+
+  it("normalizes a rejected window with an explicit reset", () => {
+    assert.deepStrictEqual(
+      normalizeClaudeUsageLimit(
+        message({ status: "rejected", resetsAt: 1_786_753_200, rateLimitType: "five_hour" }),
+      ),
+      { status: "limited", resetsAt: "2026-08-15T00:20:00.000Z" },
+    );
+  });
+
+  it("clears a previous limit when Claude reports the account is allowed", () => {
+    assert.deepStrictEqual(normalizeClaudeUsageLimit(message({ status: "allowed" })), {
+      status: "available",
+    });
+  });
+
+  it("does not guess when a rejected event omits its reset", () => {
+    assert.strictEqual(normalizeClaudeUsageLimit(message({ status: "rejected" })), undefined);
+  });
+});
 
 // Test-local service tag so the rest of the file can keep using `yield* ClaudeAdapter`.
 class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
