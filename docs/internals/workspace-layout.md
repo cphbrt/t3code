@@ -14,8 +14,6 @@ the task commands.
   components, and web-specific platform layers.
 - `apps/desktop` (`@t3tools/desktop`): Electron shell. Supervises a desktop-scoped `t3` backend,
   loads the web bundle over the `t3code://` protocol, and owns SSH-managed remote environments.
-- `apps/mobile` (`@t3tools/mobile`): Expo/React Native client. Same client runtime composition as
-  web, different platform layer and UI.
 - `apps/marketing` (`@t3tools/marketing`): Astro marketing site.
 
 ## packages
@@ -26,7 +24,7 @@ the task commands.
   (`DrainableWorker`, git and source-control helpers, relay auth and signing, DPoP, semver, logging,
   observability, and more).
 - `packages/client-runtime` (`@t3tools/client-runtime`): connection lifecycle, authorization, RPC
-  session, environment registry, and Atom-based domain state shared by web and mobile. See its
+  session, environment registry, and Atom-based domain state used by the web client. See its
   [README](../../packages/client-runtime/README.md).
 - `packages/ssh` (`@t3tools/ssh`): SSH config parsing, auth prompts, command execution, and the
   tunnel/environment manager behind desktop-managed SSH environments.
@@ -47,7 +45,7 @@ the task commands.
 ## Other top-level directories
 
 - `scripts/`: workspace tooling run through `vp run`. Dev runner, desktop artifact builds, release
-  helpers, mobile static checks and showcase capture, update-manifest merging.
+  helpers, and update-manifest merging.
 - `assets/`: brand and app icon sources per channel (`dev`, `nightly`, `prod`).
 - `patches/`: pnpm patches for pinned upstream dependencies.
 - `oxlint-plugin-t3code/`: repo-specific lint rules.

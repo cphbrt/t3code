@@ -10,14 +10,6 @@ and pushes to `main`:
   builds the desktop pipeline (`vp run build:desktop`) and verifies the preload bundle exists and
   still exports its expected symbols.
 - **Test**: `vp run test` across the workspace.
-- **Mobile Native Static Analysis**: `vp run lint:mobile` on macOS, wrapping
-  `scripts/mobile-native-static-check.ts`. A cheap Linux **Mobile Native Changes** job gates it:
-  the macOS runner only boots when the diff touches `apps/mobile` Swift/Kotlin sources, the
-  SwiftLint/detekt/ktlint configuration, the `Brewfile`, the check script, the root `package.json`
-  that defines `lint:mobile`, or `ci.yml`. Otherwise the job is skipped, which GitHub reports as
-  success for the required check. Renames are matched on both their old and new path. The gate fails
-  open in every other case: if the changed-file list cannot be resolved, GitHub truncates it, or the
-  gate job itself fails, the lint runs.
 - **Release Smoke**: exercises release-only workflow steps through `scripts/release-smoke.ts`, so
   release breakage surfaces on PRs rather than at tag time.
 

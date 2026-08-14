@@ -2,14 +2,12 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-The connection runtime is shared by web and mobile. It owns connectivity,
+The connection runtime is used by the web client and desktop shell. It owns connectivity,
 authentication, retries, transport lifetime, cached environment data, and
 environment-scoped operations.
 
-Web and mobile mount this runtime once at the application root and compose it
-identically: `apps/web/src/connection/runtime.ts` and
-`apps/mobile/src/connection/runtime.ts` differ only in the platform layer they
-supply. There is no legacy connection owner or supported mixed mode.
+The web client mounts this runtime once at the application root; the desktop shell loads that web
+client. There is no legacy connection owner or supported mixed mode.
 
 ## Composition
 
