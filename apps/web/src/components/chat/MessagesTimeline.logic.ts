@@ -11,7 +11,11 @@ import { type MessageId, type OrchestrationLatestTurn, type TurnId } from "@t3to
 
 export const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
-export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
+// Container-relative so the rail shrinks with the timeline pane (e.g. when the
+// terminal drawer is open) instead of sizing to the window and spilling over
+// siblings. The 9rem reserve keeps the step buttons, which extend ~4rem past
+// each rail end, inside the pane.
+export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100% - 9rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
@@ -54,6 +58,8 @@ export function shouldPreserveAssistantLineBreaks(text: string): boolean {
 
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
   const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
+  // The rail never becomes its own scroll surface. Percentage-positioned
+  // landmarks compress inside this container cap as the conversation grows.
   return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
 }
 
@@ -62,6 +68,39 @@ export function resolveTimelineMinimapTopPercent(index: number, itemCount: numbe
     return 0;
   }
   return (Math.max(0, Math.min(index, itemCount - 1)) / (itemCount - 1)) * 100;
+}
+
+export interface TimelineMinimapTickMetrics {
+  readonly width: number;
+  readonly height: number;
+  readonly offsetY: number;
+}
+
+/** Dock-style visual falloff around the tick nearest the pointer or keyboard focus. */
+export function resolveTimelineMinimapTickMetrics(
+  index: number,
+  activeIndex: number | null,
+): TimelineMinimapTickMetrics {
+  if (activeIndex === null) {
+    return { width: 8, height: 2, offsetY: 0 };
+  }
+
+  const delta = index - activeIndex;
+  const direction = Math.sign(delta);
+  switch (Math.abs(delta)) {
+    case 0:
+      return { width: 32, height: 5, offsetY: 0 };
+    case 1:
+      return { width: 24, height: 4, offsetY: direction * 6 };
+    case 2:
+      return { width: 18, height: 3, offsetY: direction * 10 };
+    case 3:
+      return { width: 12, height: 2, offsetY: direction * 12 };
+    default:
+      // Keep the far halves displaced instead of snapping them back into
+      // place, which preserves landmark ordering around the magnified window.
+      return { width: 8, height: 2, offsetY: direction * 12 };
+  }
 }
 
 export function resolveTimelineMinimapIndexFromPointer(input: {
@@ -175,6 +214,125 @@ export type MessagesTimelineRow =
       turnPlan: TurnPlanEntry;
     }
   | { kind: "working"; id: string; createdAt: string | null };
+
+export interface TimelineMinimapItem {
+  readonly id: string;
+  readonly rowIndex: number;
+  readonly actor: "user" | "assistant";
+  readonly previewText: string | null;
+  readonly secondaryText: string | null;
+}
+
+function compactTimelineMinimapPreview(text: string | null | undefined) {
+  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+  return compact.length > 0 ? compact : null;
+}
+
+function resolveFinalAssistantTextForTurn(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  userRowIndex: number,
+) {
+  let finalAssistantText: string | null = null;
+  for (let index = userRowIndex + 1; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row?.kind !== "message") {
+      continue;
+    }
+    if (row.message.role === "user") {
+      break;
+    }
+    if (row.message.role === "assistant") {
+      finalAssistantText = row.message.text ?? null;
+    }
+  }
+  return finalAssistantText;
+}
+
+/**
+ * The minimap navigates authored conversation messages, not activity chrome.
+ * Tool rows, working indicators, and collapsed activity disclosures are omitted.
+ */
+export function deriveTimelineMinimapItems(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+): TimelineMinimapItem[] {
+  const items: TimelineMinimapItem[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row?.kind !== "message" || row.message.role === "system") {
+      continue;
+    }
+
+    const actor = row.message.role;
+    items.push({
+      id: row.id,
+      rowIndex: index,
+      actor,
+      previewText: compactTimelineMinimapPreview(row.message.text),
+      secondaryText:
+        actor === "user"
+          ? compactTimelineMinimapPreview(resolveFinalAssistantTextForTurn(rows, index))
+          : null,
+    });
+  }
+  return items;
+}
+
+/** Avoid showing the rail for an ordinary one-prompt/one-response thread. */
+export function shouldShowTimelineMinimap(items: ReadonlyArray<TimelineMinimapItem>): boolean {
+  let userCount = 0;
+  let assistantCount = 0;
+  for (const item of items) {
+    if (item.actor === "user") {
+      userCount += 1;
+    } else {
+      assistantCount += 1;
+    }
+    if (userCount >= TIMELINE_MINIMAP_MIN_ITEMS || assistantCount >= TIMELINE_MINIMAP_MIN_ITEMS) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function resolveTimelineMinimapStepIndex(input: {
+  readonly items: ReadonlyArray<TimelineMinimapItem>;
+  readonly direction: "previous" | "next";
+  readonly visibleStartRowIndex: number;
+  readonly visibleEndRowIndex: number;
+  readonly activeItemId?: string | null;
+}): number | null {
+  const { items, direction, visibleStartRowIndex, visibleEndRowIndex, activeItemId } = input;
+  if (items.length === 0) {
+    return null;
+  }
+
+  const activeItemIndex =
+    activeItemId === null || activeItemId === undefined
+      ? -1
+      : items.findIndex((item) => item.id === activeItemId);
+  if (activeItemIndex >= 0) {
+    const targetIndex = direction === "previous" ? activeItemIndex - 1 : activeItemIndex + 1;
+    return targetIndex >= 0 && targetIndex < items.length ? targetIndex : null;
+  }
+
+  const visibleItemIndexes = items.flatMap((item, index) =>
+    item.rowIndex >= visibleStartRowIndex && item.rowIndex <= visibleEndRowIndex ? [index] : [],
+  );
+  const firstVisibleItemIndex = visibleItemIndexes[0];
+  const lastVisibleItemIndex = visibleItemIndexes.at(-1);
+  if (firstVisibleItemIndex !== undefined && lastVisibleItemIndex !== undefined) {
+    const targetIndex =
+      direction === "previous" ? firstVisibleItemIndex - 1 : lastVisibleItemIndex + 1;
+    return targetIndex >= 0 && targetIndex < items.length ? targetIndex : null;
+  }
+
+  const nextItemIndex = items.findIndex((item) => item.rowIndex >= visibleStartRowIndex);
+  if (direction === "next") {
+    return nextItemIndex >= 0 ? nextItemIndex : null;
+  }
+  const previousItemIndex = (nextItemIndex >= 0 ? nextItemIndex : items.length) - 1;
+  return previousItemIndex >= 0 ? previousItemIndex : null;
+}
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
