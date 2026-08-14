@@ -135,7 +135,7 @@ import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sideb
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
 import { CommandPaletteResults } from "./CommandPaletteResults";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { GitHubIcon } from "./Icons";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
@@ -202,10 +202,7 @@ interface AddProjectEnvironmentOption {
   readonly status: string;
 }
 
-type AddProjectRemoteProviderKind = Extract<
-  SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
->;
+type AddProjectRemoteProviderKind = Extract<SourceControlProviderKind, "github">;
 type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
 type AddProjectCloneFlow =
@@ -223,30 +220,13 @@ type AddProjectCloneFlow =
       readonly remoteUrl: string;
     };
 
-const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
-  "url",
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
-const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
+const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = ["url", "github"];
+const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = ["github"];
 
 function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
   switch (source) {
     case "github":
       return "GitHub";
-    case "gitlab":
-      return "GitLab";
-    case "bitbucket":
-      return "Bitbucket";
-    case "azure-devops":
-      return "Azure DevOps";
     case "url":
       return "Git URL";
   }
@@ -256,12 +236,6 @@ function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
   switch (source) {
     case "github":
       return "owner/repo";
-    case "gitlab":
-      return "group/project";
-    case "bitbucket":
-      return "workspace/repository";
-    case "azure-devops":
-      return "project/repository";
     case "url":
       return "URL";
   }
@@ -277,12 +251,6 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
   switch (source) {
     case "github":
       return <GitHubIcon className={className} />;
-    case "gitlab":
-      return <GitLabIcon className={className} />;
-    case "bitbucket":
-      return <BitbucketIcon className={className} />;
-    case "azure-devops":
-      return <AzureDevOpsIcon className={className} />;
     case "url":
       return <LinkIcon className={className} />;
   }
@@ -329,9 +297,6 @@ function buildAddProjectRemoteSourceReadiness(
   const defaultReadiness: AddProjectRemoteSourceReadiness = {
     url: { ready: true, hint: null },
     github: unavailable,
-    gitlab: unavailable,
-    bitbucket: unavailable,
-    "azure-devops": unavailable,
   };
 
   if (!discovery) {

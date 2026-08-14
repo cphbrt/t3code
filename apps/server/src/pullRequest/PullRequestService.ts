@@ -65,9 +65,9 @@ import { PullRequestProviderRegistry } from "./PullRequestProviderRegistry.ts";
  *
  * 99 and not 100, because every provider asks its host for one row over this to probe for a next
  * page: 99 requests 100, which is exactly what a page of GitHub's API serves — GraphQL refuses
- * `first` over 100 with EXCESSIVE_PAGINATION and REST clamps `per_page` to it — and what GitLab
- * caps `per_page` at. Asking for 100 here would request 101 and buy a whole second round trip for
- * one row (measured: `gh pr list --limit 100` makes 1 HTTP request, `--limit 101` makes 2).
+ * `first` over 100 with EXCESSIVE_PAGINATION and REST clamps `per_page` to it. Asking for 100 here
+ * would request 101 and buy a whole second round trip for one row (measured: `gh pr list --limit
+ * 100` makes 1 HTTP request, `--limit 101` makes 2).
  */
 const DEFAULT_REPOSITORY_LIST_LIMIT = 99;
 /**
@@ -461,25 +461,13 @@ function withRateLimitBackoff(
 }
 
 /**
- * The provider-native repository selector. `displayName` is the full path below the host, which
- * is what nested GitLab groups need; owner/name is the two-segment fallback for identities
- * recorded before that field existed.
- *
- * Azure DevOps is the exception: `az repos pr list --repository` takes a repository name, and
- * takes the organisation and project from the checkout it detects — so the recorded
- * `org/project/_git/repo` path is refused outright and the whole repository reads as
- * unavailable. Its name is the last segment, which is what this hands over.
- *
- * One function because everything downstream is keyed by what it answers: the rows' own
- * `repository`, the per-repository cursors, and the detail and diff reads a row leads to.
+ * The provider-native repository selector. `displayName` is the full path below the host;
+ * owner/name is the fallback for identities recorded before that field existed. Everything
+ * downstream is keyed by this answer: rows, per-repository cursors, and detail and diff reads.
  */
 export function repositoryIdentityOf(project: OrchestrationProjectShell): string | null {
   const identity = project.repositoryIdentity;
   if (!identity) return null;
-  if (identity.provider === "azure-devops") {
-    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "_git");
-    return identity.name || segments.at(-1) || null;
-  }
   if (identity.displayName) return identity.displayName;
   return identity.owner && identity.name ? `${identity.owner}/${identity.name}` : null;
 }
@@ -1301,9 +1289,8 @@ export const make = Effect.gen(function* () {
             }),
           );
         }
-        // A strategy the host does not offer must be refused rather than passed on: every
-        // provider maps an unrecognised method to its own default, so asking Azure DevOps to
-        // rebase would quietly merge instead of failing.
+        // A strategy the host does not offer must be refused rather than passed on because a
+        // provider may map an unrecognised method to its own default instead of failing.
         if (
           input.mergeMethod !== undefined &&
           !project.api.capabilities.mergeMethods.includes(input.mergeMethod)
