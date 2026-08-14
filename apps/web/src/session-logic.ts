@@ -56,6 +56,7 @@ export interface WorkLogEntry {
   detail?: string;
   command?: string;
   rawCommand?: string;
+  output?: string;
   changedFiles?: ReadonlyArray<string>;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
@@ -175,6 +176,14 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
     return true;
   }
   return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
+}
+
+export function workLogEntryIsCommand(entry: WorkLogEntry): boolean {
+  return (
+    entry.itemType === "command_execution" ||
+    entry.requestKind === "command" ||
+    (entry.command !== undefined && entry.command.trim().length > 0)
+  );
 }
 
 /** Heuristic: providers often emit successful lifecycle status while error text lives in `detail` / `command`. */
@@ -918,7 +927,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
-  const detail = isTaskActivity
+  const extractedDetail = isTaskActivity
     ? !taskDetailAsLabel &&
       payload &&
       typeof payload.detail === "string" &&
@@ -926,6 +935,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? stripTrailingExitCode(payload.detail).output
       : null
     : extractToolDetail(payload, title ?? activity.summary);
+  const detail =
+    !isTaskActivity && extractedDetail && detailRepeatsCommand(extractedDetail, commandPreview)
+      ? null
+      : extractedDetail;
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -950,6 +963,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (commandPreview.rawCommand) {
     entry.rawCommand = commandPreview.rawCommand;
+  }
+  const outputText = asTrimmedString(asRecord(payload?.data)?.output);
+  if (outputText) {
+    entry.output = outputText;
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
@@ -1176,6 +1193,7 @@ function mergeDerivedWorkLogEntries(
   const detail = next.detail ?? previous.detail;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
+  const output = next.output ?? previous.output;
   const toolTitle = next.toolTitle ?? previous.toolTitle;
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
@@ -1189,6 +1207,7 @@ function mergeDerivedWorkLogEntries(
     ...(detail ? { detail } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
+    ...(output ? { output } : {}),
     ...(changedFiles.length > 0 ? { changedFiles } : {}),
     ...(toolTitle ? { toolTitle } : {}),
     ...(itemType ? { itemType } : {}),
@@ -1479,6 +1498,26 @@ function normalizePreviewForComparison(value: string | null | undefined): string
     return null;
   }
   return normalizeCompactToolLabel(normalizeInlinePreview(normalized)).toLowerCase();
+}
+
+function detailRepeatsCommand(
+  detail: string,
+  commandPreview: { command: string | null; rawCommand: string | null },
+): boolean {
+  const normalizedDetail = normalizeInlinePreview(detail);
+  const exactCandidates = [commandPreview.command, commandPreview.rawCommand]
+    .filter((candidate): candidate is string => candidate !== null)
+    .map(normalizeInlinePreview);
+  if (exactCandidates.includes(normalizedDetail)) {
+    return true;
+  }
+
+  const truncatedDetail = normalizedDetail.replace(/(?:\.{3}|…)+$/u, "").trimEnd();
+  return (
+    truncatedDetail.length > 0 &&
+    truncatedDetail.length < normalizedDetail.length &&
+    exactCandidates.some((candidate) => candidate.startsWith(truncatedDetail))
+  );
 }
 
 function summarizeToolTextOutput(value: string): string | null {

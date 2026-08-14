@@ -319,7 +319,6 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
       ],
-      expandedTurnIds: new Set(["turn-1" as never]),
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
@@ -452,174 +451,8 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
-  it("keeps the first and terminal assistant messages visible around settled work", () => {
-    const timelineEntries = [
-      {
-        id: "user-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:00Z",
-        message: {
-          id: "user-1" as never,
-          role: "user" as const,
-          text: "Build it",
-          turnId: null,
-          createdAt: "2026-01-01T00:00:00Z",
-          updatedAt: "2026-01-01T00:00:00Z",
-          streaming: false,
-        },
-      },
-      {
-        id: "assistant-first-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:05Z",
-        message: {
-          id: "assistant-first" as never,
-          role: "assistant" as const,
-          text: "Synthetic deployment checklist\n1. Confirm the deployment is ready.",
-          turnId: "turn-1" as never,
-          createdAt: "2026-01-01T00:00:05Z",
-          updatedAt: "2026-01-01T00:00:06Z",
-          streaming: false,
-        },
-      },
-      {
-        id: "work-entry-1",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:08Z",
-        entry: {
-          id: "work-1",
-          createdAt: "2026-01-01T00:00:08Z",
-          turnId: "turn-1" as never,
-          label: "Ran command",
-          tone: "tool" as const,
-        },
-      },
-      {
-        id: "assistant-final-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:20Z",
-        message: {
-          id: "assistant-final" as never,
-          role: "assistant" as const,
-          text: "Done",
-          turnId: "turn-1" as never,
-          createdAt: "2026-01-01T00:00:20Z",
-          updatedAt: "2026-01-01T00:00:22Z",
-          streaming: false,
-        },
-      },
-    ];
-
-    const collapsedRows = deriveMessagesTimelineRows({
-      timelineEntries,
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    const foldRow = collapsedRows.find(
-      (row): row is Extract<(typeof collapsedRows)[number], { kind: "turn-fold" }> =>
-        row.kind === "turn-fold",
-    );
-    expect(foldRow?.turnId).toBe("turn-1");
-    expect(foldRow?.expanded).toBe(false);
-    // User message boundary (00:00:00) → terminal message updatedAt (00:00:22).
-    expect(foldRow?.label).toBe("Worked for 22s");
-    expect(collapsedRows.map((row) => row.id)).toEqual([
-      "user-entry",
-      "assistant-first-entry",
-      "turn-fold:turn-1",
-      "assistant-final-entry",
-    ]);
-
-    const expandedRows = deriveMessagesTimelineRows({
-      timelineEntries,
-      expandedTurnIds: new Set(["turn-1" as never]),
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(expandedRows.map((row) => row.id)).toEqual([
-      "user-entry",
-      "assistant-first-entry",
-      "turn-fold:turn-1",
-      "work-toggle:work-entry-1",
-      "assistant-final-entry",
-    ]);
-    expect(
-      expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
-    ).toBeDefined();
-  });
-
-  it("folds assistant messages between the first and terminal messages", () => {
-    const timelineEntries = [
-      {
-        id: "assistant-first-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:01Z",
-        message: {
-          id: "assistant-first" as never,
-          role: "assistant" as const,
-          text: "The main result is ready.",
-          turnId: "turn-1" as never,
-          createdAt: "2026-01-01T00:00:01Z",
-          updatedAt: "2026-01-01T00:00:02Z",
-          streaming: false,
-        },
-      },
-      {
-        id: "assistant-middle-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:03Z",
-        message: {
-          id: "assistant-middle" as never,
-          role: "assistant" as const,
-          text: "I am checking one more detail.",
-          turnId: "turn-1" as never,
-          createdAt: "2026-01-01T00:00:03Z",
-          updatedAt: "2026-01-01T00:00:04Z",
-          streaming: false,
-        },
-      },
-      {
-        id: "assistant-final-entry",
-        kind: "message" as const,
-        createdAt: "2026-01-01T00:00:05Z",
-        message: {
-          id: "assistant-final" as never,
-          role: "assistant" as const,
-          text: "Verification finished.",
-          turnId: "turn-1" as never,
-          createdAt: "2026-01-01T00:00:05Z",
-          updatedAt: "2026-01-01T00:00:06Z",
-          streaming: false,
-        },
-      },
-    ];
-
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries,
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.map((row) => row.id)).toEqual([
-      "assistant-first-entry",
-      "turn-fold:turn-1",
-      "assistant-final-entry",
-    ]);
-  });
-
-  it("derives a sane duration for a steer-superseded turn with one instant commentary message", () => {
-    // A steer ends the previous turn early: its only message completes the
-    // instant it is created, and trailing work entries land after it. The
-    // fold duration must span from the user message that started the turn to
-    // the last entry, not message createdAt → message updatedAt (~0ms).
+  it("keeps meaningful activity visible after a turn settles", () => {
+    const turnId = "turn-visible-activity" as never;
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -627,9 +460,9 @@ describe("deriveMessagesTimelineRows", () => {
           kind: "message",
           createdAt: "2026-01-01T00:00:00Z",
           message: {
-            id: "user-1" as never,
-            role: "user" as const,
-            text: "do it once more",
+            id: "user" as never,
+            role: "user",
+            text: "Update the README",
             turnId: null,
             createdAt: "2026-01-01T00:00:00Z",
             updatedAt: "2026-01-01T00:00:00Z",
@@ -637,102 +470,80 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
         {
-          id: "assistant-commentary-entry",
+          id: "commentary-entry",
           kind: "message",
-          createdAt: "2026-01-01T00:00:09Z",
+          createdAt: "2026-01-01T00:00:01Z",
           message: {
-            id: "assistant-commentary" as never,
-            role: "assistant" as const,
-            text: "Kicking off call 1.",
-            turnId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:09Z",
-            updatedAt: "2026-01-01T00:00:09Z",
+            id: "commentary" as never,
+            role: "assistant",
+            text: "I will inspect it first.",
+            turnId,
+            createdAt: "2026-01-01T00:00:01Z",
+            updatedAt: "2026-01-01T00:00:01Z",
             streaming: false,
           },
         },
         {
-          id: "work-entry-1",
+          id: "read-entry",
           kind: "work",
-          createdAt: "2026-01-01T00:00:12Z",
+          createdAt: "2026-01-01T00:00:02Z",
           entry: {
-            id: "work-1",
-            createdAt: "2026-01-01T00:00:12Z",
-            turnId: "turn-1" as never,
-            label: "Ran command",
-            tone: "tool" as const,
+            id: "read",
+            label: "Read README.md",
+            requestKind: "file-read",
+            createdAt: "2026-01-01T00:00:02Z",
+            turnId,
+            tone: "tool",
           },
         },
         {
-          id: "steer-user-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:14Z",
-          message: {
-            id: "user-2" as never,
-            role: "user" as const,
-            text: "actually do 15",
-            turnId: null,
-            createdAt: "2026-01-01T00:00:14Z",
-            updatedAt: "2026-01-01T00:00:14Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "assistant-next-turn-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:17Z",
-          message: {
-            id: "assistant-next" as never,
-            role: "assistant" as const,
-            text: "One down — adjusting.",
-            turnId: "turn-2" as never,
-            createdAt: "2026-01-01T00:00:17Z",
-            updatedAt: "2026-01-01T00:00:17Z",
-            streaming: true,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-2" as never,
-        state: "running",
-        startedAt: "2026-01-01T00:00:14Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:14Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    const foldRow = rows.find(
-      (row): row is Extract<(typeof rows)[number], { kind: "turn-fold" }> =>
-        row.kind === "turn-fold",
-    );
-    // User message (00:00:00) → trailing work entry (00:00:12).
-    expect(foldRow?.turnId).toBe("turn-1");
-    expect(foldRow?.label).toBe("Worked for 12s");
-  });
-
-  it("uses latest-turn timings and the stopped label for an interrupted latest turn", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "work-entry-1",
+          id: "edit-entry",
           kind: "work",
+          createdAt: "2026-01-01T00:00:03Z",
+          entry: {
+            id: "edit",
+            label: "File change",
+            itemType: "file_change",
+            hasFileDiff: true,
+            createdAt: "2026-01-01T00:00:03Z",
+            turnId,
+            tone: "tool",
+          },
+        },
+        {
+          id: "test-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:04Z",
+          entry: {
+            id: "test",
+            label: "Ran tests",
+            itemType: "command_execution",
+            command: "vp test run README.test.ts",
+            createdAt: "2026-01-01T00:00:04Z",
+            turnId,
+            tone: "tool",
+          },
+        },
+        {
+          id: "final-entry",
+          kind: "message",
           createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "work-1",
+          message: {
+            id: "final" as never,
+            role: "assistant",
+            text: "Updated.",
+            turnId,
             createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Ran command",
-            tone: "tool" as const,
+            updatedAt: "2026-01-01T00:00:06Z",
+            streaming: false,
           },
         },
       ],
       latestTurn: {
-        turnId: "turn-1" as never,
-        state: "interrupted",
+        turnId,
+        state: "completed",
         startedAt: "2026-01-01T00:00:00Z",
-        completedAt: "2026-01-01T00:00:47Z",
+        completedAt: "2026-01-01T00:00:06Z",
       },
       isWorking: false,
       activeTurnStartedAt: null,
@@ -740,543 +551,20 @@ describe("deriveMessagesTimelineRows", () => {
       revertTurnCountByUserMessageId: new Map(),
     });
 
-    expect(rows).toEqual([
-      expect.objectContaining({
-        kind: "turn-fold",
-        turnId: "turn-1",
-        label: "You stopped after 47s",
-        expanded: false,
-      }),
+    expect(rows.map((row) => row.kind)).toEqual([
+      "message",
+      "message",
+      "work",
+      "work",
+      "work",
+      "message",
     ]);
-  });
-
-  it("keeps the previous turn folded while a newly sent message awaits its turn", () => {
-    // Right after send, isWorking is true but latestTurn still points at the
-    // previous, settled turn — it must stay folded through that window.
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "work-entry-1",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "work-1",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Ran command",
-            tone: "tool" as const,
-          },
-        },
-        {
-          id: "assistant-final-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:20Z",
-          message: {
-            id: "assistant-final" as never,
-            role: "assistant",
-            text: "Done",
-            turnId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:20Z",
-            updatedAt: "2026-01-01T00:00:22Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "user-followup-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:01:00Z",
-          message: {
-            id: "user-followup" as never,
-            role: "user",
-            text: "yooo",
-            turnId: null,
-            createdAt: "2026-01-01T00:01:00Z",
-            updatedAt: "2026-01-01T00:01:00Z",
-            streaming: false,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "completed",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: "2026-01-01T00:00:22Z",
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:01:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.map((row) => row.id)).toEqual([
-      "turn-fold:turn-1",
-      "assistant-final-entry",
-      "user-followup-entry",
-      "working-indicator-row",
-    ]);
-    const finalRow = rows.find((row) => row.id === "assistant-final-entry");
-    expect(finalRow?.kind === "message" && finalRow.showAssistantMeta).toBe(true);
-  });
-
-  it("does not fold the active in-progress turn", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "assistant-thought-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:05Z",
-          message: {
-            id: "assistant-thought" as never,
-            role: "assistant",
-            text: "Working on it.",
-            turnId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:05Z",
-            updatedAt: "2026-01-01T00:00:06Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "work-entry-1",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:08Z",
-          entry: {
-            id: "work-1",
-            createdAt: "2026-01-01T00:00:08Z",
-            turnId: "turn-1" as never,
-            label: "Ran command",
-            tone: "tool" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "running",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.some((row) => row.kind === "turn-fold")).toBe(false);
-    expect(rows.map((row) => row.id)).toEqual([
-      "working-indicator-row",
-      "assistant-thought-entry",
-      "work-live:work-entry-1",
-    ]);
-  });
-
-  it("keeps adjacent active tool calls in one replacing row", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "completed-command-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "completed-command",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Ran rg",
-            command: "rg toolCall",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "completed" as const,
-          },
-        },
-        {
-          id: "completed-edit-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:06Z",
-          entry: {
-            id: "completed-edit",
-            createdAt: "2026-01-01T00:00:06Z",
-            turnId: "turn-1" as never,
-            label: "Edited files",
-            requestKind: "file-change",
-            changedFiles: ["src/one.ts", "src/two.ts"],
-            tone: "tool" as const,
-            toolLifecycleStatus: "completed" as const,
-          },
-        },
-        {
-          id: "running-command-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:07Z",
-          entry: {
-            id: "running-command",
-            createdAt: "2026-01-01T00:00:07Z",
-            turnId: "turn-1" as never,
-            label: "Running tests",
-            command: "vp test run",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "running",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.map((row) => row.kind)).toEqual(["working", "work-live"]);
-    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
-      entry: { id: "running-command" },
-      groupedEntries: [
-        { id: "completed-command" },
-        { id: "completed-edit" },
-        { id: "running-command" },
-      ],
-    });
-  });
-
-  it("summarizes a tool run after commentary starts a new run", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "completed-command-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "completed-command",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Ran rg",
-            command: "rg toolCall",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "completed" as const,
-          },
-        },
-        {
-          id: "assistant-commentary-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:06Z",
-          message: {
-            id: "assistant-commentary" as never,
-            role: "assistant",
-            text: "Checking another thing.",
-            turnId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:06Z",
-            updatedAt: "2026-01-01T00:00:06Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "running-command-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:07Z",
-          entry: {
-            id: "running-command",
-            createdAt: "2026-01-01T00:00:07Z",
-            turnId: "turn-1" as never,
-            label: "Running tests",
-            command: "vp test run",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "running",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.map((row) => row.kind)).toEqual(["working", "work-toggle", "message", "work-live"]);
-    expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
-      hiddenCount: 1,
-      summary: "Ran 1 command",
-    });
-  });
-
-  it("keeps separated in-progress tool runs visible", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "first-running-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "first-running",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Running first command",
-            command: "rg first",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
-        {
-          id: "assistant-commentary-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:06Z",
-          message: {
-            id: "assistant-commentary" as never,
-            role: "assistant",
-            text: "Starting another command.",
-            turnId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:06Z",
-            updatedAt: "2026-01-01T00:00:06Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "second-running-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:07Z",
-          entry: {
-            id: "second-running",
-            createdAt: "2026-01-01T00:00:07Z",
-            turnId: "turn-1" as never,
-            label: "Running second command",
-            command: "rg second",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "running",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.map((row) => row.kind)).toEqual(["working", "work-live", "message", "work-live"]);
-    expect(rows.filter((row) => row.kind === "work-live").map((row) => row.entry.id)).toEqual([
-      "first-running",
-      "second-running",
-    ]);
-  });
-
-  it("does not revive stale in-progress tools before a fresh send has a turn id", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "stale-running-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "stale-running",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Running stale command",
-            command: "rg stale",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
-        {
-          id: "user-followup-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:01:00Z",
-          message: {
-            id: "user-followup" as never,
-            role: "user",
-            text: "continue",
-            turnId: null,
-            createdAt: "2026-01-01T00:01:00Z",
-            updatedAt: "2026-01-01T00:01:00Z",
-            streaming: false,
-          },
-        },
-      ],
-      latestTurn: null,
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:01:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.some((row) => row.kind === "work-live")).toBe(false);
-  });
-
-  it("does not revive separated historical task progress", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "stale-progress-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "stale-progress",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Old progress",
-            tone: "thinking" as const,
-            sourceActivityKind: "task.progress" as const,
-          },
-        },
-        {
-          id: "assistant-commentary-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:00:06Z",
-          message: {
-            id: "assistant-commentary" as never,
-            role: "assistant",
-            text: "Starting another command.",
-            turnId: "turn-1" as never,
-            createdAt: "2026-01-01T00:00:06Z",
-            updatedAt: "2026-01-01T00:00:06Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "running-command-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:07Z",
-          entry: {
-            id: "running-command",
-            createdAt: "2026-01-01T00:00:07Z",
-            turnId: "turn-1" as never,
-            label: "Running command",
-            command: "rg current",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "inProgress" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "running",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.filter((row) => row.kind === "work-live").map((row) => row.entry.id)).toEqual([
-      "running-command",
-    ]);
-  });
-
-  it("keeps the latest completed tool call live while the turn is running", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "latest-command-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "latest-command",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Ran rg",
-            command: "rg toolCall",
-            requestKind: "command",
-            tone: "tool" as const,
-            toolLifecycleStatus: "completed" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "running",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: null,
-      },
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:00:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.map((row) => row.kind)).toEqual(["working", "work-live"]);
-    expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
-      entry: { id: "latest-command" },
-      groupedEntries: [{ id: "latest-command" }],
-    });
-  });
-
-  it("does not fold the session's running turn when latestTurn regresses", () => {
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: [
-        {
-          id: "previous-work-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:00:05Z",
-          entry: {
-            id: "previous-work",
-            createdAt: "2026-01-01T00:00:05Z",
-            turnId: "turn-1" as never,
-            label: "Read files",
-            tone: "tool" as const,
-          },
-        },
-        {
-          id: "user-followup-entry",
-          kind: "message",
-          createdAt: "2026-01-01T00:01:00Z",
-          message: {
-            id: "user-followup" as never,
-            role: "user",
-            text: "continue",
-            turnId: null,
-            createdAt: "2026-01-01T00:01:00Z",
-            updatedAt: "2026-01-01T00:01:00Z",
-            streaming: false,
-          },
-        },
-        {
-          id: "running-work-entry",
-          kind: "work",
-          createdAt: "2026-01-01T00:01:05Z",
-          entry: {
-            id: "running-work",
-            createdAt: "2026-01-01T00:01:05Z",
-            turnId: "turn-2" as never,
-            label: "Searched files",
-            tone: "tool" as const,
-          },
-        },
-      ],
-      latestTurn: {
-        turnId: "turn-1" as never,
-        state: "completed",
-        startedAt: "2026-01-01T00:00:00Z",
-        completedAt: "2026-01-01T00:00:25Z",
-      },
-      runningTurnId: "turn-2" as never,
-      isWorking: true,
-      activeTurnStartedAt: "2026-01-01T00:01:00Z",
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.filter((row) => row.kind === "turn-fold").map((row) => row.turnId)).toEqual([
-      "turn-1",
-    ]);
-    expect(rows.map((row) => row.id)).toContain("work-live:running-work-entry");
+    const workRows = rows.filter(
+      (row): row is Extract<(typeof rows)[number], { kind: "work" }> => row.kind === "work",
+    );
+    const workEntries = workRows.flatMap((row) => row.groupedEntries);
+    expect(workEntries.map((entry) => entry.id)).toEqual(["read", "edit", "test"]);
+    expect(workEntries.find((entry) => entry.id === "edit")?.hasFileDiff).toBe(true);
   });
 
   it("only shows assistant metadata on the terminal assistant message", () => {
@@ -1311,7 +599,6 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
       ],
-      expandedTurnIds: new Set(["turn-1" as never]),
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
@@ -1364,160 +651,6 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRow?.showAssistantMeta).toBe(false);
     expect(assistantRow?.showAssistantCopyButton).toBe(false);
   });
-
-  it("models work log overflow expansion as inserted list rows", () => {
-    const timelineEntries = [
-      {
-        id: "work-entry-1",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:01Z",
-        entry: {
-          id: "work-1",
-          createdAt: "2026-01-01T00:00:01Z",
-          label: "read",
-          detail: "Reading package.json",
-          tone: "tool" as const,
-        },
-      },
-      {
-        id: "work-entry-2",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:02Z",
-        entry: {
-          id: "work-2",
-          createdAt: "2026-01-01T00:00:02Z",
-          label: "edit",
-          detail: "Editing MessagesTimeline.tsx",
-          tone: "tool" as const,
-        },
-      },
-      {
-        id: "work-entry-3",
-        kind: "work" as const,
-        createdAt: "2026-01-01T00:00:03Z",
-        entry: {
-          id: "work-3",
-          createdAt: "2026-01-01T00:00:03Z",
-          label: "test",
-          detail: "Running tests",
-          tone: "tool" as const,
-        },
-      },
-    ];
-
-    const baseInput = {
-      timelineEntries,
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    };
-    const collapsedRows = deriveMessagesTimelineRows(baseInput);
-    const expandedRows = deriveMessagesTimelineRows({
-      ...baseInput,
-      expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
-    });
-
-    expect(collapsedRows.map((row) => row.id)).toEqual(["work-toggle:work-entry-1"]);
-    expect(collapsedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
-      groupId: "work-group:work-entry-1",
-      hiddenCount: 3,
-      expanded: false,
-      onlyToolEntries: true,
-      summary: "Used 3 tools",
-    });
-    expect(expandedRows.map((row) => row.id)).toEqual([
-      "work-toggle:work-entry-1",
-      "work-1",
-      "work-2",
-      "work-3",
-    ]);
-    expect(expandedRows.find((row) => row.kind === "work-toggle")).toMatchObject({
-      expanded: true,
-    });
-  });
-
-  it.each([
-    ["recovered", ["failed", "completed"], false],
-    ["ending in failure", ["completed", "failed"], true],
-    ["failed", ["failed", "failed"], true],
-  ] as const)("uses the final call for %s tool groups", (_, statuses, hasFailure) => {
-    const timelineEntries = statuses.map((status, index) => ({
-      id: `work-entry-${index}`,
-      kind: "work" as const,
-      createdAt: `2026-01-01T00:00:0${index}Z`,
-      entry: {
-        id: `work-${index}`,
-        createdAt: `2026-01-01T00:00:0${index}Z`,
-        label: "Ran command",
-        tone: "tool" as const,
-        itemType: "command_execution" as const,
-        toolLifecycleStatus: status,
-      },
-    }));
-
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries,
-      isWorking: false,
-      activeTurnStartedAt: null,
-      turnDiffSummaryByAssistantMessageId: new Map(),
-      revertTurnCountByUserMessageId: new Map(),
-    });
-
-    expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
-      hiddenCount: 2,
-      hasFailure,
-    });
-  });
-
-  it.each([
-    ["the later success is hidden", ["failed", "completed", "info"], false],
-    ["the later success is visible", ["failed", "info", "completed"], false],
-    ["an error-toned entry recovers", ["error", "info", "completed"], false],
-    ["the final failure is hidden", ["completed", "failed", "info"], true],
-    ["the final failure is visible", ["failed", "info", "failed"], true],
-    ["the only failure is visible", ["completed", "info", "failed"], false],
-  ] as const)(
-    "uses the final tool call for mixed work groups when %s",
-    (_, statuses, hasFailure) => {
-      const timelineEntries = statuses.map((status, index) => {
-        const id = `work-${index}`;
-        const createdAt = `2026-01-01T00:00:0${index}Z`;
-
-        return {
-          id: `work-entry-${index}`,
-          kind: "work" as const,
-          createdAt,
-          entry:
-            status === "info"
-              ? { id, createdAt, label: "Status updated", tone: "info" as const }
-              : status === "error"
-                ? { id, createdAt, label: "Command failed", tone: "error" as const }
-                : {
-                    id,
-                    createdAt,
-                    label: "Ran command",
-                    tone: "tool" as const,
-                    toolLifecycleStatus: status,
-                  },
-        };
-      });
-
-      const rows = deriveMessagesTimelineRows({
-        timelineEntries,
-        isWorking: false,
-        activeTurnStartedAt: null,
-        turnDiffSummaryByAssistantMessageId: new Map(),
-        revertTurnCountByUserMessageId: new Map(),
-      });
-
-      expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
-        hiddenCount: 2,
-        summary: null,
-        hasFailure,
-      });
-    },
-  );
 });
 
 describe("computeStableMessagesTimelineRows", () => {

@@ -403,6 +403,36 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
+  it("renders command details and output expanded by default", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "command-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "command",
+              createdAt: MESSAGE_CREATED_AT,
+              turnId: TurnId.make("turn-command"),
+              label: "Ran command",
+              command: "find . -maxdepth 1",
+              rawCommand: '/bin/zsh -lc "find . -maxdepth 1"',
+              output: "README.md",
+              itemType: "command_execution",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("/bin/zsh -lc &quot;find . -maxdepth 1&quot;");
+    expect(markup).toContain("<hr");
+    expect(markup).toContain("README.md");
+  });
+
   it("treats only the strict list end as the live edge", async () => {
     const {
       resolveTimelineIsAtEnd,
