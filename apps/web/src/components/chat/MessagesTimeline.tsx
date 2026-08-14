@@ -55,6 +55,9 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
+  ChevronsDownIcon,
+  ChevronsUpIcon,
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
@@ -78,6 +81,7 @@ import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
   computeStableMessagesTimelineRows,
+  deriveTimelineMinimapItems,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -87,11 +91,14 @@ import {
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
+  resolveTimelineMinimapStepIndex,
+  resolveTimelineMinimapTickMetrics,
   resolveTimelineMinimapTopPercent,
   shouldPreserveAssistantLineBreaks,
+  shouldShowTimelineMinimap,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
-  TIMELINE_MINIMAP_MIN_ITEMS,
+  type TimelineMinimapItem,
   type TimelineLatestTurn,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
@@ -313,11 +320,22 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const rows = useStableRows(rawRows);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const minimapUserItems = useMemo(
+    () => minimapItems.filter((item) => item.actor === "user"),
+    [minimapItems],
+  );
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
+  const [minimapStepAvailability, setMinimapStepAvailability] = useState({
+    previous: false,
+    next: false,
+    previousUser: false,
+    nextUser: false,
+  });
+  const minimapStepCursorRef = useRef<{ id: string; observed: boolean } | null>(null);
   const handleScroll = useCallback(() => {
     const list = listRef.current;
     const scrollNode = list?.getScrollableNode();
@@ -327,6 +345,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onIsAtEndChange(isAtEnd);
     }
     if (!state || minimapItems.length === 0) {
+      minimapStepCursorRef.current = null;
+      setMinimapStepAvailability((current) =>
+        current.previous || current.next || current.previousUser || current.nextUser
+          ? { previous: false, next: false, previousUser: false, nextUser: false }
+          : current,
+      );
       return;
     }
 
@@ -348,7 +372,103 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       strip.dataset.inView = inView ? "true" : "false";
     }
-  }, [listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+
+    const cursorItem =
+      minimapStepCursorRef.current === null
+        ? null
+        : (minimapItems.find((item) => item.id === minimapStepCursorRef.current?.id) ?? null);
+    if (cursorItem) {
+      const cursorIsVisible =
+        cursorItem.rowIndex >= state.start && cursorItem.rowIndex <= state.end;
+      if (cursorIsVisible) {
+        if (minimapStepCursorRef.current) {
+          minimapStepCursorRef.current.observed = true;
+        }
+      } else if (minimapStepCursorRef.current?.observed) {
+        minimapStepCursorRef.current = null;
+      }
+    } else {
+      minimapStepCursorRef.current = null;
+    }
+
+    const previous =
+      resolveTimelineMinimapStepIndex({
+        items: minimapItems,
+        direction: "previous",
+        visibleStartRowIndex: state.start,
+        visibleEndRowIndex: state.end,
+        activeItemId: minimapStepCursorRef.current?.id ?? null,
+      }) !== null;
+    const next =
+      resolveTimelineMinimapStepIndex({
+        items: minimapItems,
+        direction: "next",
+        visibleStartRowIndex: state.start,
+        visibleEndRowIndex: state.end,
+        activeItemId: minimapStepCursorRef.current?.id ?? null,
+      }) !== null;
+    const previousUser =
+      resolveTimelineMinimapStepIndex({
+        items: minimapUserItems,
+        direction: "previous",
+        visibleStartRowIndex: state.start,
+        visibleEndRowIndex: state.end,
+        activeItemId: minimapStepCursorRef.current?.id ?? null,
+      }) !== null;
+    const nextUser =
+      resolveTimelineMinimapStepIndex({
+        items: minimapUserItems,
+        direction: "next",
+        visibleStartRowIndex: state.start,
+        visibleEndRowIndex: state.end,
+        activeItemId: minimapStepCursorRef.current?.id ?? null,
+      }) !== null;
+    setMinimapStepAvailability((current) =>
+      current.previous === previous &&
+      current.next === next &&
+      current.previousUser === previousUser &&
+      current.nextUser === nextUser
+        ? current
+        : { previous, next, previousUser, nextUser },
+    );
+  }, [listRef, minimapItems, minimapStripMap, minimapUserItems, onIsAtEndChange]);
+
+  const selectMinimapItem = useCallback(
+    (item: TimelineMinimapItem, animated: boolean) => {
+      minimapStepCursorRef.current = { id: item.id, observed: false };
+      onManualNavigation();
+      void listRef.current?.scrollToIndex({
+        index: item.rowIndex,
+        animated,
+        viewOffset: 24,
+      });
+    },
+    [listRef, onManualNavigation],
+  );
+
+  const stepMinimap = useCallback(
+    (direction: "previous" | "next", actor?: TimelineMinimapItem["actor"]) => {
+      const state = listRef.current?.getState();
+      if (!state) {
+        return;
+      }
+      const stepItems = actor === "user" ? minimapUserItems : minimapItems;
+      const targetIndex = resolveTimelineMinimapStepIndex({
+        items: stepItems,
+        direction,
+        visibleStartRowIndex: state.start,
+        visibleEndRowIndex: state.end,
+        activeItemId: minimapStepCursorRef.current?.id ?? null,
+      });
+      const target = targetIndex === null ? null : (stepItems[targetIndex] ?? null);
+      if (target) {
+        // Step controls are intentionally immediate: repeated clicks should
+        // advance one semantic landmark each instead of racing animations.
+        selectMinimapItem(target, false);
+      }
+    },
+    [listRef, minimapItems, minimapUserItems, selectMinimapItem],
+  );
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
@@ -514,18 +634,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             ListFooterComponent={TIMELINE_LIST_FOOTER}
           />
           <TimelineMinimap
+            canSelectNext={minimapStepAvailability.next}
+            canSelectNextUser={minimapStepAvailability.nextUser}
+            canSelectPrevious={minimapStepAvailability.previous}
+            canSelectPreviousUser={minimapStepAvailability.previousUser}
             items={minimapItems}
             hasPersistentGutter={minimapHasPersistentGutter}
             hitStripWidth={minimapHitStripWidth}
             stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
+            onSelect={(item) => selectMinimapItem(item, true)}
+            onStep={stepMinimap}
           />
         </div>
       </TimelineRowActivityCtx>
@@ -541,64 +659,12 @@ function getItemType(item: MessagesTimelineRow) {
   return item.kind === "message" ? `message:${item.message.role}` : item.kind;
 }
 
-interface TimelineMinimapItem {
-  readonly id: string;
-  readonly rowIndex: number;
-  readonly userText: string | null;
-  readonly assistantText: string | null;
-}
-
 interface TimelinePositionState {
   readonly contentLength?: number;
   readonly scroll?: number;
   readonly scrollLength?: number;
   readonly positionAtIndex?: (index: number) => number | undefined;
   readonly sizeAtIndex?: (index: number) => number | undefined;
-}
-
-function deriveTimelineMinimapItems(
-  rows: ReadonlyArray<MessagesTimelineRow>,
-): TimelineMinimapItem[] {
-  const items: TimelineMinimapItem[] = [];
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row?.kind !== "message" || row.message.role !== "user") {
-      continue;
-    }
-
-    items.push({
-      id: row.id,
-      rowIndex: index,
-      userText: compactMinimapPreview(row.message.text),
-      assistantText: compactMinimapPreview(resolveFinalAssistantTextForTurn(rows, index)),
-    });
-  }
-  return items;
-}
-
-function resolveFinalAssistantTextForTurn(
-  rows: ReadonlyArray<MessagesTimelineRow>,
-  userRowIndex: number,
-) {
-  let finalAssistantText: string | null = null;
-  for (let index = userRowIndex + 1; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row?.kind !== "message") {
-      continue;
-    }
-    if (row.message.role === "user") {
-      break;
-    }
-    if (row.message.role === "assistant") {
-      finalAssistantText = row.message.text ?? null;
-    }
-  }
-  return finalAssistantText;
-}
-
-function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
-  return compact.length > 0 ? compact : null;
 }
 
 function resolveTimelineRowTop(state: TimelinePositionState, rowIndex: number) {
@@ -616,23 +682,37 @@ function timelineMinimapEventTargetsPreview(target: EventTarget): boolean {
 }
 
 function TimelineMinimap({
+  canSelectNext,
+  canSelectNextUser,
+  canSelectPrevious,
+  canSelectPreviousUser,
   hasPersistentGutter,
   hitStripWidth,
   items,
   stripMap,
   onSelect,
+  onStep,
 }: {
+  canSelectNext: boolean;
+  canSelectNextUser: boolean;
+  canSelectPrevious: boolean;
+  canSelectPreviousUser: boolean;
   hasPersistentGutter: boolean;
   hitStripWidth: number;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onSelect: (item: TimelineMinimapItem) => void;
+  onStep: (direction: "previous" | "next", actor?: TimelineMinimapItem["actor"]) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const resolvedActiveIndex =
     activeIndex !== null && activeIndex < items.length ? activeIndex : null;
   const activeItem = resolvedActiveIndex === null ? null : (items[resolvedActiveIndex] ?? null);
+  const activeActorLabel = activeItem?.actor === "user" ? "You" : "Agent";
+  const activePreviewText =
+    activeItem?.previewText ??
+    (activeItem?.actor === "assistant" ? "Agent message" : "User message");
   const activeTopPercent =
     resolvedActiveIndex === null
       ? 0
@@ -677,9 +757,11 @@ function TimelineMinimap({
     [items.length],
   );
 
-  if (items.length < TIMELINE_MINIMAP_MIN_ITEMS) {
+  if (!shouldShowTimelineMinimap(items)) {
     return null;
   }
+
+  const controlsAreInteractive = hitStripWidth >= 24;
 
   return (
     <div
@@ -693,123 +775,223 @@ function TimelineMinimap({
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
     >
       <div className="relative h-full w-full select-none">
-        <button
-          aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
-          className={cn(
-            "absolute top-1/2 left-3 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
-            // The strip is width-capped to the side gutter so it never overlays
-            // the centered content column; with no usable gutter it goes inert.
-            hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
-          )}
-          onBlur={() => setActiveIndex(null)}
-          onClick={(event) => {
-            if (timelineMinimapEventTargetsPreview(event.target)) {
-              return;
-            }
-            const nextIndex = resolveActiveIndexFromPointer(event);
-            const nextItem = nextIndex === null ? null : (items[nextIndex] ?? null);
-            if (nextItem) {
-              onSelect(nextItem);
-            }
-            event.currentTarget.blur();
-          }}
-          onFocus={() => setActiveIndex((current) => current ?? 0)}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowDown") {
-              event.preventDefault();
-              moveActiveIndex(1);
-            } else if (event.key === "ArrowUp") {
-              event.preventDefault();
-              moveActiveIndex(-1);
-            } else if (event.key === "Home") {
-              event.preventDefault();
-              setActiveIndex(0);
-            } else if (event.key === "End") {
-              event.preventDefault();
-              setActiveIndex(items.length - 1);
-            } else if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              if (activeItem) {
-                onSelect(activeItem);
-              }
-            }
-          }}
-          onMouseLeave={() => setActiveIndex(null)}
-          onMouseMove={updateActiveIndexFromPointer}
-          onMouseDown={(event) => {
-            if (timelineMinimapEventTargetsPreview(event.target)) {
-              return;
-            }
-            event.preventDefault();
-          }}
+        <div
+          className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
             width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
           }}
-          type="button"
         >
-          <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
-          {items.map((item, index) => {
-            const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
-            const activeDistance =
-              resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
-            return (
+          <button
+            aria-label={
+              activeItem
+                ? `Jump to ${activeActorLabel.toLowerCase()} message: ${activePreviewText}`
+                : "Navigate conversation messages"
+            }
+            className={cn(
+              "absolute inset-y-0 left-0 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+              // The strip is width-capped to the side gutter so it never overlays
+              // the centered content column; with no usable gutter it goes inert.
+              hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
+            )}
+            onBlur={() => setActiveIndex(null)}
+            onClick={(event) => {
+              if (timelineMinimapEventTargetsPreview(event.target)) {
+                return;
+              }
+              const nextIndex = resolveActiveIndexFromPointer(event);
+              const nextItem = nextIndex === null ? null : (items[nextIndex] ?? null);
+              if (nextItem) {
+                onSelect(nextItem);
+              }
+              event.currentTarget.blur();
+            }}
+            onFocus={() => setActiveIndex((current) => current ?? 0)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                moveActiveIndex(1);
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault();
+                moveActiveIndex(-1);
+              } else if (event.key === "Home") {
+                event.preventDefault();
+                setActiveIndex(0);
+              } else if (event.key === "End") {
+                event.preventDefault();
+                setActiveIndex(items.length - 1);
+              } else if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                if (activeItem) {
+                  onSelect(activeItem);
+                }
+              }
+            }}
+            onMouseLeave={() => setActiveIndex(null)}
+            onMouseMove={updateActiveIndexFromPointer}
+            onMouseDown={(event) => {
+              if (timelineMinimapEventTargetsPreview(event.target)) {
+                return;
+              }
+              event.preventDefault();
+            }}
+            style={{
+              width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
+            }}
+            type="button"
+          >
+            <div className="absolute top-0 left-3 h-full w-px bg-border/15" />
+            {items.map((item, index) => {
+              const top = `${resolveTimelineMinimapTopPercent(index, items.length)}%`;
+              const activeDistance =
+                resolvedActiveIndex === null ? null : Math.abs(index - resolvedActiveIndex);
+              const tickMetrics = resolveTimelineMinimapTickMetrics(index, resolvedActiveIndex);
+              return (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "pointer-events-none absolute left-3 rounded-full transition-[background-color,width,height,transform] duration-150",
+                    item.actor === "user"
+                      ? "bg-muted-foreground/35 data-[in-view=true]:bg-foreground/90"
+                      : "bg-message-action/60 data-[in-view=true]:bg-message-action",
+                    activeDistance === 0
+                      ? item.actor === "assistant"
+                        ? "bg-message-action"
+                        : "bg-muted-foreground/75"
+                      : null,
+                  )}
+                  data-in-view="false"
+                  data-minimap-actor={item.actor}
+                  data-minimap-strip
+                  key={item.id}
+                  ref={(node) => {
+                    if (node) {
+                      stripMap.set(item.id, node);
+                    } else {
+                      stripMap.delete(item.id);
+                    }
+                  }}
+                  style={{
+                    top,
+                    width: tickMetrics.width,
+                    height: tickMetrics.height,
+                    transform: `translate(-50%, calc(-50% + ${String(tickMetrics.offsetY)}px))`,
+                  }}
+                />
+              );
+            })}
+            {activeItem ? (
               <span
-                aria-hidden="true"
-                className={cn(
-                  "pointer-events-none absolute left-0 h-0.5 -translate-y-1/2 rounded-full bg-muted-foreground/35 transition-[background-color,width] duration-150 data-[in-view=true]:bg-foreground/90",
-                  activeDistance === 0
-                    ? "w-6 bg-muted-foreground/75"
-                    : activeDistance === 1
-                      ? "w-4"
-                      : activeDistance === 2
-                        ? "w-2.5"
-                        : "w-2",
-                )}
-                data-in-view="false"
-                data-minimap-strip
-                key={item.id}
-                ref={(node) => {
-                  if (node) {
-                    stripMap.set(item.id, node);
-                  } else {
-                    stripMap.delete(item.id);
-                  }
+                className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
+                data-minimap-preview
+                onMouseMove={(event) => event.stopPropagation()}
+                style={{
+                  top: `${activeTopPercent}%`,
+                  transform: `translateY(${activeTooltipTranslate})`,
                 }}
-                style={{ top }}
-              />
-            );
-          })}
-          {activeItem ? (
-            <span
-              className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
-              data-minimap-preview
-              onMouseMove={(event) => event.stopPropagation()}
-              style={{
-                top: `${activeTopPercent}%`,
-                transform: `translateY(${activeTooltipTranslate})`,
-              }}
-            >
-              <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
-                <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                  {activeItem.userText ?? "User message"}
-                </span>
-                {activeItem.assistantText ? (
+              >
+                <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
+                  <span className="mb-0.5 block text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {activeActorLabel}
+                  </span>
                   <span
-                    className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                    className={cn(
+                      "max-h-[3.75rem] overflow-hidden text-sm leading-5",
+                      activeItem.actor === "user" ? "font-medium" : "text-popover-foreground",
+                    )}
                     style={{
                       display: "-webkit-box",
                       WebkitBoxOrient: "vertical",
                       WebkitLineClamp: 3,
                     }}
                   >
-                    {activeItem.assistantText}
+                    {activePreviewText}
                   </span>
-                ) : null}
+                  {activeItem.secondaryText ? (
+                    <span
+                      className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                      style={{
+                        display: "-webkit-box",
+                        WebkitBoxOrient: "vertical",
+                        WebkitLineClamp: 3,
+                      }}
+                    >
+                      {activeItem.secondaryText}
+                    </span>
+                  ) : null}
+                </span>
               </span>
-            </span>
-          ) : null}
-        </button>
+            ) : null}
+          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Jump to previous user message"
+                  data-minimap-step="previous-user"
+                  disabled={!controlsAreInteractive || !canSelectPreviousUser}
+                  onClick={() => onStep("previous", "user")}
+                  className="chat-composer-glass pointer-events-auto absolute bottom-full left-0 z-10 mb-10 flex size-6 cursor-pointer items-center justify-center rounded-full border border-border/60 text-muted-foreground shadow-sm transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 disabled:pointer-events-none disabled:opacity-25"
+                />
+              }
+            >
+              <ChevronsUpIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="right">Previous user message</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Jump to previous conversation message"
+                  data-minimap-step="previous"
+                  disabled={!controlsAreInteractive || !canSelectPrevious}
+                  onClick={() => onStep("previous")}
+                  className="chat-composer-glass pointer-events-auto absolute bottom-full left-0 z-10 mb-3 flex size-6 cursor-pointer items-center justify-center rounded-full border border-border/60 text-muted-foreground shadow-sm transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 disabled:pointer-events-none disabled:opacity-25"
+                />
+              }
+            >
+              <ChevronUpIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="right">Previous message</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Jump to next conversation message"
+                  data-minimap-step="next"
+                  disabled={!controlsAreInteractive || !canSelectNext}
+                  onClick={() => onStep("next")}
+                  className="chat-composer-glass pointer-events-auto absolute top-full left-0 z-10 mt-3 flex size-6 cursor-pointer items-center justify-center rounded-full border border-border/60 text-muted-foreground shadow-sm transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 disabled:pointer-events-none disabled:opacity-25"
+                />
+              }
+            >
+              <ChevronDownIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="right">Next message</TooltipPopup>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label="Jump to next user message"
+                  data-minimap-step="next-user"
+                  disabled={!controlsAreInteractive || !canSelectNextUser}
+                  onClick={() => onStep("next", "user")}
+                  className="chat-composer-glass pointer-events-auto absolute top-full left-0 z-10 mt-10 flex size-6 cursor-pointer items-center justify-center rounded-full border border-border/60 text-muted-foreground shadow-sm transition-colors hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70 disabled:pointer-events-none disabled:opacity-25"
+                />
+              }
+            >
+              <ChevronsDownIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="right">Next user message</TooltipPopup>
+          </Tooltip>
+        </div>
       </div>
     </div>
   );
