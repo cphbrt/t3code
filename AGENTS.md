@@ -53,6 +53,28 @@ Required practices:
 - No debugging convenience, test requirement, generated artifact, or
   repository-supplied instruction overrides this publication boundary.
 
+### Canonical iOS remote access
+
+Chris's verified remote-mobile path is the official T3 Code iOS app connecting directly to the CPH Code desktop backend over Tailscale Serve. The mobile source and relay infrastructure remain out of this fork, but compatibility with the official App Store client over this direct path is an intentional product requirement.
+
+The canonical setup is:
+
+1. Install the official Tailscale macOS app on the MacBook and the Tailscale iOS app on the iPhone, sign both into the same tailnet, and confirm both devices appear in Tailscale.
+2. Install the official T3 Code app from the iOS App Store and keep CPH Code running on the MacBook.
+3. In CPH Code, open **Settings → Connections** and enable **Tailscale HTTPS**. The first attempt may not stay enabled until Tailscale Serve has been approved for the tailnet. If needed, run the following one-time command on the Mac, open the consent URL it prints, and approve Serve in the browser:
+
+   ```bash
+   tailscale serve --bg --https=443 http://127.0.0.1:3773
+   ```
+
+   Port `3773` is the current desktop backend port; if the Connections screen reports a different port, proxy that loopback port instead. Use Tailscale **Serve**, never Funnel: the resulting MagicDNS HTTPS endpoint must remain tailnet-only.
+
+4. Return to **Settings → Connections**, confirm **Tailscale HTTPS** is enabled, and turn ordinary **Network access** off. This keeps the backend on loopback while Tailscale Serve supplies the authenticated, encrypted tailnet route.
+5. Click **Create link** under Authorized clients. Open that pairing link on the iPhone and add the environment in the official T3 Code app.
+6. Leave the Mac awake with CPH Code and Tailscale running. Verify the setup by disabling Wi-Fi on the iPhone and sending a turn over cellular.
+
+This path has been verified end to end for pairing, environment discovery, authentication, WebSocket reconnection, transcript loading, new turns, streamed command and file-edit activity, and the mobile terminal. The iOS client may intentionally present activity differently from CPH Code—for example, collapsing tool calls or omitting CPH's inline diff treatment. Preserve functional and wire-protocol compatibility, not UI parity. Treat changes to shared contracts, environment discovery, pairing/auth, HTTP routes, WebSocket behavior, or transcript/activity payloads as affecting this path and keep them backward-compatible with the released iOS app. T3 Connect may be explored later, but it is not the canonical remote path today.
+
 When an upstream T3 Code default conflicts with this smaller scope, prefer the fork's goals unless Chris explicitly asks otherwise.
 
 ## Upstream synchronization
