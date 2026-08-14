@@ -2,11 +2,15 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
+  deriveTimelineMinimapItems,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
-  reconcileTimelineScrollToEnd,
   resolveAssistantMessageCopyState,
+  reconcileTimelineScrollToEnd,
+  resolveTimelineMinimapStepIndex,
+  resolveTimelineMinimapTickMetrics,
   shouldPreserveAssistantLineBreaks,
+  shouldShowTimelineMinimap,
 } from "./MessagesTimeline.logic";
 
 describe("shouldPreserveAssistantLineBreaks", () => {
@@ -238,6 +242,291 @@ describe("normalizeCompactToolLabel", () => {
 
   it("removes trailing completion wording from other labels", () => {
     expect(normalizeCompactToolLabel("Read file completed")).toBe("Read file");
+  });
+});
+
+describe("timeline minimap landmarks", () => {
+  const turnId = "turn-minimap" as never;
+  const timelineEntries = [
+    {
+      id: "user-entry",
+      kind: "message" as const,
+      createdAt: "2026-01-01T00:00:00Z",
+      message: {
+        id: "user-message" as never,
+        role: "user" as const,
+        text: "Please inspect the timeline.\nThen explain it.",
+        turnId: null,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+        streaming: false,
+      },
+    },
+    {
+      id: "commentary-entry",
+      kind: "message" as const,
+      createdAt: "2026-01-01T00:00:05Z",
+      message: {
+        id: "commentary-message" as never,
+        role: "assistant" as const,
+        text: "I’m tracing the rendered rows first.",
+        turnId,
+        createdAt: "2026-01-01T00:00:05Z",
+        updatedAt: "2026-01-01T00:00:06Z",
+        streaming: false,
+      },
+    },
+    {
+      id: "work-entry",
+      kind: "work" as const,
+      createdAt: "2026-01-01T00:00:10Z",
+      entry: {
+        id: "work-message",
+        turnId,
+        createdAt: "2026-01-01T00:00:10Z",
+        label: "Read timeline source",
+        tone: "tool" as const,
+      },
+    },
+    {
+      id: "final-entry",
+      kind: "message" as const,
+      createdAt: "2026-01-01T00:00:15Z",
+      message: {
+        id: "final-message" as never,
+        role: "assistant" as const,
+        text: "The timeline now has semantic landmarks.",
+        turnId,
+        createdAt: "2026-01-01T00:00:15Z",
+        updatedAt: "2026-01-01T00:00:20Z",
+        streaming: false,
+      },
+    },
+  ];
+
+  function deriveRows() {
+    return deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId,
+        state: "completed" as const,
+        startedAt: "2026-01-01T00:00:01Z",
+        completedAt: "2026-01-01T00:00:20Z",
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+  }
+
+  it("interleaves user and assistant messages in rendered order", () => {
+    const items = deriveTimelineMinimapItems(deriveRows());
+
+    expect(items).toMatchObject([
+      {
+        actor: "user",
+        rowIndex: 0,
+        previewText: "Please inspect the timeline. Then explain it.",
+        secondaryText: "The timeline now has semantic landmarks.",
+      },
+      {
+        actor: "assistant",
+        rowIndex: 1,
+        previewText: "I’m tracing the rendered rows first.",
+        secondaryText: null,
+      },
+      {
+        actor: "assistant",
+        rowIndex: 3,
+        previewText: "The timeline now has semantic landmarks.",
+        secondaryText: null,
+      },
+    ]);
+  });
+
+  it("excludes activity rows from message landmarks", () => {
+    const items = deriveTimelineMinimapItems(deriveRows());
+
+    expect(items.map((item) => item.actor)).toEqual(["user", "assistant", "assistant"]);
+    expect(items.some((item) => item.previewText?.startsWith("Read timeline"))).toBe(false);
+  });
+
+  it("stays hidden for one prompt and one reply, but appears for either repeated actor", () => {
+    const user = {
+      id: "user",
+      rowIndex: 0,
+      actor: "user" as const,
+      previewText: "Prompt",
+      secondaryText: null,
+    };
+    const assistant = {
+      ...user,
+      id: "assistant",
+      rowIndex: 1,
+      actor: "assistant" as const,
+      previewText: "Reply",
+    };
+
+    expect(shouldShowTimelineMinimap([user, assistant])).toBe(false);
+    expect(shouldShowTimelineMinimap([user, { ...user, id: "user-2", rowIndex: 2 }])).toBe(true);
+    expect(
+      shouldShowTimelineMinimap([
+        user,
+        assistant,
+        { ...assistant, id: "assistant-2", rowIndex: 2 },
+      ]),
+    ).toBe(true);
+  });
+
+  it("steps one landmark relative to the rendered viewport", () => {
+    const items = [1, 5, 9].map((rowIndex) => ({
+      id: `item-${String(rowIndex)}`,
+      rowIndex,
+      actor: "assistant" as const,
+      previewText: null,
+      secondaryText: null,
+    }));
+
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "previous",
+        visibleStartRowIndex: 5,
+        visibleEndRowIndex: 7,
+      }),
+    ).toBe(0);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "next",
+        visibleStartRowIndex: 5,
+        visibleEndRowIndex: 7,
+      }),
+    ).toBe(2);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "previous",
+        visibleStartRowIndex: 6,
+        visibleEndRowIndex: 8,
+      }),
+    ).toBe(1);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "next",
+        visibleStartRowIndex: 6,
+        visibleEndRowIndex: 8,
+      }),
+    ).toBe(2);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "next",
+        visibleStartRowIndex: 1,
+        visibleEndRowIndex: 5,
+      }),
+    ).toBe(2);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "previous",
+        visibleStartRowIndex: 1,
+        visibleEndRowIndex: 5,
+        activeItemId: "item-5",
+      }),
+    ).toBe(0);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "next",
+        visibleStartRowIndex: 1,
+        visibleEndRowIndex: 5,
+        activeItemId: "item-5",
+      }),
+    ).toBe(2);
+  });
+
+  it("steps through a user-only landmark list", () => {
+    const items = [
+      { id: "user-1", rowIndex: 1, actor: "user" as const },
+      { id: "assistant-2", rowIndex: 2, actor: "assistant" as const },
+      { id: "assistant-4", rowIndex: 4, actor: "assistant" as const },
+      { id: "user-5", rowIndex: 5, actor: "user" as const },
+      { id: "assistant-7", rowIndex: 7, actor: "assistant" as const },
+      { id: "user-9", rowIndex: 9, actor: "user" as const },
+    ]
+      .filter((item) => item.actor === "user")
+      .map((item) => ({ ...item, previewText: null, secondaryText: null }));
+
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "previous",
+        visibleStartRowIndex: 4,
+        visibleEndRowIndex: 6,
+      }),
+    ).toBe(0);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "next",
+        visibleStartRowIndex: 4,
+        visibleEndRowIndex: 6,
+      }),
+    ).toBe(2);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "next",
+        visibleStartRowIndex: 4,
+        visibleEndRowIndex: 6,
+        activeItemId: "user-5",
+      }),
+    ).toBe(2);
+    expect(
+      resolveTimelineMinimapStepIndex({
+        items,
+        direction: "previous",
+        visibleStartRowIndex: 4,
+        visibleEndRowIndex: 6,
+        activeItemId: "user-5",
+      }),
+    ).toBe(0);
+  });
+
+  it("magnifies a bounded neighborhood around the active tick", () => {
+    expect(resolveTimelineMinimapTickMetrics(5, null)).toEqual({
+      width: 8,
+      height: 2,
+      offsetY: 0,
+    });
+    expect(resolveTimelineMinimapTickMetrics(5, 5)).toEqual({
+      width: 32,
+      height: 5,
+      offsetY: 0,
+    });
+    expect(resolveTimelineMinimapTickMetrics(4, 5)).toEqual({
+      width: 24,
+      height: 4,
+      offsetY: -6,
+    });
+    expect(resolveTimelineMinimapTickMetrics(7, 5)).toEqual({
+      width: 18,
+      height: 3,
+      offsetY: 10,
+    });
+    expect(resolveTimelineMinimapTickMetrics(2, 5)).toEqual({
+      width: 12,
+      height: 2,
+      offsetY: -12,
+    });
+    expect(resolveTimelineMinimapTickMetrics(1, 5)).toEqual({
+      width: 8,
+      height: 2,
+      offsetY: -12,
+    });
   });
 });
 

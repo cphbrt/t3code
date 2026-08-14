@@ -225,6 +225,62 @@ function buildAssistantTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders distinct user and agent landmarks with step controls", () => {
+    const turnId = TurnId.make("turn-minimap");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        activeTurnInProgress
+        latestTurn={{
+          turnId,
+          state: "running",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: null,
+        }}
+        runningTurnId={turnId}
+        timelineEntries={[
+          buildUserTimelineEntry("Inspect this conversation"),
+          {
+            id: "entry-agent-commentary",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            message: {
+              id: MessageId.make("message-agent-commentary"),
+              role: "assistant",
+              text: "I’ll inspect the timeline first.",
+              turnId,
+              createdAt: "2026-03-17T19:12:29.000Z",
+              updatedAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-agent-followup",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:31.000Z",
+            message: {
+              id: MessageId.make("message-agent-followup"),
+              role: "assistant",
+              text: "The landmarks are ready.",
+              turnId,
+              createdAt: "2026-03-17T19:12:31.000Z",
+              updatedAt: "2026-03-17T19:12:32.000Z",
+              streaming: true,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-testid="timeline-minimap"');
+    expect(markup.match(/data-minimap-actor="user"/g)).toHaveLength(1);
+    expect(markup.match(/data-minimap-actor="assistant"/g)).toHaveLength(2);
+    expect(markup).toContain('aria-label="Jump to previous conversation message"');
+    expect(markup).toContain('aria-label="Jump to next conversation message"');
+    expect(markup).toContain('aria-label="Jump to previous user message"');
+    expect(markup).toContain('aria-label="Jump to next user message"');
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
@@ -433,7 +489,8 @@ describe("MessagesTimeline", () => {
       resolveTimelineIsAtEnd({ scrollHeight: Number.NaN, scrollTop: 0, clientHeight: 800 }),
     ).toBeUndefined();
 
-    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100% - 9rem))");
+    expect(resolveTimelineMinimapHeightStyle(1000)).toBe("min(7992px, calc(100% - 9rem))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
     expect(
       resolveTimelineMinimapIndexFromPointer({
