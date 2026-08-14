@@ -17,7 +17,7 @@ without prompting; commands and anything else still stop for approval.
 
 **Auto**: routine actions proceed without you; risky ones still ask. How this is enforced depends
 on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
-permission mode, and providers without an equivalent (such as OpenCode) fall back to asking, like
+permission mode, and providers without an equivalent fall back to asking, like
 Supervised.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
