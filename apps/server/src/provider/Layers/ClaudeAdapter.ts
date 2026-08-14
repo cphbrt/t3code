@@ -47,6 +47,7 @@ import {
   type TaskAgentLinkage,
   type TaskRunHandles,
   ThreadId,
+  type ToolFileChange,
   TurnId,
   type UserInputQuestion,
 } from "@t3tools/contracts";
@@ -286,6 +287,8 @@ interface ClaudeSessionContext {
     items: Array<unknown>;
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
+  /** Structured post-tool results keyed by tool-use id for parallel edit calls. */
+  readonly toolResults: Map<string, Record<string, unknown>>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
   /**
@@ -848,6 +851,83 @@ function readClaudeToolUseResult(message: SDKMessage): Record<string, unknown> |
   return result !== null && typeof result === "object" && !Array.isArray(result)
     ? (result as Record<string, unknown>)
     : undefined;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function structuredPatchText(value: unknown): string | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const hunks: string[] = [];
+  for (const candidate of value) {
+    const hunk = readRecord(candidate);
+    if (
+      !hunk ||
+      typeof hunk.oldStart !== "number" ||
+      typeof hunk.oldLines !== "number" ||
+      typeof hunk.newStart !== "number" ||
+      typeof hunk.newLines !== "number" ||
+      !Array.isArray(hunk.lines) ||
+      !hunk.lines.every((line) => typeof line === "string")
+    ) {
+      continue;
+    }
+    hunks.push(
+      `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
+      ...(hunk.lines as string[]),
+    );
+  }
+  return hunks.length > 0 ? hunks.join("\n") : undefined;
+}
+
+function fullReplacementPatch(original: string, updated: string): string {
+  const oldLines = original.length === 0 ? [] : original.replace(/\n$/, "").split("\n");
+  const newLines = updated.length === 0 ? [] : updated.replace(/\n$/, "").split("\n");
+  return [
+    `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+    ...oldLines.map((line) => `-${line}`),
+    ...newLines.map((line) => `+${line}`),
+  ].join("\n");
+}
+
+function claudeToolFileChanges(
+  toolName: string,
+  input: unknown,
+  result: Record<string, unknown> | undefined,
+): ReadonlyArray<ToolFileChange> | undefined {
+  if (!result || (toolName !== "Edit" && toolName !== "Write" && toolName !== "NotebookEdit")) {
+    return undefined;
+  }
+
+  const inputRecord = readRecord(input);
+  const gitDiff = readRecord(result.gitDiff);
+  const gitPatch = readString(gitDiff?.patch);
+  const structuredPatch = structuredPatchText(result.structuredPatch);
+  if (toolName === "NotebookEdit") {
+    const path = readString(result.notebook_path) ?? readString(inputRecord?.notebook_path);
+    const original = typeof result.original_file === "string" ? result.original_file : undefined;
+    const updated = typeof result.updated_file === "string" ? result.updated_file : undefined;
+    if (!path || original === undefined || updated === undefined || original === updated) {
+      return undefined;
+    }
+    return [{ path, kind: "update", diff: fullReplacementPatch(original, updated) }];
+  }
+
+  const path =
+    readString(result.filePath) ??
+    readString(inputRecord?.file_path) ??
+    readString(inputRecord?.path);
+  const diff = gitPatch ?? structuredPatch;
+  if (!path || !diff) {
+    return undefined;
+  }
+  const kind = toolName === "Write" && result.type === "create" ? "add" : "update";
+  return [{ path, kind, diff }];
 }
 
 function readClaudeTaskFromResult(
@@ -2746,7 +2826,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
-      const toolUseResult = readClaudeToolUseResult(message);
+      const toolUseResult =
+        context.toolResults.get(toolResult.toolUseId) ?? readClaudeToolUseResult(message);
+      const fileChanges = toolResult.isError
+        ? undefined
+        : claudeToolFileChanges(tool.toolName, tool.input, toolUseResult);
       const toolData = {
         toolName: tool.toolName,
         input: tool.input,
@@ -2823,6 +2907,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(tool.detail ? { detail: tool.detail } : {}),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
+          ...(fileChanges ? { fileChanges } : {}),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {
@@ -2884,6 +2969,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       context.inFlightTools.delete(index);
+      context.toolResults.delete(toolResult.toolUseId);
     }
   });
 
@@ -3855,6 +3941,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
       const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
       const inFlightTools = new Map<number, ToolInFlight>();
+      const toolResults = new Map<string, Record<string, unknown>>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
       const pendingTaskModels = new Map<string, string>();
@@ -4227,6 +4314,24 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        hooks: {
+          PostToolUse: [
+            {
+              matcher: "Edit|Write|NotebookEdit",
+              hooks: [
+                async (hookInput) => {
+                  if (hookInput.hook_event_name === "PostToolUse") {
+                    const result = readRecord(hookInput.tool_response);
+                    if (result) {
+                      toolResults.set(hookInput.tool_use_id, result);
+                    }
+                  }
+                  return {};
+                },
+              ],
+            },
+          ],
+        },
         canUseTool,
         env: claudeEnvironment,
         additionalDirectories,
@@ -4319,6 +4424,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pendingUserInputs,
         turns: [],
         inFlightTools,
+        toolResults,
         claudeTasks,
         taskAgents,
         pendingTaskModels,

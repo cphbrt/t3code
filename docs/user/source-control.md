@@ -8,6 +8,12 @@ CPH Code connects to GitHub so you can create pull requests, review code, and ma
 
 ## What You Can Do
 
+### Review Agent Edits as They Happen
+
+File-change rows open by default and show the applied red-and-green patch for structured Codex and
+Claude edits. Select the row to collapse or reopen it. Changes made indirectly by shell commands
+remain available in the completed turn's changed-files diff.
+
 ### Start Projects from Anywhere
 
 **Clone repositories directly**

@@ -405,12 +405,30 @@ const TurnDiffUpdatedPayload = Schema.Struct({
 });
 export type TurnDiffUpdatedPayload = typeof TurnDiffUpdatedPayload.Type;
 
+export const ToolFileChangeKind = Schema.Literals(["add", "delete", "update"]);
+export type ToolFileChangeKind = typeof ToolFileChangeKind.Type;
+
+/** Applied file change emitted by a provider's structured editing tool. */
+export const ToolFileChange = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  kind: ToolFileChangeKind,
+  diff: Schema.String,
+  previousPath: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type ToolFileChange = typeof ToolFileChange.Type;
+
+export const ToolFileChangesResult = Schema.Struct({
+  changes: Schema.Array(ToolFileChange),
+});
+export type ToolFileChangesResult = typeof ToolFileChangesResult.Type;
+
 export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
   data: Schema.optional(Schema.Unknown),
+  fileChanges: Schema.optional(Schema.Array(ToolFileChange)),
   /**
    * Owning agent when this item ran inside a subagent (resolved from the
    * SDK's parent_tool_use_id). Clients re-home attributed items out of the

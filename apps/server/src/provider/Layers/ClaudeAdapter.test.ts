@@ -267,6 +267,111 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("normalizes applied Edit patches from the structured tool result", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "item.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "edit the file",
+        attachments: [],
+      });
+
+      const postToolUseHook =
+        harness.getLastCreateQueryInput()?.options.hooks?.PostToolUse?.[0]?.hooks[0];
+      assert.isDefined(postToolUseHook);
+      yield* Effect.promise(() =>
+        postToolUseHook!(
+          {
+            hook_event_name: "PostToolUse",
+            tool_name: "Edit",
+            tool_input: { file_path: "src/app.ts" },
+            tool_response: {
+              filePath: "src/app.ts",
+              oldString: "old",
+              newString: "new",
+              originalFile: "old\n",
+              structuredPatch: [
+                {
+                  oldStart: 1,
+                  oldLines: 1,
+                  newStart: 1,
+                  newLines: 1,
+                  lines: ["-old", "+new"],
+                },
+              ],
+              userModified: false,
+              replaceAll: false,
+            },
+            tool_use_id: "tool-edit-1",
+          } as Parameters<NonNullable<typeof postToolUseHook>>[0],
+          "tool-edit-1",
+          { signal: new AbortController().signal },
+        ),
+      );
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-edit",
+        uuid: "stream-edit-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-edit-1",
+            name: "Edit",
+            input: { file_path: "src/app.ts", old_string: "old", new_string: "new" },
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-edit",
+        uuid: "user-edit-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-edit-1",
+              content: "Updated src/app.ts",
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      const completed = yield* Fiber.join(completedFiber);
+      assert.equal(completed._tag, "Some");
+      if (completed._tag !== "Some" || completed.value.type !== "item.completed") {
+        return;
+      }
+      assert.deepEqual(completed.value.payload.fileChanges, [
+        {
+          path: "src/app.ts",
+          kind: "update",
+          diff: "@@ -1,1 +1,1 @@\n-old\n+new",
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
