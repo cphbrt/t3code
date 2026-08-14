@@ -70,7 +70,9 @@ function makeProcess(options?: {
   readonly stdout?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly stderr?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>;
+  readonly isRunning?: Effect.Effect<boolean>;
   readonly kill?: ChildProcessSpawner.ChildProcessHandle["kill"];
+  readonly getInputFd?: ChildProcessSpawner.ChildProcessHandle["getInputFd"];
   readonly getOutputFd?: ChildProcessSpawner.ChildProcessHandle["getOutputFd"];
 }): ChildProcessSpawner.ChildProcessHandle {
   return ChildProcessSpawner.makeHandle({
@@ -79,10 +81,10 @@ function makeProcess(options?: {
     stderr: options?.stderr ?? Stream.empty,
     all: Stream.merge(options?.stdout ?? Stream.empty, options?.stderr ?? Stream.empty),
     exitCode: options?.exitCode ?? Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-    isRunning: Effect.succeed(false),
+    isRunning: options?.isRunning ?? Effect.succeed(false),
     kill: options?.kill ?? (() => Effect.void),
     stdin: Sink.drain,
-    getInputFd: () => Sink.drain,
+    getInputFd: options?.getInputFd ?? (() => Sink.drain),
     getOutputFd: options?.getOutputFd ?? (() => Stream.empty),
     unref: Effect.succeed(Effect.void),
   });
@@ -203,13 +205,22 @@ describe("DesktopBackendManager", () => {
                   bootstrapJson = yield* fd3.stream.pipe(Stream.decodeText(), Stream.mkString);
                 }
                 const fd4 = command.options.additionalFds?.fd4;
-                if (fd4?.type === "input" && fd4.stream) {
-                  telemetryJson = yield* fd4.stream.pipe(Stream.decodeText(), Stream.mkString);
+                assert.equal(fd4?.type, "input");
+                if (fd4?.type === "input") {
+                  assert.isUndefined(fd4.stream);
                 }
               }
 
               return makeProcess({
                 exitCode: Deferred.await(ready).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                getInputFd: (fd) =>
+                  fd === 4
+                    ? Sink.forEach((chunk: Uint8Array) =>
+                        Effect.sync(() => {
+                          telemetryJson += new TextDecoder().decode(chunk);
+                        }),
+                      )
+                    : Sink.drain,
               });
             }),
           ),
@@ -261,6 +272,90 @@ describe("DesktopBackendManager", () => {
           telemetryJson,
           '{"version":1,"type":"desktopTelemetryHello","electronPid":123}\n',
         );
+      }),
+    ),
+  );
+
+  it.effect("keeps backend termination reachable when the telemetry pipe is backpressured", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const telemetryWriteStarted = yield* Deferred.make<void>();
+        const terminationStarted = yield* Deferred.make<void>();
+        const telemetryEnded = yield* Deferred.make<void>();
+        const backendExited = yield* Deferred.make<void>();
+        const finalizerOrder: Array<"terminate" | "telemetry" | "backend"> = [];
+
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              yield* Effect.addFinalizer(() =>
+                Deferred.await(backendExited).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      finalizerOrder.push("backend");
+                    }),
+                  ),
+                ),
+              );
+              return makeProcess({
+                exitCode: Deferred.await(backendExited).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+                isRunning: Effect.succeed(true),
+                kill: (killOptions) =>
+                  Effect.sync(() => {
+                    assert.equal(killOptions?.killSignal, "SIGTERM");
+                    const forceKillAfter = killOptions?.forceKillAfter;
+                    assert.isDefined(forceKillAfter);
+                    if (forceKillAfter !== undefined) {
+                      assert.equal(
+                        Duration.toMillis(Duration.fromInputUnsafe(forceKillAfter)),
+                        2_000,
+                      );
+                    }
+                    finalizerOrder.push("terminate");
+                  }).pipe(
+                    Effect.andThen(Deferred.succeed(terminationStarted, undefined)),
+                    Effect.andThen(Deferred.await(telemetryEnded)),
+                    Effect.andThen(Deferred.succeed(backendExited, undefined)),
+                    Effect.asVoid,
+                  ),
+                getInputFd: () =>
+                  Sink.forEach(() =>
+                    Deferred.succeed(telemetryWriteStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(terminationStarted)),
+                    ),
+                  ),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer,
+          onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+          desktopTelemetryStream: Stream.concat(
+            Stream.make(new TextEncoder().encode("telemetry\n")),
+            Stream.never,
+          ).pipe(
+            Stream.ensuring(
+              Effect.sync(() => {
+                finalizerOrder.push("telemetry");
+              }).pipe(Effect.andThen(Deferred.succeed(telemetryEnded, undefined)), Effect.asVoid),
+            ),
+          ),
+        });
+
+        yield* instance.start;
+        yield* Effect.all([Deferred.await(ready), Deferred.await(telemetryWriteStarted)], {
+          concurrency: "unbounded",
+          discard: true,
+        });
+        yield* instance.stop();
+
+        assert.deepEqual(finalizerOrder, ["terminate", "telemetry", "backend"]);
       }),
     ),
   );
