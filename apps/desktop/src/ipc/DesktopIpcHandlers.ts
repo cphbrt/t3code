@@ -24,13 +24,6 @@ import {
   resolveSshPasswordPrompt,
 } from "./methods/sshEnvironment.ts";
 import {
-  checkForUpdate,
-  downloadUpdate,
-  getUpdateState,
-  installUpdate,
-  setUpdateChannel,
-} from "./methods/updates.ts";
-import {
   getAppBranding,
   getLocalEnvironmentBootstraps,
   getLocalEnvironmentBearerToken,
@@ -87,11 +80,6 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
   yield* ipc.handle(probeRemoteEditors);
-  yield* ipc.handle(getUpdateState);
-  yield* ipc.handle(setUpdateChannel);
-  yield* ipc.handle(downloadUpdate);
-  yield* ipc.handle(installUpdate);
-  yield* ipc.handle(checkForUpdate);
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);
   }

@@ -1,9 +1,4 @@
-import type {
-  DesktopAppBranding,
-  DesktopAppStageLabel,
-  DesktopRuntimeArch,
-  DesktopRuntimeInfo,
-} from "@t3tools/contracts";
+import type { DesktopAppBranding, DesktopAppStageLabel } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -62,7 +57,6 @@ export class DesktopEnvironment extends Context.Service<
     readonly backendEntryPath: string;
     readonly backendCwd: string;
     readonly preloadPath: string;
-    readonly appUpdateYmlPath: string;
     readonly devServerUrl: Option.Option<URL>;
     readonly devRemoteT3ServerEntryPath: Option.Option<string>;
     readonly configuredBackendPort: Option.Option<number>;
@@ -79,7 +73,6 @@ export class DesktopEnvironment extends Context.Service<
     readonly userDataDirName: string;
     readonly legacyUserDataDirName: string;
     readonly defaultDesktopSettings: DesktopAppSettings.DesktopSettings;
-    readonly runtimeInfo: DesktopRuntimeInfo;
     readonly resolvePickFolderDefaultPath: (rawOptions: unknown) => Option.Option<string>;
     readonly resolveResourcePathCandidates: (fileName: string) => readonly string[];
   }
@@ -107,36 +100,6 @@ function resolveDesktopAppBranding(input: {
     baseName: APP_BASE_NAME,
     stageLabel,
     displayName: stageLabel === "Alpha" ? APP_BASE_NAME : `${APP_BASE_NAME} (${stageLabel})`,
-  };
-}
-
-function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
-  if (arch === "arm64") return "arm64";
-  if (arch === "x64") return "x64";
-  return "other";
-}
-
-function resolveDesktopRuntimeInfo(input: {
-  readonly platform: NodeJS.Platform;
-  readonly processArch: string;
-  readonly runningUnderArm64Translation: boolean;
-}): DesktopRuntimeInfo {
-  const appArch = normalizeDesktopArch(input.processArch);
-
-  if (input.platform !== "darwin") {
-    return {
-      hostArch: appArch,
-      appArch,
-      runningUnderArm64Translation: false,
-    };
-  }
-
-  const hostArch = appArch === "arm64" || input.runningUnderArm64Translation ? "arm64" : appArch;
-
-  return {
-    hostArch,
-    appArch,
-    runningUnderArm64Translation: input.runningUnderArm64Translation,
   };
 }
 
@@ -212,9 +175,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     backendEntryPath: path.join(serverRoot, "apps/server/dist/bin.mjs"),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
-    appUpdateYmlPath: input.isPackaged
-      ? path.join(resourcesPath, "app-update.yml")
-      : path.join(input.appPath, "dev-app-update.yml"),
     devServerUrl,
     devRemoteT3ServerEntryPath: config.devRemoteT3ServerEntryPath,
     configuredBackendPort: config.configuredBackendPort,
@@ -233,11 +193,6 @@ const make = Effect.fn("desktop.environment.make")(function* (
     userDataDirName,
     legacyUserDataDirName,
     defaultDesktopSettings: DesktopAppSettings.resolveDefaultDesktopSettings(input.appVersion),
-    runtimeInfo: resolveDesktopRuntimeInfo({
-      platform: input.platform,
-      processArch: input.processArch,
-      runningUnderArm64Translation: input.runningUnderArm64Translation,
-    }),
     resolvePickFolderDefaultPath: (rawOptions) => {
       if (typeof rawOptions !== "object" || rawOptions === null) {
         return Option.none();

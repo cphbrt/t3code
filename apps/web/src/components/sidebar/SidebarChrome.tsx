@@ -29,7 +29,6 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
-import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -155,7 +154,6 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
-      <SidebarUpdateArchitectureWarning />
       <SidebarMenu className="flex-row items-center">
         {currentFooterPage ? (
           <SidebarMenuItem className="min-w-0 flex-1">
@@ -214,7 +212,6 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
             </SidebarMenuItem>
           </>
         )}
-        <SidebarUpdatePill />
       </SidebarMenu>
     </SidebarFooter>
   );
