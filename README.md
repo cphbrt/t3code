@@ -1,4 +1,22 @@
-# T3 Code
+# CPH Code
+
+> [!NOTE]
+> **CPH Code is a fork of T3 Code** slimmed down to the features relevant to Chris Hebert, making it easier to understand, modify, and maintain. It deliberately favors Chris's local desktop workflow over feature parity with upstream T3 Code.
+>
+> Its goals are to:
+>
+> - keep a desktop-first coding-agent workspace, primarily for macOS and Linux (Windows code remains for now);
+> - support OpenAI Codex and Anthropic Claude Code, not Cursor, Grok, or OpenCode;
+> - focus source control on Git and GitHub rather than GitLab, Azure DevOps, Bitbucket, or Jujutsu;
+> - minimize avoidable phone-home behavior by omitting upstream product analytics and automatic desktop-update traffic;
+> - remove unused surfaces and deployment machinery, including the mobile app, marketing site, and relay infrastructure; and
+> - retain deliberately user-driven integrations: T3 Connect, Tailscale, SSH, and GitHub.
+
+CPH Code carries those deviations as a deliberately curated patch series on top of `upstream/main`. Its commits describe product decisions rather than the chronology of implementation: related fixes are folded into the change they complete, while independent choices stay independently reviewable. This keeps upstream rebases tractable and makes useful changes legible enough to evaluate—or adopt—one commit at a time.
+
+The material below describes the upstream T3 Code project and is retained as technical background; fork behavior takes precedence where it differs.
+
+# Upstream: T3 Code
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
 

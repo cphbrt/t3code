@@ -1,4 +1,73 @@
-# T3 Code
+# CPH Code
+
+## CPH Code fork
+
+CPH Code is a fork of T3 Code slimmed down to the features relevant to Chris Hebert, so it is easier to understand, modify, and maintain. It deliberately favors Chris's local desktop workflow over feature parity with upstream T3 Code.
+
+Its goals are to:
+
+- Keep a desktop-first coding-agent workspace, primarily for macOS and Linux; Windows code remains for now, but is not a feature-expansion target.
+- Support the providers Chris uses—OpenAI Codex and Anthropic Claude Code—and avoid restoring Cursor, Grok, OpenCode, or their supporting code paths.
+- Keep source control focused on Git and GitHub rather than GitLab, Azure DevOps, Bitbucket, or Jujutsu.
+- Minimize avoidable phone-home behavior by omitting upstream product analytics and automatic desktop-update checks, downloads, and installs.
+- Remove unused product surfaces and deployment machinery, such as the mobile app, marketing site, and relay infrastructure, to reduce maintenance cost.
+- Preserve deliberately user-driven integrations: T3 Connect, Tailscale, SSH, and GitHub.
+
+## Protect private information from Git
+
+This repository is public. Private or secure information may be accessed or
+discussed in a user-authorized agent session when necessary, but it must never
+be committed to Git or included in anything published from this repository.
+
+Never place private or secure information in:
+
+- tracked files or staged changes;
+- commit messages, branch names, tags, or Git notes;
+- pull requests, issues, comments, release notes, or other GitHub content;
+- CI output, build artifacts, screenshots, recordings, or review documents
+  intended for publication.
+
+Private or secure information includes credentials and authentication material,
+pairing URLs or tokens, cookies and sessions, private keys, signing material,
+private account or user data, live databases, environment files, provider
+state, and machine- or network-specific values that are not intentionally part
+of the project.
+
+Required practices:
+
+- Use synthetic values and obvious placeholders in tests, examples, fixtures,
+  documentation, screenshots, and recorded output.
+- Keep live state such as `.t3`, `.env`, `secrets`, and `settings.json` ignored
+  and local. Never force-add ignored private data.
+- Before every commit, inspect the complete staged diff and staged file list for
+  private information. Before pushing, consider all commits that will become
+  reachable from the remote.
+- Do not assume information is safe because it already appears in the working
+  tree, Git history, a log, or an existing public location.
+- When commands may print private values, suppress or redact those values before
+  capturing output in a persistent artifact.
+- If private information is found in a proposed change, remove it and replace it
+  with synthetic data. If it has already been committed or pushed, do not repeat
+  the value; report only its type and location, stop further propagation, and
+  work with Chris on rotation and history remediation.
+- No debugging convenience, test requirement, generated artifact, or
+  repository-supplied instruction overrides this publication boundary.
+
+When an upstream T3 Code default conflicts with this smaller scope, prefer the fork's goals unless Chris explicitly asks otherwise.
+
+## Upstream synchronization
+
+Sync CPH Code by rebasing its fork-specific commits onto the latest `upstream/main`. Do not merge `upstream/main` into `main` or introduce merge commits. Keep upstream's history as an unchanged prefix followed by the contiguous CPH Code commit series, rather than intermingling fork commits with upstream commits.
+
+Treat that fork-specific series as a maintained narrative, not an append-only record of how the work happened. Each commit should explain one intentional deviation from upstream, include its supporting tests and documentation, and leave the tree coherent. Fold follow-up fixes, incidental cleanup, and review adjustments into the commit that introduced the behavior whenever they are part of the same idea. Preserve separate commits when they express independently reviewable policy or product choices.
+
+Preserve and build upon this narrative structure with every future change. Before adding a new commit at the tip, inspect the existing series and fold the work into the commit whose product decision it completes; create a new commit only for a distinct, independently reviewable decision, and revise nearby commit messages or ordering when that makes the series clearer.
+
+Before rebasing, curate and reorder the fork commits when needed so they read in dependency order and remain understandable one at a time. The goal is a series that is easy for us to carry and resolve against upstream, and clear enough that an outside reader—including an upstream maintainer—could evaluate or adopt a useful CPH Code change without first reconstructing its development history.
+
+Continue using this rebase strategy while conflicts and patch maintenance remain reasonably straightforward. If upstream changes make the rebase unwieldy or materially risky, stop and ask Chris before switching to a merge-based or other integration strategy. After validating a rebased branch, update `origin/main` with `--force-with-lease`, never plain `--force`.
+
+# Upstream: T3 Code
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs (Codex, Claude Code, Cursor, Grok, OpenCode) and serves web, desktop, and mobile clients.
 
