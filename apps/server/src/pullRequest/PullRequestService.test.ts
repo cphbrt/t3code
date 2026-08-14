@@ -318,7 +318,7 @@ it.effect("reads nothing from a host with no implementation, but reports it", ()
 
     assert.deepStrictEqual(listed, ["pingdotgg/t3code"]);
     assert.strictEqual(result.entries[0]?.provider, "github");
-    // The GitLab project is explained rather than quietly missing from the page.
+    // The unsupported project is explained rather than quietly missing from the page.
     assert.deepStrictEqual(
       result.providers.map((summary) => ({
         kind: summary.kind,
@@ -353,8 +353,8 @@ it.effect("asks for a whole page of a host, and for the reader's own size when g
     yield* service.list({ state: "open" });
     yield* service.list({ state: "open", limit: 10 });
 
-    // Providers probe with one row over this, so 99 asks a host for 100 — the most GitHub and
-    // GitLab serve in one request. 100 here would cost a second round trip for a single row.
+    // Providers probe with one row over this, so 99 asks GitHub for 100 — the most it serves in
+    // one request. 100 here would cost a second round trip for a single row.
     assert.deepStrictEqual(limits, [99, 10]);
   }),
 );
@@ -423,12 +423,12 @@ it.effect("uses a provider's raw cursor advance when it consumed malformed rows"
           title: "web",
           workspaceRoot: "/a",
           repository: "acme/web",
-          provider: "azure-devops",
-          host: "dev.azure.com",
+          provider: "github",
+          host: "github.com",
         }),
       ],
       providers: [
-        fakeProvider("azure-devops", {
+        fakeProvider("github", {
           listChangeRequests: () =>
             Effect.succeed({
               items: [changeRequest(7, "2026-07-02T00:00:00Z")],
@@ -442,9 +442,9 @@ it.effect("uses a provider's raw cursor advance when it consumed malformed rows"
 
     const result = yield* service.list({ state: "open" });
 
-    // Keyed by the selector Azure is actually asked with, which is the repository's own name.
+    // Keyed by the canonical host and repository selector.
     assert.deepStrictEqual(result.nextCursors, {
-      "dev.azure.com web": "2026-07-02T00:00:00Z|4|7",
+      "github.com acme/web": "2026-07-02T00:00:00Z|4|7",
     });
   }),
 );
@@ -949,7 +949,7 @@ it.effect("refuses an action the host never claimed it could run", () =>
           capabilities: {
             diff: true,
             comment: true,
-            // Bitbucket's shape: it can merge and close, but cannot reopen.
+            // This capability shape can merge and close, but cannot reopen.
             actions: ["merge", "close"],
             mergeMethods: ["merge"],
             search: true,
@@ -1122,7 +1122,7 @@ it.effect("refuses an auto-merge the host never claimed, without asking it", () 
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
-        // Bitbucket's shape: it merges, and has nothing that merges later on its own.
+        // This capability shape merges and has nothing that enables auto-merge.
         fakeProvider("github", {
           runAction: () => {
             ran = true;
@@ -1564,7 +1564,7 @@ it.effect("refuses a verdict the host never claimed, without asking the provider
             mergeMethods: ["merge"],
             search: true,
             reactions: true,
-            // GitLab's shape: it approves, and has nothing that rejects.
+            // This capability shape approves and has nothing that rejects.
             review: {
               inlineComment: true,
               reply: true,
@@ -1897,7 +1897,7 @@ it.effect("refuses a merge strategy the host does not offer", () =>
             diff: true,
             comment: true,
             actions: ["merge"],
-            // Azure DevOps's shape: it squashes as a completion option and has no rebase.
+            // This capability shape offers squash as a completion option and no rebase.
             mergeMethods: ["merge", "squash"],
             search: true,
             reactions: true,
@@ -2838,41 +2838,16 @@ it.effect("carries an armed auto-merge through to the detail, and silence as sil
   }),
 );
 
-it("names an Azure DevOps repository by its own name, not its project path", () => {
-  // `az repos pr list --repository` takes a name and detects the organisation and project from
-  // the checkout; the recorded `org/project/_git/repo` path is refused, and the repository then
-  // reads as unavailable on the page.
+it("keeps a repository identity's canonical display name", () => {
   const selector = PullRequestService.repositoryIdentityOf({
     repositoryIdentity: {
-      provider: "azure-devops",
-      displayName: "contoso/payments/_git/checkout",
-      owner: "contoso",
-      name: "checkout",
-    },
-  } as never);
-  assert.strictEqual(selector, "checkout");
-});
-
-it("falls back to the path's last segment where an Azure identity has no name", () => {
-  const selector = PullRequestService.repositoryIdentityOf({
-    repositoryIdentity: {
-      provider: "azure-devops",
-      displayName: "contoso/payments/_git/checkout",
-    },
-  } as never);
-  assert.strictEqual(selector, "checkout");
-});
-
-it("keeps a GitLab identity's whole path, because a nested group is part of the name", () => {
-  const selector = PullRequestService.repositoryIdentityOf({
-    repositoryIdentity: {
-      provider: "gitlab",
-      displayName: "group/subgroup/service",
-      owner: "group",
+      provider: "github",
+      displayName: "enterprise/team/service",
+      owner: "enterprise",
       name: "service",
     },
   } as never);
-  assert.strictEqual(selector, "group/subgroup/service");
+  assert.strictEqual(selector, "enterprise/team/service");
 });
 
 it.effect("narrows the rows of a host that ignored the filters it was handed", () =>
@@ -3070,8 +3045,8 @@ it.effect("refuses to merge a target branch into a source branch on a host that 
             comment: true,
             actions: ["merge", "close", "update-branch"],
             mergeMethods: ["merge"],
-            // What GitLab declares: it replays the branch, and has no update that merges the
-            // target back in.
+            // This capability shape replays the branch and has no update that merges the target
+            // branch back in.
             updateMethods: ["rebase"],
             search: true,
             reactions: true,
@@ -3138,7 +3113,7 @@ it.effect("judges the review filter only on a host that summarises its reviews",
               continues: true,
             }),
         }),
-        // GitLab never supplies the field, so its rows are not the filter's to judge.
+        // A provider that omits the field leaves its rows outside this filter.
         fakeProvider("gitlab", {
           listChangeRequests: () =>
             Effect.succeed({

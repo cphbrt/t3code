@@ -23,10 +23,7 @@ import {
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
-export type AddProjectRemoteProviderKind = Extract<
-  SourceControlProviderKind,
-  "github" | "gitlab" | "bitbucket" | "azure-devops"
->;
+export type AddProjectRemoteProviderKind = Extract<SourceControlProviderKind, "github">;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
 export function canCreateProjectInEnvironment(
@@ -55,31 +52,14 @@ export type AddProjectCloneFlow =
       readonly remoteUrl: string;
     };
 
-const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
-  "url",
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
+const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = ["url", "github"];
 
-const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
-  "github",
-  "gitlab",
-  "bitbucket",
-  "azure-devops",
-];
+const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = ["github"];
 
 export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): string {
   switch (source) {
     case "github":
       return "GitHub";
-    case "gitlab":
-      return "GitLab";
-    case "bitbucket":
-      return "Bitbucket";
-    case "azure-devops":
-      return "Azure DevOps";
     case "url":
       return "Git URL";
   }
@@ -89,12 +69,6 @@ export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): 
   switch (source) {
     case "github":
       return "owner/repo";
-    case "gitlab":
-      return "group/project";
-    case "bitbucket":
-      return "workspace/repository";
-    case "azure-devops":
-      return "project/repository";
     case "url":
       return "URL";
   }
@@ -134,9 +108,6 @@ export function buildAddProjectRemoteSourceReadiness(
   const readiness: AddProjectRemoteSourceReadiness = {
     url: { ready: true, hint: null },
     github: unavailable,
-    gitlab: unavailable,
-    bitbucket: unavailable,
-    "azure-devops": unavailable,
   };
 
   if (!discovery) {
