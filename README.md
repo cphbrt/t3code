@@ -33,6 +33,10 @@ This exact route has been verified for pairing, reconnection, existing and new t
 
 CPH Code keeps meaningful transcript activity—commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. It may coalesce provider lifecycle noise and collapse large details on request, but it does not automatically hide the semantic record of what an agent did.
 
+When a provider explicitly reports that an account is unavailable until a reset time, CPH Code keeps that state with the affected provider account, shows the same top error bar on every thread using it, and shows a quiet countdown on its sessions and in the model picker. It does not guess reset times from ambiguous usage data.
+
+This path is validated against real Claude usage-limit events. Equivalent Codex handling is an intentional target: the shared state and UI are ready, but Codex adapter normalization remains unfinished until a real exhausted-account event can be captured and tested.
+
 CPH Code carries those deviations as a deliberately curated patch series on top of `upstream/main`. Its commits describe product decisions rather than the chronology of implementation: related fixes are folded into the change they complete, while independent choices stay independently reviewable. This keeps upstream rebases tractable and makes useful changes legible enough to evaluate—or adopt—one commit at a time.
 
 The material below describes the upstream T3 Code project and is retained as technical background; fork behavior takes precedence where it differs.

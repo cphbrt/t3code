@@ -34,6 +34,14 @@ When you set this field, T3 Code points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+## Usage-limit countdowns
+
+When Claude Code reports that an account has reached its usage limit and includes a reset time,
+CPH Code shows the usage-limit error bar on every thread using that Claude provider, the remaining
+time on those sessions, and the countdown beside the provider in the model picker. The shared state
+survives app and server restarts, disappears at the reset time, and does not automatically resend or
+resume a stopped turn.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then

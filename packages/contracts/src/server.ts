@@ -158,6 +158,17 @@ export const ServerProviderUpdateState = Schema.Struct({
 });
 export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
 
+/**
+ * A provider account has exhausted a usage window until the stated reset.
+ * Kept provider-neutral so every adapter can project equivalent native
+ * signals without leaking provider payload shapes into clients.
+ */
+export const ServerProviderUsageLimit = Schema.Struct({
+  resetsAt: IsoDateTime,
+  observedAt: IsoDateTime,
+});
+export type ServerProviderUsageLimit = typeof ServerProviderUsageLimit.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -194,6 +205,7 @@ export const ServerProvider = Schema.Struct({
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
+  usageLimit: Schema.optionalKey(ServerProviderUsageLimit),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

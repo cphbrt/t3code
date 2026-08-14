@@ -45,6 +45,22 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
     expect(parsed.versionAdvisory).toBeUndefined();
     expect(parsed.updateState).toBeUndefined();
+    expect(parsed.usageLimit).toBeUndefined();
+  });
+
+  it("decodes persisted provider usage-limit resets", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimit: {
+        resetsAt: "2026-08-14T20:14:00.000Z",
+        observedAt: "2026-08-14T17:00:00.000Z",
+      },
+    });
+
+    expect(parsed.usageLimit).toEqual({
+      resetsAt: "2026-08-14T20:14:00.000Z",
+      observedAt: "2026-08-14T17:00:00.000Z",
+    });
   });
 
   it("defaults one-click update support when decoding older advisory snapshots", () => {
