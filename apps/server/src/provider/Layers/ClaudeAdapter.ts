@@ -385,16 +385,40 @@ function resultErrorsText(result: SDKResultMessage): string {
     : "";
 }
 
+function resultHasFailureSignal(result: SDKResultMessage): boolean {
+  const extended = result as unknown as {
+    readonly terminal_reason?: unknown;
+    readonly api_error_status?: unknown;
+  };
+  return (
+    result.is_error === true ||
+    extended.terminal_reason === "api_error" ||
+    (typeof extended.api_error_status === "number" && extended.api_error_status >= 400)
+  );
+}
+
 /**
- * First user-facing error from a non-success result. "[ede_diagnostic] ..."
+ * First user-facing error from a failed result. "[ede_diagnostic] ..."
  * entries are CLI-internal telemetry (the CLI hides them from its own UI too),
- * so they must never become the error banner.
+ * so they must never become the error banner. API failures can arrive with a
+ * misleading success subtype and put their explanation in `result` instead.
  */
 function resultUserFacingError(result: SDKResultMessage): string | undefined {
-  if (result.subtype === "success" || !Array.isArray(result.errors)) {
-    return undefined;
+  const error =
+    "errors" in result && Array.isArray(result.errors)
+      ? result.errors.find((candidate: string) => !candidate.startsWith("[ede_diagnostic]"))
+      : undefined;
+  if (error) {
+    return error;
   }
-  return result.errors.find((error) => !error.startsWith("[ede_diagnostic]"));
+
+  const extended = result as SDKResultMessage & { readonly result?: unknown };
+  if (resultHasFailureSignal(result) && typeof extended.result === "string") {
+    const message = extended.result.trim();
+    return message.length > 0 ? message : undefined;
+  }
+
+  return undefined;
 }
 
 function isInterruptedResult(result: SDKResultMessage): boolean {
@@ -1395,16 +1419,18 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
 });
 
 function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
-  if (result.subtype === "success") {
-    return "completed";
-  }
-
   const errors = resultErrorsText(result);
   if (isInterruptedResult(result)) {
     return "interrupted";
   }
   if (errors.includes("cancel")) {
     return "cancelled";
+  }
+  if (resultHasFailureSignal(result)) {
+    return "failed";
+  }
+  if (result.subtype === "success") {
+    return "completed";
   }
   return "failed";
 }
@@ -3061,7 +3087,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const status = turnStatusFromResult(message);
-    const errorMessage = resultUserFacingError(message);
+    const providerErrorMessage = resultUserFacingError(message);
+    const errorMessage =
+      status === "failed" ? (providerErrorMessage ?? "Claude turn failed.") : providerErrorMessage;
 
     if (status === "failed") {
       yield* emitRuntimeError(context, errorMessage ?? "Claude turn failed.");

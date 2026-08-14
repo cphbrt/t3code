@@ -882,6 +882,27 @@ describe("workEntryIndicatesToolFailure", () => {
 });
 
 describe("deriveWorkLogEntries", () => {
+  it("shows the provider message on runtime error entries", () => {
+    const [entry] = deriveWorkLogEntries([
+      makeActivity({
+        id: "runtime-error",
+        kind: "runtime.error",
+        summary: "Runtime error",
+        tone: "error",
+        payload: {
+          message: "You've hit your session limit · resets 8:20pm (America/New_York)",
+        },
+      }),
+    ]);
+
+    expect(entry).toMatchObject({
+      label: "Runtime error",
+      detail: "You've hit your session limit · resets 8:20pm (America/New_York)",
+      tone: "error",
+      sourceActivityKind: "runtime.error",
+    });
+  });
+
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

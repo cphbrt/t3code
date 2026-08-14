@@ -895,6 +895,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
+  const runtimeErrorDetail =
+    activity.kind === "runtime.error" && typeof payload?.message === "string"
+      ? payload.message.trim() || null
+      : null;
   const extractedDetail = isTaskActivity
     ? !taskDetailAsLabel &&
       payload &&
@@ -902,7 +906,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       payload.detail.length > 0
       ? stripTrailingExitCode(payload.detail).output
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : (runtimeErrorDetail ?? extractToolDetail(payload, title ?? activity.summary));
   const detail =
     !isTaskActivity && extractedDetail && detailRepeatsCommand(extractedDetail, commandPreview)
       ? null
