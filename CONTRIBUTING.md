@@ -1,5 +1,11 @@
 # Contributing
 
+## CPH Code patch discipline
+
+CPH Code is maintained as a small, coherent series of intentional changes on top of T3 Code. A contribution should do one understandable thing and include the tests and documentation that make that thing complete. Avoid mixing unrelated cleanup into the same commit.
+
+The fork history is periodically rewritten before rebasing onto `upstream/main`. Follow-up fixes may be folded into the commit that introduced the behavior, while independently useful changes remain separate. Write commits for a future reader who may need to carry the patch across an upstream change—or may want to adopt that patch without adopting the rest of CPH Code.
+
 ## Read This First
 
 We are not actively accepting contributions right now.
