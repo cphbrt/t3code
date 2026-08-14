@@ -190,6 +190,39 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(projected.payload).length).toBeLessThan(500);
   });
 
+  it("keeps truncated Codex command output in the projected payload", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          item: {
+            type: "commandExecution",
+            command: "printf output",
+            aggregatedOutput: "x".repeat(1_001),
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.output).toBe(`${"x".repeat(1_000)}\n… [output truncated]`);
+  });
+
+  it("keeps Claude command output in the projected payload", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "command_execution",
+        data: {
+          result: {
+            type: "tool_result",
+            content: [{ type: "text", text: "tests passed" }],
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.output).toBe("tests passed");
+  });
+
   it("passes task lifecycle payloads (no data field) through untouched", () => {
     const source = activity({
       taskId: "task-9",
