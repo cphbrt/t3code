@@ -119,6 +119,10 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         },
       ],
       message: "Cached message",
+      usageLimit: {
+        resetsAt: "2026-08-14T20:14:00.000Z",
+        observedAt: "2026-08-14T17:00:00.000Z",
+      },
       skills: [
         {
           name: "github:gh-fix-ci",
@@ -163,6 +167,10 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         checkedAt: cachedCodex.checkedAt,
         slashCommands: cachedCodex.slashCommands,
         skills: cachedCodex.skills,
+        usageLimit: {
+          resetsAt: "2026-08-14T20:14:00.000Z",
+          observedAt: "2026-08-14T17:00:00.000Z",
+        },
         message: cachedCodex.message,
       },
     );

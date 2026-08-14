@@ -27,6 +27,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ServerProvider,
+  type ServerProviderUsageLimit,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -270,6 +271,15 @@ export const ProviderRegistryLive = Layer.effect(
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
+    const usageLimitStatesRef = yield* Ref.make<
+      ReadonlyMap<ProviderInstanceId, ServerProviderUsageLimit>
+    >(
+      new Map(
+        cachedProviders.flatMap((provider) =>
+          provider.usageLimit ? [[provider.instanceId, provider.usageLimit] as const] : [],
+        ),
+      ),
+    );
 
     // Live-source registry — the dynamic counterpart to the boot-time
     // `bootSources`. Keyed by `instanceId`; the stored `ProviderInstance`
@@ -307,18 +317,22 @@ export const ProviderRegistryLive = Layer.effect(
         );
       });
 
-    const applyProviderUpdateState = Effect.fn("applyProviderUpdateState")(function* (
+    const applyProviderRuntimeState = Effect.fn("applyProviderRuntimeState")(function* (
       provider: ServerProvider,
     ) {
       const maintenanceActionStates = yield* Ref.get(maintenanceActionStatesRef);
       const updateState = maintenanceActionStates.get(provider.instanceId)?.update;
-      if (!updateState) {
-        const { updateState: _updateState, ...providerWithoutUpdateState } = provider;
-        return providerWithoutUpdateState;
-      }
+      const usageLimitStates = yield* Ref.get(usageLimitStatesRef);
+      const usageLimit = usageLimitStates.get(provider.instanceId);
+      const {
+        updateState: _updateState,
+        usageLimit: _usageLimit,
+        ...providerWithoutRuntimeState
+      } = provider;
       return {
-        ...provider,
-        updateState,
+        ...providerWithoutRuntimeState,
+        ...(updateState ? { updateState } : {}),
+        ...(usageLimit ? { usageLimit } : {}),
       };
     });
 
@@ -330,9 +344,9 @@ export const ProviderRegistryLive = Layer.effect(
         readonly replace?: boolean;
       },
     ) {
-      const nextProvidersWithUpdateState = yield* Effect.forEach(
+      const nextProvidersWithRuntimeState = yield* Effect.forEach(
         nextProviders,
-        applyProviderUpdateState,
+        applyProviderRuntimeState,
         {
           concurrency: "unbounded",
         },
@@ -345,7 +359,7 @@ export const ProviderRegistryLive = Layer.effect(
           );
           const updatedKeys = new Set<ProviderInstanceId>();
 
-          for (const provider of nextProvidersWithUpdateState) {
+          for (const provider of nextProvidersWithRuntimeState) {
             const key = snapshotInstanceKey(provider);
             updatedKeys.add(key);
             mergedProviders.set(
@@ -420,12 +434,46 @@ export const ProviderRegistryLive = Layer.effect(
           return existingProviders;
         }
 
-        const nextProvider = yield* applyProviderUpdateState(matchingProvider);
+        const nextProvider = yield* applyProviderRuntimeState(matchingProvider);
         return yield* upsertProviders([nextProvider], {
           persist: false,
         });
       },
     );
+
+    const setProviderUsageLimitState = Effect.fn("setProviderUsageLimitState")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly observedAt: ServerProviderUsageLimit["observedAt"];
+      readonly state: Omit<ServerProviderUsageLimit, "observedAt"> | null;
+    }) {
+      const didUpdate = yield* Ref.modify(usageLimitStatesRef, (previous) => {
+        const current = previous.get(input.instanceId);
+        if (current && current.observedAt > input.observedAt) {
+          return [false, previous] as const;
+        }
+        const next = new Map(previous);
+        if (input.state === null) {
+          next.delete(input.instanceId);
+        } else {
+          next.set(input.instanceId, { ...input.state, observedAt: input.observedAt });
+        }
+        return [true, next] as const;
+      });
+
+      const existingProviders = yield* Ref.get(providersRef);
+      if (!didUpdate) {
+        return existingProviders;
+      }
+      const matchingProvider = existingProviders.find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (!matchingProvider) {
+        return existingProviders;
+      }
+
+      const nextProvider = yield* applyProviderRuntimeState(matchingProvider);
+      return yield* upsertProviders([nextProvider]);
+    });
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
       providerSource: ProviderSnapshotSource,
@@ -605,6 +653,15 @@ export const ProviderRegistryLive = Layer.effect(
           }
           return next;
         });
+        yield* Ref.update(usageLimitStatesRef, (previous) => {
+          const next = new Map(previous);
+          for (const instanceId of previous.keys()) {
+            if (!knownInstanceIds.has(instanceId)) {
+              next.delete(instanceId);
+            }
+          }
+          return next;
+        });
       }),
     );
     const syncLiveSourcesAndContinue = syncLiveSources.pipe(
@@ -690,6 +747,7 @@ export const ProviderRegistryLive = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
+      setProviderUsageLimitState,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

@@ -717,8 +717,20 @@ const AccountUpdatedPayload = Schema.Struct({
 });
 export type AccountUpdatedPayload = typeof AccountUpdatedPayload.Type;
 
+export const ProviderUsageLimitUpdate = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("limited"),
+    resetsAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("available"),
+  }),
+]);
+export type ProviderUsageLimitUpdate = typeof ProviderUsageLimitUpdate.Type;
+
 const AccountRateLimitsUpdatedPayload = Schema.Struct({
   rateLimits: Schema.Unknown,
+  usageLimit: Schema.optional(ProviderUsageLimitUpdate),
 });
 export type AccountRateLimitsUpdatedPayload = typeof AccountRateLimitsUpdatedPayload.Type;
 

@@ -6,7 +6,7 @@ import {
 import { resolveSelectableModel } from "@t3tools/shared/model";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { ChevronRightIcon, SearchIcon } from "lucide-react";
+import { ChevronRightIcon, ClockIcon, SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import {
@@ -32,6 +32,7 @@ import {
   shortcutLabelForCommand,
 } from "../../keybindings";
 import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
@@ -41,6 +42,10 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import {
+  providerUsageLimitCountdown,
+  type ProviderUsageLimitCountdown,
+} from "../../providerUsageLimit";
 
 type ModelPickerItem = {
   slug: string;
@@ -132,6 +137,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [providedKeybindings],
   );
   const updateSettings = useUpdateClientSettings();
+  const nowMinute = useNowMinute();
 
   const focusSearchInput = useCallback(() => {
     searchInputRef.current?.focus({ preventScroll: true });
@@ -179,6 +185,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Map(instanceEntries.map((entry) => [entry.instanceId, entry])),
     [instanceEntries],
   );
+  const selectedInstanceEntry =
+    selectedInstanceId === "favorites" ? null : (entryByInstanceId.get(selectedInstanceId) ?? null);
+  const usageLimitCountdownByInstanceId = useMemo(() => {
+    const countdowns = new Map<ProviderInstanceId, ProviderUsageLimitCountdown>();
+    for (const entry of instanceEntries) {
+      const countdown = providerUsageLimitCountdown(entry.snapshot.usageLimit, nowMinute);
+      if (countdown) countdowns.set(entry.instanceId, countdown);
+    }
+    return countdowns;
+  }, [instanceEntries, nowMinute]);
+  const selectedUsageLimitCountdown =
+    selectedInstanceId === "favorites"
+      ? null
+      : (usageLimitCountdownByInstanceId.get(selectedInstanceId) ?? null);
   const matchesLockedProvider = useCallback(
     (entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">): boolean => {
       if (props.lockedProvider === null) return true;
@@ -608,6 +628,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             selectedInstanceId={selectedInstanceId}
             onSelectInstance={handleSelectInstance}
             instanceEntries={sidebarInstanceEntries}
+            usageLimitCountdownByInstanceId={usageLimitCountdownByInstanceId}
             showFavorites
             {...(lockedDisabledInstanceIds
               ? {
@@ -708,6 +729,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 />
               </div>
             </div>
+            {selectedInstanceEntry && selectedUsageLimitCountdown ? (
+              <div
+                role="status"
+                className="mx-2 mb-1 flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-800 dark:text-amber-200/90"
+              >
+                <ClockIcon aria-hidden className="size-3 shrink-0 opacity-80" />
+                <span className="min-w-0 flex-1 truncate">{selectedInstanceEntry.displayName}</span>
+                <span className="shrink-0 font-medium tabular-nums">
+                  available in {selectedUsageLimitCountdown.exact}
+                </span>
+              </div>
+            ) : null}
 
             {/* Model list */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">

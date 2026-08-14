@@ -10,6 +10,7 @@ import type {
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
+  ServerProviderUsageLimit,
   ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -67,6 +68,17 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly action: ProviderMaintenanceActionKind;
     readonly state: ServerProviderUpdateState | null;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Apply the latest normalized account usage-limit observation for one
+   * provider instance. Unlike maintenance progress, this state is persisted
+   * so a restart or remote reconnect retains the countdown.
+   */
+  readonly setProviderUsageLimitState: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly observedAt: ServerProviderUsageLimit["observedAt"];
+    readonly state: Omit<ServerProviderUsageLimit, "observedAt"> | null;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**

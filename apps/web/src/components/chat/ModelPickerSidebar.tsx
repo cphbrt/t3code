@@ -9,6 +9,7 @@ import {
   shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
+import type { ProviderUsageLimitCountdown } from "../../providerUsageLimit";
 
 /**
  * Build the hover tooltip for an instance button. Mirrors the old
@@ -50,6 +51,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
    * their own model list.
    */
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+  usageLimitCountdownByInstanceId?: ReadonlyMap<ProviderInstanceId, ProviderUsageLimitCountdown>;
   /** Render the favorites rail entry. Hidden for locked-provider instance switching. */
   showFavorites?: boolean;
   /** Instance ids shown in the rail but unavailable for the current picker context. */
@@ -140,14 +142,20 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const isHovered = hoveredInstanceId === entry.instanceId;
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
             const showInstanceBadge = shouldShowInstanceBadge(entry, props.instanceEntries);
+            const usageLimitCountdown = props.usageLimitCountdownByInstanceId?.get(
+              entry.instanceId,
+            );
 
-            const tooltip = isUnavailable
+            const baseTooltip = isUnavailable
               ? describeUnavailableInstance(entry)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
                 : showNewBadge
                   ? `${entry.displayName} — New`
                   : entry.displayName;
+            const tooltip = usageLimitCountdown
+              ? `${baseTooltip} — available in ${usageLimitCountdown.exact}`
+              : baseTooltip;
 
             const button = (
               <button
@@ -175,24 +183,34 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                       : entry.displayName
                 }
               >
-                <ProviderInstanceIcon
-                  driverKind={entry.driverKind}
-                  displayName={entry.displayName}
-                  accentColor={entry.accentColor}
-                  showBadge={showInstanceBadge}
-                  className="size-6"
-                  iconClassName="size-5"
-                  indicatorBackground={
-                    isHovered && !isDisabled
-                      ? "var(--muted)"
-                      : isSelected
-                        ? "var(--background)"
-                        : "color-mix(in oklab, var(--muted) 30%, transparent)"
-                  }
-                  {...(entry.accentColor
-                    ? { badgeClassName: "h-3 min-w-3 px-0.5 text-[7px]" }
-                    : {})}
-                />
+                <span className="relative inline-flex size-6 items-center justify-center">
+                  <ProviderInstanceIcon
+                    driverKind={entry.driverKind}
+                    displayName={entry.displayName}
+                    accentColor={entry.accentColor}
+                    showBadge={showInstanceBadge}
+                    className="size-6"
+                    iconClassName="size-5"
+                    indicatorBackground={
+                      isHovered && !isDisabled
+                        ? "var(--muted)"
+                        : isSelected
+                          ? "var(--background)"
+                          : "color-mix(in oklab, var(--muted) 30%, transparent)"
+                    }
+                    {...(entry.accentColor
+                      ? { badgeClassName: "h-3 min-w-3 px-0.5 text-[7px]" }
+                      : {})}
+                  />
+                  {usageLimitCountdown ? (
+                    <span
+                      className="pointer-events-none absolute -right-1 -bottom-0.5 z-20 flex h-3 min-w-3 items-center justify-center rounded-full border border-amber-500/35 bg-popover px-0.5 text-[7px] font-semibold leading-none text-amber-700 shadow-sm tabular-nums dark:text-amber-300"
+                      aria-hidden
+                    >
+                      {usageLimitCountdown.compact}
+                    </span>
+                  ) : null}
+                </span>
                 {showNewBadge ? (
                   <span className={NEW_BADGE_CLASS} aria-hidden>
                     <SparklesIcon className="size-2" />

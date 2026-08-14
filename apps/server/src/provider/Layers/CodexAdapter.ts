@@ -1402,6 +1402,11 @@ function mapToRuntimeEvents(
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           rateLimits: event.payload ?? {},
+          // Codex support is intentional but not yet validated against a real
+          // exhausted-account event. Rolling windows and a reached-reason do
+          // not identify which reset applies. Once that payload is captured,
+          // normalize it to `usageLimit` here; the shared registry and UI are
+          // already provider-neutral.
         },
       },
     ];
