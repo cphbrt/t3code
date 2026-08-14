@@ -1466,8 +1466,8 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           projectId: ProjectId.make("project-turn-supersede"),
           title: "Turn supersede",
           modelSelection: {
-            instanceId: ProviderInstanceId.make("opencode"),
-            model: "big-pickle",
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet-4-5",
           },
           runtimeMode: "full-access",
           branch: null,
@@ -1493,7 +1493,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             session: {
               threadId,
               status: "running",
-              providerName: "opencode",
+              providerName: "claudeAgent",
               runtimeMode: "full-access",
               activeTurnId: turnId,
               lastError: null,
