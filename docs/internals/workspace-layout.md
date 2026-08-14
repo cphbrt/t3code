@@ -14,7 +14,6 @@ the task commands.
   components, and web-specific platform layers.
 - `apps/desktop` (`@t3tools/desktop`): Electron shell. Supervises a desktop-scoped `t3` backend,
   loads the web bundle over the `t3code://` protocol, and owns SSH-managed remote environments.
-- `apps/marketing` (`@t3tools/marketing`): Astro marketing site.
 
 ## packages
 
