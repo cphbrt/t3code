@@ -12,6 +12,16 @@ If reordering is unavailable for one environment, update the T3 Code server runn
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
 
+## Working directory context
+
+The top bar and active or pinned sidebar cards show each thread's working directory instead of only
+the project name. Paths inside the connected environment's home directory start with `~/`. A
+thread using a separate worktree shows that worktree path; a local-checkout thread shows the project
+root.
+
+Hover a thread for its project name, complete working directory, environment, branch, and model.
+Project choosers also show paths so projects with names such as `config` remain distinguishable.
+
 ## Environment artwork
 
 Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in

@@ -6267,6 +6267,12 @@ function ChatViewContent(props: ChatViewProps) {
             changeRequest={activeThreadChangeRequest}
             activeProjectName={activeProject?.title}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
+            activeWorkingDirectory={gitCwd}
+            environmentHomeDirectory={
+              environmentById.get(activeThread.environmentId)?.serverConfig?.environment
+                .homeDirectory ?? null
+            }
+            environmentLabel={environmentById.get(activeThread.environmentId)?.label ?? null}
             activeProjectFaviconPath={activeProject?.faviconPath ?? null}
             openInCwd={gitCwd}
             activeProjectScripts={activeProject?.scripts}
