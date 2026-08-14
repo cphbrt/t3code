@@ -30,7 +30,6 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
-import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -215,7 +214,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
         </>
       )}
-      <SidebarUpdatePill />
     </SidebarMenu>
   );
 });
@@ -224,7 +222,6 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter className="p-[var(--sidebar-content-inset)]">
       <SidebarProviderUpdatePill />
-      <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );
