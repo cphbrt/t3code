@@ -15,39 +15,37 @@ export const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
 export const TIMELINE_CONTENT_MAX_WIDTH = 768;
 export const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
-export interface TimelineEndState {
-  readonly isAtEnd?: boolean;
-  readonly contentLength?: number;
-  readonly scroll?: number;
-  readonly scrollLength?: number;
+export interface TimelineScrollGeometry {
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
 }
 
-/**
- * Follow re-arm band above the hard bottom. Strict on purpose: LegendList's
- * isNearEnd fires within half a viewport, which re-armed live-follow while the
- * user was reading history and yanked them back down on the next stream chunk.
- * A small pixel band (instead of the 1px isAtEnd epsilon alone) keeps re-arming
- * reliable while streaming content is still growing under the viewport.
- */
-export const TIMELINE_FOLLOW_REARM_THRESHOLD_PX = 40;
+export interface TimelineScrollTarget extends TimelineScrollGeometry {
+  scrollTo(options: { top: number }): void;
+}
+
+export const TIMELINE_END_EPSILON_PX = 1;
 
 export function resolveTimelineIsAtEnd(
-  state: TimelineEndState | undefined,
-  endInset = 0,
+  geometry: TimelineScrollGeometry | undefined,
 ): boolean | undefined {
-  if (!state) {
+  if (!geometry) {
     return undefined;
   }
-  if (state.isAtEnd) {
-    return true;
+  const { scrollTop, scrollHeight, clientHeight } = geometry;
+  if (![scrollTop, scrollHeight, clientHeight].every(Number.isFinite)) {
+    return undefined;
   }
-  const { contentLength, scroll, scrollLength } = state;
-  if (contentLength === undefined || scroll === undefined || scrollLength === undefined) {
-    return state.isAtEnd;
+  return scrollHeight - clientHeight - scrollTop <= TIMELINE_END_EPSILON_PX;
+}
+
+export function reconcileTimelineScrollToEnd(target: TimelineScrollTarget | undefined): boolean {
+  if (!target || resolveTimelineIsAtEnd(target) !== false) {
+    return false;
   }
-  // contentLength includes the end inset (composer overlay), so subtract it to
-  // measure the distance to the real content bottom.
-  return contentLength - scroll - scrollLength - endInset <= TIMELINE_FOLLOW_REARM_THRESHOLD_PX;
+  target.scrollTo({ top: target.scrollHeight });
+  return true;
 }
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {

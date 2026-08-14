@@ -34,6 +34,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  BookOpenIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
@@ -152,6 +153,7 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
+import { dispatchChatLayoutAction } from "./chat/chatLayoutActionBus";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import {
@@ -1517,6 +1519,20 @@ function OpenCommandPaletteDialog(props: {
       openOverlayMode("content");
     },
   });
+
+  if (activeThread) {
+    actionItems.push({
+      kind: "action",
+      value: "action:toggle-reading-focus",
+      searchTerms: ["reading", "focus", "transcript", "composer", "chat"],
+      title: "Toggle reading focus",
+      icon: <BookOpenIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.readingFocus.toggle",
+      run: async () => {
+        dispatchChatLayoutAction("toggle-reading-focus");
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

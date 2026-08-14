@@ -165,6 +165,7 @@ import {
   isContextMenuPointerDown,
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
+  releaseSidebarRowFocus,
   resolveProjectStatusIndicator,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -1720,6 +1721,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       threadRef: ScopedThreadRef,
       orderedProjectThreadKeys: readonly string[],
     ) => {
+      // React nulls `currentTarget` once the handler returns, so read the row
+      // now even though the blur only happens on the navigation branch.
+      const row = event.currentTarget;
       if (isSidebarNestedLinkClick(event.target)) return;
       const isMac = isMacPlatform(navigator.platform);
       const isModClick = isMac ? event.metaKey : event.ctrlKey;
@@ -1746,6 +1750,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         return;
       }
 
+      releaseSidebarRowFocus(row);
       if (currentSelectionCount > 0) {
         clearSelection();
       }

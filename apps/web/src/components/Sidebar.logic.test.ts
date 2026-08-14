@@ -15,6 +15,7 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
+  releaseSidebarRowFocus,
   resolveProjectStatusIndicator,
   resolveSidebarStageBadgeLabel,
   resolveThreadRowClassName,
@@ -409,6 +410,19 @@ describe("isTrailingDoubleClick", () => {
 
   it("ignores further clicks of a triple-click", () => {
     expect(isTrailingDoubleClick(3)).toBe(true);
+  });
+});
+
+describe("releaseSidebarRowFocus", () => {
+  it("blurs the clicked row so it stops swallowing type-to-focus keys", () => {
+    const blur = vi.fn();
+    releaseSidebarRowFocus({ blur } as unknown as EventTarget);
+    expect(blur).toHaveBeenCalledTimes(1);
+  });
+
+  it("tolerates a missing row", () => {
+    expect(() => releaseSidebarRowFocus(null)).not.toThrow();
+    expect(() => releaseSidebarRowFocus({} as unknown as EventTarget)).not.toThrow();
   });
 });
 

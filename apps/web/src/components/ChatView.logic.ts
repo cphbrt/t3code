@@ -29,6 +29,39 @@ export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function toggleReadingFocusThread(
+  focusedThreadKeys: ReadonlySet<string>,
+  threadKey: string,
+): ReadonlySet<string> {
+  const next = new Set(focusedThreadKeys);
+  if (next.has(threadKey)) {
+    next.delete(threadKey);
+  } else {
+    next.add(threadKey);
+  }
+  return next;
+}
+
+export function enableReadingFocusThread(
+  focusedThreadKeys: ReadonlySet<string>,
+  threadKey: string,
+): ReadonlySet<string> {
+  if (focusedThreadKeys.has(threadKey)) return focusedThreadKeys;
+  const next = new Set(focusedThreadKeys);
+  next.add(threadKey);
+  return next;
+}
+
+export function clearReadingFocusThread(
+  focusedThreadKeys: ReadonlySet<string>,
+  threadKey: string,
+): ReadonlySet<string> {
+  if (!focusedThreadKeys.has(threadKey)) return focusedThreadKeys;
+  const next = new Set(focusedThreadKeys);
+  next.delete(threadKey);
+  return next;
+}
+
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {
   const timeoutId = globalThis.setTimeout(showWarning, ENVIRONMENT_RECONNECT_WARNING_GRACE_MS);
   return () => globalThis.clearTimeout(timeoutId);
@@ -324,6 +357,22 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
+// Typing in reading focus takes the same route as the Reply button: reveal the
+// composer and focus it, then append the key that started it. Revealing must
+// not depend on the insert, because a busy composer (connecting, an approval,
+// a pending question) refuses text and would otherwise leave the composer
+// visible but unfocused. Focus lands through the reveal, not through a
+// synchronous focus call: the composer's own text write-back would replay the
+// pre-insert value over the key that was just typed.
+export function revealComposerForTypedKey(input: {
+  showComposerAndFocus: () => void;
+  insertTextAtEnd: (text: string) => boolean;
+  key: string;
+}): void {
+  input.showComposerAndFocus();
+  input.insertTextAtEnd(input.key);
+}
+
 export function branchMismatchKey(
   threadId: string | null,
   mismatch: { threadBranch: string; currentBranch: string } | null,
@@ -368,6 +417,23 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
   return Boolean(
     thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
   );
+}
+
+/**
+ * Draft routes retain the local send bridge until the canonical route can
+ * render an equivalent running or terminal state on its first frame.
+ */
+export function threadReadyForDraftRouteHandoff(thread: Thread | null | undefined): boolean {
+  if (!thread) {
+    return false;
+  }
+  if (thread.session?.status === "running") {
+    return true;
+  }
+  if (thread.latestTurn !== null && thread.latestTurn.completedAt !== null) {
+    return true;
+  }
+  return Boolean(thread.session?.lastError);
 }
 
 // `threadProvider` is the open branded driver kind carried by the session.
@@ -496,8 +562,6 @@ export interface LocalDispatchSnapshot {
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
   latestTurnCompletedAt: string | null;
-  sessionStatus: NonNullable<Thread["session"]>["status"] | null;
-  sessionUpdatedAt: string | null;
 }
 
 export function createLocalDispatchSnapshot(
@@ -505,7 +569,6 @@ export function createLocalDispatchSnapshot(
   options?: { preparingWorktree?: boolean },
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;
-  const session = activeThread?.session ?? null;
   const latestUserMessage = activeThread?.messages.findLast((message) => message.role === "user");
   return {
     startedAt: new Date().toISOString(),
@@ -515,8 +578,6 @@ export function createLocalDispatchSnapshot(
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
-    sessionStatus: session?.status ?? null,
-    sessionUpdatedAt: session?.updatedAt ?? null,
   };
 }
 
@@ -571,9 +632,9 @@ export function hasServerAcknowledgedLocalDispatch(input: {
     return true;
   }
 
-  return (
-    latestTurnChanged ||
-    input.localDispatch.sessionStatus !== (session?.status ?? null) ||
-    input.localDispatch.sessionUpdatedAt !== (session?.updatedAt ?? null)
-  );
+  // Requested-turn and session projections can arrive before the running
+  // session projection. Neither replaces the local working state yet. Keep
+  // the bridge mounted until the turn is visibly running (above) or already
+  // settled, so the working row cannot blink out between projections.
+  return latestTurn !== null && latestTurnChanged && latestTurn.completedAt !== null;
 }

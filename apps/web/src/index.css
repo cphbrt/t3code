@@ -680,6 +680,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     outline: none;
   }
 
+  @media (max-width: 56rem) {
+    [data-chat-reading-focus="true"] [data-timeline-root="true"] {
+      padding-inline-end: 2.75rem;
+    }
+  }
+
+  [data-chat-reading-focus="true"] [data-timeline-list-footer] {
+    display: none;
+  }
   .chat-composer-glass-shell {
     --chat-composer-glass-surface: var(--card);
     --chat-composer-outline: rgb(0 0 0 / 8%);

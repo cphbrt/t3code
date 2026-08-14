@@ -26,10 +26,15 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  revealComposerForTypedKey,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
   startNewThreadForProject,
+  threadReadyForDraftRouteHandoff,
+  toggleReadingFocusThread,
+  clearReadingFocusThread,
+  enableReadingFocusThread,
   shouldShowBranchMismatchBanner,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -38,6 +43,30 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("reading focus by thread", () => {
+  it("keeps focus enabled on other threads when another thread is toggled", () => {
+    const firstFocused = toggleReadingFocusThread(new Set(), "thread-a");
+    const bothFocused = toggleReadingFocusThread(firstFocused, "thread-b");
+
+    expect([...bothFocused]).toEqual(["thread-a", "thread-b"]);
+    expect([...firstFocused]).toEqual(["thread-a"]);
+  });
+
+  it("clears only the requested thread", () => {
+    const bothFocused = new Set(["thread-a", "thread-b"]);
+
+    expect([...clearReadingFocusThread(bothFocused, "thread-a")]).toEqual(["thread-b"]);
+    expect([...bothFocused]).toEqual(["thread-a", "thread-b"]);
+  });
+
+  it("enables focus without toggling an already focused thread off", () => {
+    const firstFocused = enableReadingFocusThread(new Set(), "thread-a");
+
+    expect([...firstFocused]).toEqual(["thread-a"]);
+    expect(enableReadingFocusThread(firstFocused, "thread-a")).toBe(firstFocused);
+  });
+});
 
 describe("environment reconnect warning grace", () => {
   afterEach(() => vi.useRealTimers());
@@ -124,6 +153,38 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("draft route handoff", () => {
+  it("waits through server setup until the canonical route has visible turn state", () => {
+    const sessionCreated = makeThread({ session: readySession });
+    const turnRequested = makeThread({
+      latestTurn: {
+        ...completedTurn,
+        state: "running",
+        startedAt: null,
+        completedAt: null,
+      },
+      session: readySession,
+    });
+
+    expect(threadReadyForDraftRouteHandoff(sessionCreated)).toBe(false);
+    expect(threadReadyForDraftRouteHandoff(turnRequested)).toBe(false);
+  });
+
+  it("hands off running, settled, and errored server threads", () => {
+    expect(
+      threadReadyForDraftRouteHandoff(
+        makeThread({ session: { ...readySession, status: "running" } }),
+      ),
+    ).toBe(true);
+    expect(threadReadyForDraftRouteHandoff(makeThread({ latestTurn: completedTurn }))).toBe(true);
+    expect(
+      threadReadyForDraftRouteHandoff(
+        makeThread({ session: { ...readySession, lastError: "Could not start" } }),
+      ),
+    ).toBe(true);
+  });
+});
 
 describe("buildLoadingThreadFromShell", () => {
   it("preserves shell metadata and supplies empty detail collections", () => {
@@ -382,6 +443,31 @@ describe("resolveSendEnvMode", () => {
   });
 });
 
+describe("revealComposerForTypedKey", () => {
+  it("reveals and focuses the composer before appending the typed key", () => {
+    const calls: string[] = [];
+    revealComposerForTypedKey({
+      showComposerAndFocus: () => calls.push("reveal"),
+      insertTextAtEnd: (text) => {
+        calls.push(`insert:${text}`);
+        return true;
+      },
+      key: " ",
+    });
+    expect(calls).toEqual(["reveal", "insert: "]);
+  });
+
+  it("still reveals and focuses when the composer refuses the text", () => {
+    const showComposerAndFocus = vi.fn();
+    revealComposerForTypedKey({
+      showComposerAndFocus,
+      insertTextAtEnd: () => false,
+      key: "a",
+    });
+    expect(showComposerAndFocus).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("branchMismatchKey", () => {
   it("builds a key from thread id and both branches", () => {
     expect(branchMismatchKey("thread-1", { threadBranch: "feat/a", currentBranch: "feat/b" })).toBe(
@@ -607,6 +693,33 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(true);
+  });
+
+  it("keeps local working state through requested-turn and session projections", () => {
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestTurn: completedTurn, session: readySession }),
+    );
+    const requestedTurn = {
+      ...completedTurn,
+      turnId: TurnId.make("turn-2"),
+      state: "running" as const,
+      requestedAt: "2026-03-29T00:01:00.000Z",
+      startedAt: null,
+      completedAt: null,
+    };
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "ready",
+        latestTurn: requestedTurn,
+        latestUserMessageId: MessageId.make("message-2"),
+        session: { ...readySession, updatedAt: requestedTurn.requestedAt },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
   });
 
   it("waits for the matching running turn before acknowledging", () => {
