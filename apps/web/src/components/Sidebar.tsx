@@ -132,6 +132,7 @@ import {
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planPinnedReorder,
+  releaseSidebarRowFocus,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarThreadStatus,
@@ -2415,6 +2416,9 @@ export default function Sidebar() {
 
   const handleThreadClick = useCallback(
     (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
+      // React nulls `currentTarget` once the handler returns, so read the row
+      // now even though the blur only happens on the navigation branch.
+      const row = event.currentTarget;
       if (isSidebarNestedLinkClick(event.target)) return;
       const isMac = isMacPlatform(navigator.platform);
       const isModClick = isMac ? event.metaKey : event.ctrlKey;
@@ -2432,6 +2436,7 @@ export default function Sidebar() {
       if (isTrailingDoubleClick(event.detail)) {
         return;
       }
+      releaseSidebarRowFocus(row);
       navigateToThread(threadRef);
     },
     [navigateToThread, rangeSelectTo, toggleThreadSelection],

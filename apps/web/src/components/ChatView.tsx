@@ -50,7 +50,6 @@ import {
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
-import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import {
@@ -105,7 +104,6 @@ import {
   isLatestTurnSettled,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
-import { getAnchoredTurnMetrics, type TimelineScrollMode } from "./chat/timelineScrollAnchoring";
 import {
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
@@ -179,6 +177,7 @@ import {
   CheckCircle2Icon,
   ChevronDownIcon,
   GitBranchIcon,
+  MessageSquareIcon,
   PaperclipIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -274,9 +273,14 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
-import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import {
+  reconcileTimelineScrollToEnd,
+  resolveTimelineIsAtEnd,
+} from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
+import { subscribeChatLayoutAction } from "./chat/chatLayoutActionBus";
+import { useChatSessionUiStore } from "./chat/chatSessionUiStore";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
@@ -341,6 +345,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
+  revealComposerForTypedKey,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -390,6 +395,8 @@ const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const CHAT_TIMELINE_COMPOSER_CLEARANCE = 12;
+type TimelineScrollMode = "following-end" | "free-scrolling";
 function useDraftHeroLayoutTransition(isDraftHeroState: boolean) {
   const transitionGroupRef = useRef<HTMLDivElement | null>(null);
   const composerAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -2681,6 +2688,62 @@ function ChatViewContent(props: ChatViewProps) {
     draftHeroDockRequested,
     backgroundSubmissionPending,
   });
+  const focusComposer = useCallback(() => {
+    composerRef.current?.focusAtEnd();
+  }, [composerRef]);
+  const scheduleComposerFocus = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      focusComposer();
+    });
+  }, [focusComposer]);
+  const readingFocusRequested = useChatSessionUiStore((state) =>
+    activeThreadKey === null ? false : state.readingFocusThreadKeys.has(activeThreadKey),
+  );
+  const toggleReadingFocusForThread = useChatSessionUiStore((state) => state.toggleReadingFocus);
+  const enableReadingFocusForThread = useChatSessionUiStore((state) => state.enableReadingFocus);
+  const clearReadingFocusForThread = useChatSessionUiStore((state) => state.clearReadingFocus);
+  const readingFocusAvailable = activeThreadKey !== null && timelineEntries.length > 0;
+  const readingFocus = readingFocusAvailable && readingFocusRequested;
+  const timelineBottomInset = readingFocus
+    ? 0
+    : composerOverlayHeight + CHAT_TIMELINE_COMPOSER_CLEARANCE;
+  const showComposerAndFocus = useCallback(() => {
+    if (activeThreadKey === null) return;
+    flushSync(() => {
+      clearReadingFocusForThread(activeThreadKey);
+    });
+    scheduleComposerFocus();
+  }, [activeThreadKey, clearReadingFocusForThread, scheduleComposerFocus]);
+  const toggleReadingFocus = useCallback(() => {
+    if (!readingFocusAvailable || activeThreadKey === null) return;
+    if (readingFocus) {
+      showComposerAndFocus();
+      return;
+    }
+    toggleReadingFocusForThread(activeThreadKey);
+  }, [
+    activeThreadKey,
+    readingFocus,
+    readingFocusAvailable,
+    showComposerAndFocus,
+    toggleReadingFocusForThread,
+  ]);
+
+  useEffect(() => subscribeChatLayoutAction(() => toggleReadingFocus()), [toggleReadingFocus]);
+
+  useEffect(() => {
+    if (!readingFocus || (activePendingApproval === null && pendingUserInputs.length === 0)) {
+      return;
+    }
+    if (activeThreadKey === null) return;
+    clearReadingFocusForThread(activeThreadKey);
+  }, [
+    activePendingApproval,
+    activeThreadKey,
+    clearReadingFocusForThread,
+    pendingUserInputs.length,
+    readingFocus,
+  ]);
   const [
     attachDraftHeroTransitionGroupRef,
     attachDraftHeroComposerAnchorRef,
@@ -2907,14 +2970,6 @@ function ChatViewContent(props: ChatViewProps) {
     [activeServerThread, draftId, routeThreadKey, routeThreadRef],
   );
 
-  const focusComposer = useCallback(() => {
-    composerRef.current?.focusAtEnd();
-  }, [composerRef]);
-  const scheduleComposerFocus = useCallback(() => {
-    window.requestAnimationFrame(() => {
-      focusComposer();
-    });
-  }, [focusComposer]);
   const addTerminalContextToDraft = useCallback(
     (selection: TerminalContextSelection) => {
       composerRef.current?.addTerminalContext(selection);
@@ -3829,23 +3884,25 @@ function ChatViewContent(props: ChatViewProps) {
   // re-pins on its own (independent of the refs), so the timeline needs a
   // render-visible flag to switch it off once the user scrolls away.
   const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
-  const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
-  const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
-  const settledTimelineAnchorRef = useRef<MessageId | null>(null);
-  const activeTimelineAnchorIndexRef = useRef<number | null>(null);
   const anchorUserScrollGenerationRef = useRef(0);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
-  // Manual navigation stops live-follow without removing anchored end space.
-  // Collapsing that space during a gesture clamps the viewport back to the end.
+  const timelineFollowReconcileFrameRef = useRef<number | null>(null);
+  const scrollToEndRequestedRef = useRef(false);
+  const reconcileTimelineFollowRef = useRef<() => boolean>(() => false);
+  // Manual navigation is the only transition away from the live edge.
   const cancelTimelineLiveFollowForUserNavigation = useCallback(() => {
+    if (timelineFollowReconcileFrameRef.current !== null) {
+      cancelAnimationFrame(timelineFollowReconcileFrameRef.current);
+      timelineFollowReconcileFrameRef.current = null;
+    }
+    scrollToEndRequestedRef.current = false;
     anchorUserScrollGenerationRef.current += 1;
     timelineScrollModeRef.current = "free-scrolling";
     liveFollowUserScrollGenerationRef.current = null;
     setTimelineLiveFollowEnabled(false);
-    pendingTimelineAnchorRef.current = null;
-    positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
+    if (!isAtEndRef.current) {
+      showScrollDebouncer.current.maybeExecute();
+    }
   }, []);
   const cancelTimelineLiveFollowForUserNavigationRef = useRef(
     cancelTimelineLiveFollowForUserNavigation,
@@ -3854,24 +3911,6 @@ function ChatViewContent(props: ChatViewProps) {
     cancelTimelineLiveFollowForUserNavigationRef.current =
       cancelTimelineLiveFollowForUserNavigation;
   }, [cancelTimelineLiveFollowForUserNavigation]);
-  const getActiveTimelineTurnMetrics = useCallback(
-    (list?: LegendListRef | null) => {
-      const resolvedList = list ?? legendListRef.current;
-      const anchorIndex = activeTimelineAnchorIndexRef.current;
-      const state = resolvedList?.getState();
-      if (!resolvedList || !state || anchorIndex === null) {
-        return null;
-      }
-
-      return getAnchoredTurnMetrics({
-        state,
-        anchorIndex,
-        composerOverlayHeight,
-        anchorOffset: CHAT_LIST_ANCHOR_OFFSET,
-      });
-    },
-    [composerOverlayHeight],
-  );
   const timelineRealContentOverflowsViewport = useCallback(
     (list?: LegendListRef | null) => {
       const resolvedList = list ?? legendListRef.current;
@@ -3893,54 +3932,93 @@ function ChatViewContent(props: ChatViewProps) {
       }
 
       const realContentBottom = lastRowTop + Math.max(1, lastRowHeight);
-      const visibleScrollLength = Math.max(
-        0,
-        (state.scrollLength ?? 0) - composerOverlayHeight - CHAT_LIST_ANCHOR_OFFSET,
-      );
+      const visibleScrollLength = Math.max(0, (state.scrollLength ?? 0) - timelineBottomInset);
       return realContentBottom > visibleScrollLength;
     },
-    [composerOverlayHeight],
+    [timelineBottomInset],
+  );
+  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
+    isAtEndRef.current = isAtEnd;
+    if (isAtEnd) {
+      scrollToEndRequestedRef.current = false;
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      return;
+    }
+    if (timelineScrollModeRef.current !== "free-scrolling") {
+      showScrollDebouncer.current.cancel();
+      if (!scrollToEndRequestedRef.current) {
+        setShowScrollToBottom(false);
+      }
+      return;
+    }
+    showScrollDebouncer.current.maybeExecute();
+  }, []);
+  const reconcileTimelineFollow = useCallback((): boolean => {
+    if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
+      return false;
+    }
+    if (timelineScrollModeRef.current === "free-scrolling") {
+      return false;
+    }
+
+    const list = legendListRef.current;
+    if (!list) {
+      return false;
+    }
+
+    const scrollNode = list.getScrollableNode();
+    const didMove = reconcileTimelineScrollToEnd(scrollNode ?? undefined);
+    const isAtEnd = resolveTimelineIsAtEnd(scrollNode ?? undefined);
+    if (isAtEnd !== undefined) {
+      onIsAtEndChange(isAtEnd);
+    }
+    return didMove;
+  }, [onIsAtEndChange]);
+  reconcileTimelineFollowRef.current = reconcileTimelineFollow;
+  const scheduleTimelineFollowReconcile = useCallback(() => {
+    if (timelineFollowReconcileFrameRef.current !== null) {
+      return;
+    }
+    timelineFollowReconcileFrameRef.current = requestAnimationFrame(() => {
+      timelineFollowReconcileFrameRef.current = null;
+      reconcileTimelineFollowRef.current();
+    });
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (timelineFollowReconcileFrameRef.current !== null) {
+        cancelAnimationFrame(timelineFollowReconcileFrameRef.current);
+        timelineFollowReconcileFrameRef.current = null;
+      }
+    },
+    [],
   );
   // Live-follow stays active after send/thread-open until an actual list scroll
   // gesture opts out.
-  const scrollToEnd = useCallback((animated = false) => {
-    isAtEndRef.current = true;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = null;
-    positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    setTimelineAnchor(releaseChatTimelineAnchor);
-    requestAnimationFrame(() => {
-      void legendListRef.current?.scrollToEnd?.({ animated });
-    });
-  }, []);
-  useLayoutEffect(() => {
-    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
-      return;
-    }
-
-    if (
-      shouldReleaseTimelineAnchorForToolActivity({
-        anchorMessageId: timelineAnchorMessageId,
-        liveFollowEnabled: timelineLiveFollowEnabled,
-        runningTurnId: activeRunningTurnId,
-        timelineEntries,
-      })
-    ) {
-      scrollToEnd();
-    }
-  }, [
-    activeRunningTurnId,
-    scrollToEnd,
-    timelineAnchorMessageId,
-    timelineEntries,
-    timelineLiveFollowEnabled,
-  ]);
+  const scrollToEnd = useCallback(
+    async (animated = false) => {
+      if (timelineFollowReconcileFrameRef.current !== null) {
+        cancelAnimationFrame(timelineFollowReconcileFrameRef.current);
+        timelineFollowReconcileFrameRef.current = null;
+      }
+      scrollToEndRequestedRef.current = true;
+      timelineScrollModeRef.current = "following-end";
+      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+      setTimelineLiveFollowEnabled(true);
+      showScrollDebouncer.current.cancel();
+      const list = legendListRef.current;
+      if (list) {
+        await list.scrollToEnd({ animated });
+      }
+      scheduleTimelineFollowReconcile();
+    },
+    [scheduleTimelineFollowReconcile],
+  );
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -3967,13 +4045,12 @@ function ChatViewContent(props: ChatViewProps) {
         // silently stops following. Underflowing content can't scroll at all,
         // so nothing there should break follow.
         const contentScrollsUp = () => timelineRealContentOverflowsViewport();
-        // The follow re-arm band, not the strict flag: streaming growth makes
-        // isAtEnd flicker false for a frame before the follow scroll catches
-        // up, and a gesture landing in that window while still pinned would
-        // otherwise break follow with no scroll event left to re-arm it.
-        const viewportIsAwayFromEnd = () =>
-          resolveTimelineIsAtEnd(legendListRef.current?.getState(), composerOverlayHeight) ===
-          false;
+        // Read the browser's physical scroll range. Virtual-list estimates can
+        // lag behind streaming row growth and are not authoritative here.
+        const viewportIsAwayFromEnd = () => {
+          const activeScrollNode = legendListRef.current?.getScrollableNode();
+          return resolveTimelineIsAtEnd(activeScrollNode ?? undefined) === false;
+        };
         // Only an upward wheel is a navigation intent; wheeling down while
         // following either does nothing (at the end) or moves toward it.
         const handleWheel = (event: WheelEvent) => {
@@ -4048,149 +4125,28 @@ function ChatViewContent(props: ChatViewProps) {
       }
       removeListeners?.();
     };
-  }, [activeThread?.id, composerOverlayHeight, timelineRealContentOverflowsViewport]);
+  }, [activeThread?.id, timelineBottomInset, timelineRealContentOverflowsViewport]);
 
-  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
-    // Anchored-end space can be remeasured when the turn completes. Once the
-    // user has scrolled away (or returned to ordinary end-following), that
-    // remeasurement must not restart the send-time anchor positioning.
-    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
-      return;
-    }
-    if (pendingTimelineAnchorRef.current === messageId) {
-      pendingTimelineAnchorRef.current = null;
-    }
-    activeTimelineAnchorIndexRef.current = anchorIndex;
-    if (positionedTimelineAnchorRef.current === messageId) {
-      return;
-    }
-    positionedTimelineAnchorRef.current = messageId;
-    settledTimelineAnchorRef.current = null;
-    const positionAnchor = (remainingAttempts: number) => {
-      requestAnimationFrame(() => {
-        if (positionedTimelineAnchorRef.current !== messageId) {
-          return;
-        }
-        const list = legendListRef.current;
-        if (!list) {
-          if (remainingAttempts > 0) {
-            positionAnchor(remainingAttempts - 1);
-          }
-          return;
-        }
-        void list
-          .scrollToIndex({
-            index: anchorIndex,
-            animated: true,
-            viewPosition: 0,
-            viewOffset: CHAT_LIST_ANCHOR_OFFSET,
-          })
-          .then(() => {
-            if (positionedTimelineAnchorRef.current !== messageId) {
-              return;
-            }
-            settledTimelineAnchorRef.current = messageId;
-          });
-      });
-    };
-    requestAnimationFrame(() => positionAnchor(12));
-  }, []);
-
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (
-      !isAtEnd &&
-      liveFollowUserScrollGenerationRef.current === anchorUserScrollGenerationRef.current
-    ) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (isAtEndRef.current === isAtEnd) return;
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      timelineScrollModeRef.current = "following-end";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      setTimelineLiveFollowEnabled(true);
-      // Reachable only once manual navigation has already broken follow, so
-      // the anchored turn framing is over: the user scrolled back to the live
-      // edge and expects the stream to stick to it again, exactly like the
-      // scroll-to-bottom pill.
-      setTimelineAnchor(releaseChatTimelineAnchor);
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      timelineScrollModeRef.current = "free-scrolling";
-      liveFollowUserScrollGenerationRef.current = null;
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
-
-  // Anchored end space intentionally disables LegendList's normal end-follow so
-  // the sent message can stay near the top. T3 only owns streaming adjustments
-  // during that mode; LegendList owns ordinary end-follow everywhere else.
+  // Reconcile from both data changes and the list's authoritative geometry
+  // callbacks: markdown, diffs, and virtualized rows can settle more than two
+  // animation frames after their data arrived.
   useEffect(() => {
-    if (!activeThread?.id) {
-      return;
+    if (activeThread?.id) {
+      scheduleTimelineFollowReconcile();
     }
-    if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
-      return;
-    }
-    if (timelineScrollModeRef.current !== "anchoring-new-turn") {
-      return;
-    }
-
-    let secondFrame: number | null = null;
-    const frame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
-          return;
-        }
-        if (pendingTimelineAnchorRef.current !== null) {
-          return;
-        }
-        if (
-          positionedTimelineAnchorRef.current !== null &&
-          settledTimelineAnchorRef.current !== positionedTimelineAnchorRef.current
-        ) {
-          return;
-        }
-        const list = legendListRef.current;
-        if (!list) {
-          return;
-        }
-
-        const metrics = getActiveTimelineTurnMetrics(list);
-        if (!metrics || metrics.scrollDeltaToRevealEnd <= 1) {
-          return;
-        }
-
-        const nextOffset = list.getState().scroll + metrics.scrollDeltaToRevealEnd;
-        void list.scrollToOffset({ offset: nextOffset, animated: false });
-      });
-    });
-
-    return () => {
-      cancelAnimationFrame(frame);
-      if (secondFrame !== null) {
-        cancelAnimationFrame(secondFrame);
-      }
-    };
-  }, [activeThread?.id, timelineEntries, getActiveTimelineTurnMetrics]);
+  }, [activeThread?.id, scheduleTimelineFollowReconcile, timelineBottomInset, timelineEntries]);
 
   useEffect(() => {
     setPullRequestDialogState(null);
-    isAtEndRef.current = true;
+    isAtEndRef.current = false;
+    scrollToEndRequestedRef.current = false;
     timelineScrollModeRef.current = "following-end";
     liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
     setTimelineLiveFollowEnabled(true);
-    pendingTimelineAnchorRef.current = null;
-    positionedTimelineAnchorRef.current = null;
-    settledTimelineAnchorRef.current = null;
-    activeTimelineAnchorIndexRef.current = null;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id]);
+  }, [activeThread?.id, activeThreadKey]);
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
@@ -4916,6 +4872,17 @@ function ChatViewContent(props: ChatViewProps) {
         !shortcutContext.modelPickerOpen &&
         shouldTypeToFocusComposer(event)
       ) {
+        if (readingFocus) {
+          const text = event.key;
+          event.preventDefault();
+          event.stopPropagation();
+          revealComposerForTypedKey({
+            showComposerAndFocus,
+            insertTextAtEnd: (value) => composerRef.current?.insertTextAtEnd(value) ?? false,
+            key: text,
+          });
+          return;
+        }
         if (composerRef.current?.insertTextAtEnd(event.key)) {
           event.preventDefault();
           event.stopPropagation();
@@ -4946,6 +4913,13 @@ function ChatViewContent(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         toggleRightPanelMaximized();
+        return;
+      }
+
+      if (command === "chat.readingFocus.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleReadingFocus();
         return;
       }
 
@@ -5045,8 +5019,11 @@ function ChatViewContent(props: ChatViewProps) {
     onToggleDiff,
     toggleRightPanel,
     toggleRightPanelMaximized,
+    toggleReadingFocus,
     toggleTerminalVisibility,
     composerRef,
+    showComposerAndFocus,
+    readingFocus,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -5429,6 +5406,10 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
 
+    if (activeThreadKey !== null) {
+      enableReadingFocusForThread(activeThreadKey);
+    }
+
     const resolvedSubmissionIntent =
       submissionIntent === "background" && isLocalDraftThread ? "background" : "foreground";
     if (
@@ -5486,25 +5467,9 @@ function ChatViewContent(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    const shouldAnchorFirstMessage =
-      activeThread.latestTurn === null &&
-      !timelineMessages.some((message) => message.role === "user");
-    if (shouldAnchorFirstMessage) {
-      isAtEndRef.current = true;
-      timelineScrollModeRef.current = "anchoring-new-turn";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      setTimelineLiveFollowEnabled(true);
-      pendingTimelineAnchorRef.current = messageIdForSend;
-      activeTimelineAnchorIndexRef.current = null;
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      setTimelineAnchor({
-        threadKey: scopedThreadKey(scopeThreadRef(activeThread.environmentId, threadIdForSend)),
-        messageId: messageIdForSend,
-      });
-    } else {
-      scrollToEnd();
-    }
+    // The submitted prompt enters at the current live edge. New activity grows
+    // below it and ordinary end-follow keeps the newest content visible.
+    void scrollToEnd(false);
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
@@ -5781,6 +5746,7 @@ function ChatViewContent(props: ChatViewProps) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       resetLocalDispatch();
+      showComposerAndFocus();
     }
   };
 
@@ -6008,10 +5974,13 @@ function ChatViewContent(props: ChatViewProps) {
       });
 
       sendInFlightRef.current = true;
+      if (activeThreadKey !== null) {
+        enableReadingFocusForThread(activeThreadKey);
+      }
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
 
-      scrollToEnd();
+      void scrollToEnd(false);
 
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -6093,9 +6062,11 @@ function ChatViewContent(props: ChatViewProps) {
       }
       sendInFlightRef.current = false;
       resetLocalDispatch();
+      showComposerAndFocus();
     },
     [
       activeThread,
+      activeThreadKey,
       activeProposedPlan,
       acknowledgeActiveThreadWoke,
       beginLocalDispatch,
@@ -6109,9 +6080,11 @@ function ChatViewContent(props: ChatViewProps) {
       scrollToEnd,
       setComposerDraftInteractionMode,
       setThreadError,
+      showComposerAndFocus,
       startThreadTurn,
       environmentId,
       composerRef,
+      enableReadingFocusForThread,
     ],
   );
 
@@ -6448,6 +6421,9 @@ function ChatViewContent(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
+      readingFocusAvailable={readingFocusAvailable}
+      readingFocus={readingFocus}
+      readingFocusShortcutLabel={shortcutLabelForCommand(keybindings, "chat.readingFocus.toggle")}
       terminalAvailable={activeProject !== null}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
@@ -6459,6 +6435,7 @@ function ChatViewContent(props: ChatViewProps) {
       liveAgentCount={
         rightPanelOpen && activeRightPanelSurface?.kind === "agents" ? 0 : agentPanelModel.liveCount
       }
+      onToggleReadingFocus={toggleReadingFocus}
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
     />
@@ -6602,7 +6579,10 @@ function ChatViewContent(props: ChatViewProps) {
     composerBannerItems.length > 0 || Boolean(threadSyncPhase && !activeEnvironmentUnavailable);
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background">
+    <div
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      data-chat-reading-focus={readingFocus ? "true" : undefined}
+    >
       {rightPanelOpen && !shouldUseRightPanelSheet ? panelLayoutControls : null}
       <div
         className={cn(
@@ -6716,9 +6696,8 @@ function ChatViewContent(props: ChatViewProps) {
                 timestampFormat={timestampFormat}
                 workspaceRoot={activeWorkspaceRoot}
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
-                anchorMessageId={timelineAnchorMessageId}
-                onAnchorReady={onTimelineAnchorReady}
-                contentInsetEndAdjustment={composerOverlayHeight}
+                onContentGeometryChange={scheduleTimelineFollowReconcile}
+                contentInsetEndAdjustment={timelineBottomInset}
                 liveFollowEnabled={timelineLiveFollowEnabled}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
@@ -6731,7 +6710,7 @@ function ChatViewContent(props: ChatViewProps) {
               {showScrollToBottom && (
                 <div
                   className="pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5"
-                  style={{ bottom: composerOverlayHeight + 4 }}
+                  style={{ bottom: timelineBottomInset + 4 }}
                 >
                   <Button
                     aria-label="Scroll to end"
@@ -6757,9 +6736,27 @@ function ChatViewContent(props: ChatViewProps) {
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
+              {readingFocus ? (
+                <div className="flex w-full justify-end pb-[calc(env(safe-area-inset-bottom)+0.75rem)] ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]">
+                  <Button
+                    aria-label="Reply"
+                    title="Reply"
+                    className="pointer-events-auto rounded-full text-muted-foreground hover:text-foreground"
+                    size="icon-sm"
+                    variant="glass"
+                    onClick={showComposerAndFocus}
+                    data-chat-reading-focus-reply
+                  >
+                    <MessageSquareIcon className="size-3.5" />
+                  </Button>
+                </div>
+              ) : null}
               <div
                 ref={attachDraftHeroTransitionGroupRef}
-                className="w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]"
+                className={cn(
+                  "w-full ps-[calc(env(safe-area-inset-left)+0.75rem)] pe-[calc(env(safe-area-inset-right)+0.75rem)] sm:ps-[calc(env(safe-area-inset-left)+1.25rem)] sm:pe-[calc(env(safe-area-inset-right)+1.25rem)]",
+                  readingFocus && "hidden",
+                )}
               >
                 <div className="pointer-events-auto relative z-10">
                   {isDraftHeroState ? (
@@ -6942,7 +6939,7 @@ function ChatViewContent(props: ChatViewProps) {
                 key={`${activeThreadKey}:${activePreviewMiniPlayer.tabId}`}
                 threadRef={activeThreadRef}
                 tabId={activePreviewMiniPlayer.tabId}
-                bottomInset={isDraftHeroState ? 0 : composerOverlayHeight}
+                bottomInset={isDraftHeroState ? 0 : timelineBottomInset}
               />
             ) : null}
 

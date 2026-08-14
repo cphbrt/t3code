@@ -14,12 +14,7 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => ReactNode;
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
-    anchoredEndSpace?: {
-      anchorIndex: number;
-      anchorMaxSize?: number;
-      anchorOffset?: number;
-      onReady?: (info: { anchorIndex: number }) => void;
-    };
+    alignItemsAtEnd?: boolean;
     contentInsetEndAdjustment?: number;
     className?: string;
     maintainScrollAtEnd?:
@@ -39,70 +34,64 @@ vi.mock("@legendapp/list/react", async () => {
           size?: boolean;
           shouldRestorePosition?: (item: { id: string }) => boolean;
         };
+    onItemSizeChanged?: () => void;
     ref?: Ref<LegendListRef>;
-  }) => {
-    if (props.anchoredEndSpace) {
-      props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
-    }
-    return (
-      <div
-        data-testid={legendListTestId}
-        data-anchor-index={props.anchoredEndSpace?.anchorIndex}
-        data-anchor-max-size={props.anchoredEndSpace?.anchorMaxSize}
-        data-anchor-offset={props.anchoredEndSpace?.anchorOffset}
-        data-anchor-on-ready={Boolean(props.anchoredEndSpace?.onReady)}
-        data-content-inset-end={props.contentInsetEndAdjustment}
-        data-class-name={props.className}
-        data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
-        data-maintain-scroll-at-end-animated={
-          typeof props.maintainScrollAtEnd === "object"
-            ? props.maintainScrollAtEnd.animated
-            : undefined
-        }
-        data-maintain-scroll-at-end-data-change={
-          typeof props.maintainScrollAtEnd === "object"
-            ? props.maintainScrollAtEnd.on?.dataChange
-            : undefined
-        }
-        data-maintain-scroll-at-end-item-layout={
-          typeof props.maintainScrollAtEnd === "object"
-            ? props.maintainScrollAtEnd.on?.itemLayout
-            : undefined
-        }
-        data-maintain-scroll-at-end-layout={
-          typeof props.maintainScrollAtEnd === "object"
-            ? props.maintainScrollAtEnd.on?.layout
-            : undefined
-        }
-        data-maintain-visible-content-position={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? "object"
-            : props.maintainVisibleContentPosition
-        }
-        data-maintain-visible-content-position-data={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? props.maintainVisibleContentPosition.data
-            : undefined
-        }
-        data-maintain-visible-content-position-size={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? props.maintainVisibleContentPosition.size
-            : undefined
-        }
-        data-maintain-visible-content-position-restore={
-          typeof props.maintainVisibleContentPosition === "object"
-            ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
-            : undefined
-        }
-      >
-        {props.ListHeaderComponent}
-        {props.data.map((item) => (
-          <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
-        ))}
-        {props.ListFooterComponent}
-      </div>
-    );
-  };
+  }) => (
+    <div
+      data-testid={legendListTestId}
+      data-align-items-at-end={props.alignItemsAtEnd}
+      data-on-item-size-changed={Boolean(props.onItemSizeChanged)}
+      data-content-inset-end={props.contentInsetEndAdjustment}
+      data-class-name={props.className}
+      data-maintain-scroll-at-end={props.maintainScrollAtEnd ? "enabled" : undefined}
+      data-maintain-scroll-at-end-animated={
+        typeof props.maintainScrollAtEnd === "object"
+          ? props.maintainScrollAtEnd.animated
+          : undefined
+      }
+      data-maintain-scroll-at-end-data-change={
+        typeof props.maintainScrollAtEnd === "object"
+          ? props.maintainScrollAtEnd.on?.dataChange
+          : undefined
+      }
+      data-maintain-scroll-at-end-item-layout={
+        typeof props.maintainScrollAtEnd === "object"
+          ? props.maintainScrollAtEnd.on?.itemLayout
+          : undefined
+      }
+      data-maintain-scroll-at-end-layout={
+        typeof props.maintainScrollAtEnd === "object"
+          ? props.maintainScrollAtEnd.on?.layout
+          : undefined
+      }
+      data-maintain-visible-content-position={
+        typeof props.maintainVisibleContentPosition === "object"
+          ? "object"
+          : props.maintainVisibleContentPosition
+      }
+      data-maintain-visible-content-position-data={
+        typeof props.maintainVisibleContentPosition === "object"
+          ? props.maintainVisibleContentPosition.data
+          : undefined
+      }
+      data-maintain-visible-content-position-size={
+        typeof props.maintainVisibleContentPosition === "object"
+          ? props.maintainVisibleContentPosition.size
+          : undefined
+      }
+      data-maintain-visible-content-position-restore={
+        typeof props.maintainVisibleContentPosition === "object"
+          ? Boolean(props.maintainVisibleContentPosition.shouldRestorePosition)
+          : undefined
+      }
+    >
+      {props.ListHeaderComponent}
+      {props.data.map((item) => (
+        <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
+      ))}
+      {props.ListFooterComponent}
+    </div>
+  );
 
   return { LegendList };
 });
@@ -193,8 +182,7 @@ function buildProps() {
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
-    anchorMessageId: null,
-    onAnchorReady: () => {},
+    onContentGeometryChange: () => {},
     contentInsetEndAdjustment: 0,
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
@@ -403,6 +391,42 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("1 changed file");
   });
 
+  it("always shows completion metadata for the terminal assistant message", () => {
+    const turnId = TurnId.make("turn-completed");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        latestTurn={{
+          turnId,
+          state: "completed",
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: MESSAGE_CREATED_AT,
+        }}
+        timelineEntries={[
+          {
+            id: "entry-assistant-completed",
+            kind: "message",
+            createdAt: MESSAGE_CREATED_AT,
+            message: {
+              id: MessageId.make("message-assistant-completed"),
+              role: "assistant",
+              text: "Finished the requested work.",
+              turnId,
+              createdAt: MESSAGE_CREATED_AT,
+              updatedAt: MESSAGE_CREATED_AT,
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-assistant-message-footer="true"');
+    expect(markup).toContain(">Done</span>");
+    expect(markup).toContain('aria-label="Copy link"');
+    expect(markup).not.toContain("group-hover/assistant:opacity-100");
+  });
+
   it("renders command details and output expanded by default", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -433,7 +457,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("README.md");
   });
 
-  it("treats only the strict list end as the live edge", async () => {
+  it("derives the live edge from strict browser scroll geometry", async () => {
     const {
       resolveTimelineIsAtEnd,
       resolveTimelineMinimapHasPersistentGutter,
@@ -444,36 +468,36 @@ describe("MessagesTimeline", () => {
       resolveTimelineMinimapTopPercent,
     } = await import("./MessagesTimeline.logic");
 
-    expect(resolveTimelineIsAtEnd({ isAtEnd: true })).toBe(true);
     expect(resolveTimelineIsAtEnd(undefined)).toBeUndefined();
-    // Within the pixel band above the content bottom counts as the end...
     expect(
       resolveTimelineIsAtEnd({
-        isAtEnd: false,
-        contentLength: 2000,
-        scroll: 1170,
-        scrollLength: 800,
+        scrollHeight: 2000,
+        scrollTop: 1200,
+        clientHeight: 800,
       }),
     ).toBe(true);
-    // ...but half a viewport up (LegendList's isNearEnd territory) does not.
     expect(
       resolveTimelineIsAtEnd({
-        isAtEnd: false,
-        contentLength: 2000,
-        scroll: 900,
-        scrollLength: 800,
+        scrollHeight: 2000,
+        scrollTop: 1199.5,
+        clientHeight: 800,
+      }),
+    ).toBe(true);
+    // Being 30px away is visibly close, but it is not the physical end.
+    expect(
+      resolveTimelineIsAtEnd({
+        scrollHeight: 2000,
+        scrollTop: 1170,
+        clientHeight: 800,
       }),
     ).toBe(false);
-    // The composer inset is part of contentLength and must not count as
-    // distance-to-end.
+    // Underflowing content is already at its only possible scroll position.
+    expect(resolveTimelineIsAtEnd({ scrollHeight: 600, scrollTop: 0, clientHeight: 800 })).toBe(
+      true,
+    );
     expect(
-      resolveTimelineIsAtEnd(
-        { isAtEnd: false, contentLength: 2100, scroll: 1170, scrollLength: 800 },
-        100,
-      ),
-    ).toBe(true);
-    // Geometry missing (older state shape): fall back to the strict flag.
-    expect(resolveTimelineIsAtEnd({ isAtEnd: false })).toBe(false);
+      resolveTimelineIsAtEnd({ scrollHeight: Number.NaN, scrollTop: 0, clientHeight: 800 }),
+    ).toBeUndefined();
 
     expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
@@ -520,10 +544,11 @@ describe("MessagesTimeline", () => {
     expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
   });
 
-  it("anchors the first user message using its measured height", () => {
-    const onAnchorReady = vi.fn();
-    const firstEntry = {
-      ...buildUserTimelineEntry("First prompt."),
+  it("keeps following the live edge when a sent attachment row mounts", () => {
+    const firstEntry = buildUserTimelineEntry("First prompt.");
+    const secondEntry = {
+      ...buildUserTimelineEntry("Newest prompt."),
+      id: "entry-2",
       message: {
         ...buildUserTimelineEntry("First prompt.").message,
         attachments: [
@@ -541,144 +566,23 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        anchorMessageId={firstEntry.message.id}
-        onAnchorReady={onAnchorReady}
         contentInsetEndAdjustment={144}
         timelineEntries={[firstEntry]}
       />,
     );
 
-    expect(markup).toContain('data-anchor-index="0"');
-    expect(markup).toContain('data-anchor-offset="16"');
-    expect(markup).toContain('data-anchor-on-ready="true"');
-    expect(markup).not.toContain("data-anchor-max-size=");
+    expect(markup).toContain('data-on-item-size-changed="true"');
+    expect(markup).toContain('data-align-items-at-end="true"');
     expect(markup).toContain('data-content-inset-end="144"');
     expect(markup).toContain("[overflow-anchor:none]");
-    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
+    expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
+    expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-maintain-visible-content-position="object"');
     expect(markup).toContain('data-maintain-visible-content-position-data="true"');
     expect(markup).toContain('data-maintain-visible-content-position-size="true"');
     expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
-    expect(onAnchorReady).toHaveBeenCalledOnce();
-    expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
-  });
-
-  it("does not reserve end space for a follow-up user message", () => {
-    const onAnchorReady = vi.fn();
-    const firstEntry = buildUserTimelineEntry("First prompt.");
-    const secondEntry = {
-      ...buildUserTimelineEntry("Newest prompt."),
-      id: "entry-2",
-      message: {
-        ...buildUserTimelineEntry("Newest prompt.").message,
-        id: MessageId.make("message-2"),
-      },
-    };
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        anchorMessageId={secondEntry.message.id}
-        onAnchorReady={onAnchorReady}
-        timelineEntries={[firstEntry, secondEntry]}
-      />,
-    );
-
-    expect(markup).not.toContain("data-anchor-index=");
-    expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
-    expect(onAnchorReady).not.toHaveBeenCalled();
-  });
-
-  it("keeps reserved end space when tool work starts while reading history", () => {
-    const turnId = TurnId.make("turn-with-active-tool");
-    const firstEntry = buildUserTimelineEntry("Run the command.");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        {...buildProps()}
-        isWorking
-        activeTurnStartedAt={MESSAGE_CREATED_AT}
-        latestTurn={{
-          turnId,
-          state: "running",
-          startedAt: MESSAGE_CREATED_AT,
-          completedAt: null,
-        }}
-        runningTurnId={turnId}
-        anchorMessageId={firstEntry.message.id}
-        liveFollowEnabled={false}
-        timelineEntries={[
-          firstEntry,
-          {
-            id: "entry-active-tool",
-            kind: "work",
-            createdAt: MESSAGE_CREATED_AT,
-            entry: {
-              id: "work-active-tool",
-              createdAt: MESSAGE_CREATED_AT,
-              turnId,
-              toolCallId: "call-active-tool",
-              label: "Run command",
-              tone: "tool",
-              itemType: "command_execution",
-              command: "git status",
-              toolLifecycleStatus: "inProgress",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(markup).toContain('data-anchor-index="0"');
-    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
-  });
-
-  it("hands end-following back to the list once the send anchor is released", () => {
-    const firstEntry = buildUserTimelineEntry("First prompt.");
-    const secondEntry = {
-      ...buildUserTimelineEntry("Newest prompt."),
-      id: "entry-2",
-      message: {
-        ...buildUserTimelineEntry("Newest prompt.").message,
-        id: MessageId.make("message-2"),
-      },
-    };
-    const timelineEntries = [firstEntry, secondEntry];
-
-    // While the send anchor holds the end space open, ChatView owns streaming
-    // scrolls and LegendList must not re-pin behind it.
-    expect(
-      renderToStaticMarkup(
-        <MessagesTimeline
-          {...buildProps()}
-          anchorMessageId={firstEntry.message.id}
-          timelineEntries={timelineEntries}
-        />,
-      ),
-    ).not.toContain('data-maintain-scroll-at-end="enabled"');
-
-    // Dropping the anchor is what actually gives end-following back, so
-    // returning to the live edge has to release it — re-enabling live follow
-    // alone leaves nothing pinned to the stream.
-    expect(
-      renderToStaticMarkup(
-        <MessagesTimeline
-          {...buildProps()}
-          anchorMessageId={null}
-          timelineEntries={timelineEntries}
-        />,
-      ),
-    ).toContain('data-maintain-scroll-at-end="enabled"');
-
-    // Reading history still wins over both.
-    expect(
-      renderToStaticMarkup(
-        <MessagesTimeline
-          {...buildProps()}
-          anchorMessageId={null}
-          liveFollowEnabled={false}
-          timelineEntries={timelineEntries}
-        />,
-      ),
-    ).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
   it("renders collapse controls for long user messages", () => {

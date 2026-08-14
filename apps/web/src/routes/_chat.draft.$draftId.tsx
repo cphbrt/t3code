@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import {
   resolveDraftPromotionNavigationTarget,
-  threadHasStarted,
+  threadReadyForDraftRouteHandoff,
 } from "../components/ChatView.logic";
 import {
   DraftId,
@@ -31,7 +31,9 @@ function DraftChatThreadRouteView() {
     : null;
   const serverThreadRef = draftSession?.promotedTo ?? inferredThreadRef;
   const serverThread = useThread(serverThreadRef);
-  const serverThreadStarted = threadHasStarted(serverThread);
+  // Upstream's background-submission guard, gated on the fork's stricter
+  // draft-route handoff readiness check rather than a bare "thread has started".
+  const serverThreadStarted = threadReadyForDraftRouteHandoff(serverThread);
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(serverThreadRef);
   const canonicalThreadRef = resolveDraftPromotionNavigationTarget({
     serverThreadRef,

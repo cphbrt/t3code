@@ -4,6 +4,7 @@ import {
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
+  reconcileTimelineScrollToEnd,
   resolveAssistantMessageCopyState,
   shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
@@ -16,6 +17,28 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("reconcileTimelineScrollToEnd", () => {
+  it("targets the browser's current physical end after every geometry change", () => {
+    const requestedTops: number[] = [];
+    const target = {
+      scrollTop: 200,
+      scrollHeight: 1000,
+      clientHeight: 400,
+      scrollTo: ({ top }: { top: number }) => {
+        requestedTops.push(top);
+      },
+    };
+
+    expect(reconcileTimelineScrollToEnd(target)).toBe(true);
+    target.scrollTop = 600;
+    expect(reconcileTimelineScrollToEnd(target)).toBe(false);
+
+    target.scrollHeight = 1400;
+    expect(reconcileTimelineScrollToEnd(target)).toBe(true);
+    expect(requestedTops).toEqual([1000, 1400]);
   });
 });
 
