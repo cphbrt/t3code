@@ -21,6 +21,28 @@ function activity(payload: Record<string, unknown>): OrchestrationThreadActivity
  * assertions are the tripwire.
  */
 describe("projectActivityPayload", () => {
+  it("advertises an available patch without putting patch text on the wire", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "file_change",
+        fileChanges: [
+          {
+            path: "src/app.ts",
+            kind: "update",
+            diff: "@@ -1 +1 @@\n-old\n+new",
+          },
+        ],
+        data: { toolName: "Edit" },
+      }),
+    );
+    expect(projected.payload).toMatchObject({
+      itemType: "file_change",
+      hasFileDiff: true,
+      data: { files: [{ path: "src/app.ts" }] },
+    });
+    expect(JSON.stringify(projected.payload)).not.toContain("@@ -1 +1 @@");
+  });
+
   it("preserves tool attribution (agentId/parentToolUseId) through data slimming", () => {
     const projected = projectActivityPayload(
       activity({

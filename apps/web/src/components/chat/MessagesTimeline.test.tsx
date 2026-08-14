@@ -364,6 +364,33 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("README.md");
   });
 
+  it("opens file changes by default and requests their structured diff", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "file-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "file-change",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "File change",
+              changedFiles: ["src/app.ts"],
+              hasFileDiff: true,
+              itemType: "file_change",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Diff unavailable.");
+    expect(markup).not.toContain(">src/app.ts</pre>");
+  });
+
   it("derives the live edge from strict browser scroll geometry", async () => {
     const {
       resolveTimelineIsAtEnd,

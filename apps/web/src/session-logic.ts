@@ -53,6 +53,7 @@ export interface WorkLogEntry {
   rawCommand?: string;
   output?: string;
   changedFiles?: ReadonlyArray<string>;
+  hasFileDiff?: boolean;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
@@ -934,6 +935,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (changedFiles.length > 0) {
     entry.changedFiles = changedFiles;
+  }
+  if (payload?.hasFileDiff === true) {
+    entry.hasFileDiff = true;
   }
   if (title) {
     entry.toolTitle = title;

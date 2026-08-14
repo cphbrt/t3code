@@ -3,6 +3,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import { extractActivityFileChanges } from "./ActivityFileChanges.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -380,6 +381,14 @@ export function projectActivityPayload(
 
   const changedFiles: string[] = [];
   collectChangedFiles(data, changedFiles, new Set<string>(), 0);
+  const fileChanges = extractActivityFileChanges(activity);
+  for (const change of fileChanges) {
+    const record = asRecord(change);
+    const path = asTrimmedString(record?.path);
+    if (path && !changedFiles.includes(path)) {
+      changedFiles.push(path);
+    }
+  }
   if (changedFiles.length > 0) {
     // Both clients discover file names by walking objects with path-like keys.
     projectedData.files = changedFiles.map((path) => ({ path }));
@@ -404,10 +413,12 @@ export function projectActivityPayload(
     }
   }
 
+  const { fileChanges: _fileChanges, ...projectedPayload } = payload;
   return {
     ...activity,
     payload: {
-      ...payload,
+      ...projectedPayload,
+      ...(fileChanges.length > 0 ? { hasFileDiff: true } : {}),
       data: projectedData,
     },
   };
