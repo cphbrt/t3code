@@ -14,6 +14,16 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+  it("accepts old descriptors without a home directory", () => {
+    expect(decodeDescriptor(descriptor).homeDirectory).toBeUndefined();
+  });
+
+  it("preserves an advertised home directory", () => {
+    expect(decodeDescriptor({ ...descriptor, homeDirectory: "/Users/chris" }).homeDirectory).toBe(
+      "/Users/chris",
+    );
+  });
+
   it("treats a missing pull-request capability as unsupported under version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
   });

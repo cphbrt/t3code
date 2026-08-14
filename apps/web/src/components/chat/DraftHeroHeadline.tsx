@@ -13,6 +13,10 @@ import {
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  buildHomeDirectoryByEnvironmentId,
+  formatWorkingDirectoryForDisplay,
+} from "~/workingDirectoryDisplay";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
   Menu,
@@ -48,6 +52,10 @@ export function DraftHeroHeadline({
       new Map(
         environments.map((environment) => [environment.environmentId, environment.label] as const),
       ),
+    [environments],
+  );
+  const homeDirectoryByEnvironmentId = useMemo(
+    () => buildHomeDirectoryByEnvironmentId(environments),
     [environments],
   );
   const projectGroups = useMemo(
@@ -134,15 +142,24 @@ export function DraftHeroHeadline({
             });
           }}
         >
-          {projectPickerEntries.map(({ group }) => {
+          {projectPickerEntries.map(({ group, targetProject }) => {
+            const projectPathLabel = formatWorkingDirectoryForDisplay(
+              targetProject.workspaceRoot,
+              homeDirectoryByEnvironmentId.get(targetProject.environmentId),
+            );
             return (
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
                 <Tooltip>
-                  <TooltipTrigger render={<span className="block min-w-0 truncate" />}>
-                    {group.displayName}
+                  <TooltipTrigger render={<span className="flex min-w-0 flex-col" />}>
+                    <span className="truncate">{group.displayName}</span>
+                    {projectPathLabel ? (
+                      <span className="truncate text-xs font-normal text-muted-foreground">
+                        {projectPathLabel}
+                      </span>
+                    ) : null}
                   </TooltipTrigger>
                   <TooltipPopup side="top" className="max-w-80">
-                    {group.displayName}
+                    {projectPathLabel ?? group.displayName}
                   </TooltipPopup>
                 </Tooltip>
               </MenuRadioItem>

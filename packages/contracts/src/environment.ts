@@ -89,6 +89,8 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   environmentId: EnvironmentId,
   label: TrimmedNonEmptyString,
   platform: ExecutionEnvironmentPlatform,
+  /** Environment-scoped home used to present absolute paths compactly. Optional for version skew. */
+  homeDirectory: Schema.optionalKey(TrimmedNonEmptyString),
   serverVersion: TrimmedNonEmptyString,
   capabilities: ExecutionEnvironmentCapabilities,
 });
