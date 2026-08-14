@@ -3,6 +3,7 @@ import type {
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
+import * as NodeBuffer from "node:buffer";
 import { extractActivityFileChanges } from "./ActivityFileChanges.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -17,6 +18,10 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function asNonBlankString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 function pushChangedFile(target: string[], seen: Set<string>, value: unknown): void {
@@ -253,20 +258,40 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   return projectedData;
 }
 
-const COMMAND_OUTPUT_MAX_CHARS = 1_000;
+const COMMAND_OUTPUT_MAX_BYTES = 1_000;
 
-function projectCommandOutputText(data: Record<string, unknown>): string | undefined {
+function projectCommandOutput(
+  data: Record<string, unknown>,
+): { readonly text: string; readonly omittedBytes?: number } | undefined {
   const text =
-    asTrimmedString(asRecord(data.item)?.aggregatedOutput) ??
-    extractMcpResultText(data.result) ??
-    asTrimmedString(asRecord(data.rawOutput)?.stdout) ??
-    asTrimmedString(asRecord(data.rawOutput)?.content);
+    asNonBlankString(asRecord(data.item)?.aggregatedOutput) ??
+    asNonBlankString(extractMcpResultText(data.result)) ??
+    asNonBlankString(asRecord(data.rawOutput)?.stdout) ??
+    asNonBlankString(asRecord(data.rawOutput)?.content);
   if (!text) {
     return undefined;
   }
-  return text.length <= COMMAND_OUTPUT_MAX_CHARS
-    ? text
-    : `${text.slice(0, COMMAND_OUTPUT_MAX_CHARS)}\n… [output truncated]`;
+
+  const totalBytes = NodeBuffer.Buffer.byteLength(text);
+  if (totalBytes <= COMMAND_OUTPUT_MAX_BYTES) {
+    return { text };
+  }
+
+  let retainedBytes = 0;
+  let retainedCodeUnits = 0;
+  for (const character of text) {
+    const characterBytes = NodeBuffer.Buffer.byteLength(character);
+    if (retainedBytes + characterBytes > COMMAND_OUTPUT_MAX_BYTES) {
+      break;
+    }
+    retainedBytes += characterBytes;
+    retainedCodeUnits += character.length;
+  }
+
+  return {
+    text: text.slice(0, retainedCodeUnits),
+    omittedBytes: totalBytes - retainedBytes,
+  };
 }
 
 function projectRawOutput(value: unknown): Record<string, unknown> | undefined {
@@ -388,9 +413,12 @@ export function projectActivityPayload(
   }
 
   if (payload.itemType === "command_execution") {
-    const output = projectCommandOutputText(data);
+    const output = projectCommandOutput(data);
     if (output) {
-      projectedData.output = output;
+      projectedData.output = output.text;
+      if (output.omittedBytes !== undefined) {
+        projectedData.outputOmittedBytes = output.omittedBytes;
+      }
     }
   }
 

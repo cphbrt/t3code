@@ -951,7 +951,7 @@ describe("deriveWorkLogEntries", () => {
       expect(entry).toMatchObject({
         command: "find . -maxdepth 1 -type f",
         rawCommand: wrappedCommand,
-        output: "./README.md",
+        output: { text: "./README.md" },
       });
       expect(entry?.detail).toBeUndefined();
     }
@@ -985,8 +985,39 @@ describe("deriveWorkLogEntries", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       id: "command-completed",
-      output: "12 tests passed",
+      output: { text: "12 tests passed" },
     });
+  });
+
+  it("keeps command output and omitted bytes coupled when collapsing lifecycle entries", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "command-updated",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: {
+            toolCallId: "tool-command-1",
+            output: "partial output",
+            outputOmittedBytes: 500,
+          },
+        },
+      }),
+      makeActivity({
+        id: "command-completed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.completed",
+        summary: "Ran command",
+        payload: {
+          itemType: "command_execution",
+          data: { toolCallId: "tool-command-1", output: "complete output" },
+        },
+      }),
+    ];
+
+    expect(deriveWorkLogEntries(activities)[0]?.output).toEqual({ text: "complete output" });
   });
 
   it("extracts failed tool lifecycle status from item payloads", () => {
