@@ -1655,3 +1655,101 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
     }
   }),
 );
+
+const usageLimitRuntimeFactory = makeRuntimeFactory();
+const usageLimitLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        makeRuntime: usageLimitRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+usageLimitLayer("CodexAdapterLive usage limit", (it) => {
+  it.effect(
+    "marks the instance limited on a usageLimitExceeded error and refines it from telemetry",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          runtimeMode: "full-access",
+        });
+        const runtime = usageLimitRuntimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+          Effect.forkChild,
+        );
+
+        // Real exhausted-account capture (2026-08-15), synthetic identifiers.
+        yield* runtime.emit({
+          id: asEventId("evt-usage-limit-error"),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          createdAt: "2026-08-15T19:29:27.569Z",
+          method: "error",
+          payload: {
+            error: {
+              additionalDetails: null,
+              codexErrorInfo: "usageLimitExceeded",
+              message:
+                "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Aug 19th, 2026 11:34 PM.",
+            },
+            threadId: "provider-thread-1",
+            turnId: "provider-turn-1",
+            willRetry: false,
+          },
+        } satisfies ProviderEvent);
+        yield* runtime.emit({
+          id: asEventId("evt-usage-limit-telemetry"),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          threadId: asThreadId("thread-1"),
+          createdAt: "2026-08-15T19:33:40.282Z",
+          method: "account/rateLimits/updated",
+          payload: {
+            rateLimits: {
+              credits: { balance: "0", hasCredits: false, unlimited: false },
+              individualLimit: null,
+              limitId: "codex",
+              limitName: null,
+              planType: "prolite",
+              primary: { resetsAt: 1_787_196_900, usedPercent: 100, windowDurationMins: 10_080 },
+              rateLimitReachedType: null,
+              secondary: null,
+              spendControlReached: null,
+            },
+          },
+        } satisfies ProviderEvent);
+
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+
+        NodeAssert.equal(events[0]?.type, "runtime.error");
+        NodeAssert.equal(events[1]?.type, "account.rate-limits.updated");
+        if (events[1]?.type === "account.rate-limits.updated") {
+          NodeAssert.equal(events[1].eventId, "evt-usage-limit-error-usage-limit");
+          NodeAssert.equal(events[1].payload.usageLimit?.status, "limited");
+        }
+        NodeAssert.equal(events[2]?.type, "account.rate-limits.updated");
+        if (events[2]?.type === "account.rate-limits.updated") {
+          NodeAssert.deepEqual(events[2].payload.usageLimit, {
+            status: "limited",
+            resetsAt: "2026-08-20T03:35:00.000Z",
+          });
+        }
+      }),
+  );
+});

@@ -11,6 +11,7 @@ import {
   type CanonicalItemType,
   type CanonicalRequestType,
   type CodexSettings,
+  EventId,
   ProviderDriverKind,
   type ProviderEvent,
   ProviderInstanceId,
@@ -63,6 +64,7 @@ import {
   type CodexSessionRuntimeOptions,
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
+import { CodexUsageLimitTracker, type CodexUsageLimitUpdate } from "./CodexUsageLimit.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
@@ -1417,11 +1419,10 @@ function mapToRuntimeEvents(
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           rateLimits: event.payload ?? {},
-          // Codex support is intentional but not yet validated against a real
-          // exhausted-account event. Rolling windows and a reached-reason do
-          // not identify which reset applies. Once that payload is captured,
-          // normalize it to `usageLimit` here; the shared registry and UI are
-          // already provider-neutral.
+          // `usageLimit` is attached by the per-instance CodexUsageLimitTracker
+          // in the adapter's event loop, because hard exhaustion is signaled by
+          // `usageLimitExceeded` turn errors, not by this telemetry alone. See
+          // CodexUsageLimit.ts for the validated payload shapes.
         },
       },
     ];
@@ -1661,6 +1662,40 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
+  // Hard-exhaustion state is account-wide, so one tracker spans every session
+  // of this instance: the informative rate-limit windows often arrive on a
+  // long-running session while the usage-limit error hits a fresh one.
+  const usageLimitTracker = new CodexUsageLimitTracker();
+
+  const withUsageLimitUpdate = (
+    event: ProviderEvent,
+    runtimeEvents: ReadonlyArray<ProviderRuntimeEvent>,
+    usageLimit: CodexUsageLimitUpdate,
+  ): ReadonlyArray<ProviderRuntimeEvent> => {
+    const enriched = runtimeEvents.map((runtimeEvent) =>
+      runtimeEvent.type === "account.rate-limits.updated"
+        ? { ...runtimeEvent, payload: { ...runtimeEvent.payload, usageLimit } }
+        : runtimeEvent,
+    );
+    if (enriched.some((runtimeEvent) => runtimeEvent.type === "account.rate-limits.updated")) {
+      return enriched;
+    }
+    // The trigger was a usage-limit turn error; carry the update on a
+    // synthesized rate-limits event so the provider-neutral ingestion path
+    // picks it up.
+    return [
+      ...enriched,
+      {
+        ...runtimeEventBase(event, event.threadId),
+        eventId: EventId.make(`${event.id}-usage-limit`),
+        type: "account.rate-limits.updated",
+        payload: {
+          rateLimits: {},
+          usageLimit,
+        },
+      },
+    ];
+  };
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
     Effect.scoped(
@@ -1742,7 +1777,11 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const usageLimit = usageLimitTracker.observe(event);
+            const mapped = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = usageLimit
+              ? withUsageLimitUpdate(event, mapped, usageLimit)
+              : mapped;
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
