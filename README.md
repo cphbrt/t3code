@@ -47,6 +47,10 @@ An idle existing thread can also hold one prompt until that provider reset. CPH 
 
 When that option is available, the composer presents **Send after reset** as a direct warm yellow/orange alternate send button beside the normal send action, rather than hiding it inside a popover.
 
+Durable workflow and product preferences discovered through use should be recorded proactively in this introduction and the CPH Code prefix of `AGENTS.md`, so future changes preserve the fork's intent.
+
+Substantial or uncertain changes that are too large to develop directly on `main` are first built and committed in a temporary worktree and branch, exercised with an isolated dev server, and presented in a temporary Markdown review document with inline screenshots and explanations of the behavior and design choices. That actual Markdown file is opened in Chris's Google Chrome with `open -a 'google chrome' '/absolute/path/to/review.md'`; an in-app browser, browser-automation preview, HTML companion, or other Chrome development surface is not a substitute. The reviewed work moves to `main` only after Chris gives it a yay.
+
 When Chris requests a change, the default finish line is shipped: commit, push, build the macOS desktop release, and install it to `/Applications`—without quitting or restarting the running app, which Chris relaunches on his own schedule. The install step is skipped whenever he indicates he wants something less final, such as trying the change in dev or just seeing a test pass.
 
 CPH Code carries those deviations as a deliberately curated patch series on top of `upstream/main`. Its commits describe product decisions rather than the chronology of implementation: related fixes are folded into the change they complete, while independent choices stay independently reviewable. This keeps upstream rebases tractable and makes useful changes legible enough to evaluate—or adopt—one commit at a time.

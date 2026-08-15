@@ -91,6 +91,14 @@ When an explicit future provider reset is known, let an idle existing thread dur
 
 Present that reset-delayed prompt as a direct alternate send action beside the normal send button. Use a warm yellow/orange send treatment with both send and clock cues; do not hide the action behind an informational-looking popover or menu.
 
+As Chris's workflow and product preferences become clear through use, proactively record durable choices in this CPH Code prefix and the corresponding `README.md` introduction. Keep those additions concise and specific so future work preserves intentional fork behavior instead of repeatedly rediscovering it.
+
+For routine product checks that require a live agent, use economical models such as Luna for Codex and Sonnet for Claude unless the behavior under test specifically depends on a frontier model.
+
+For a substantial or uncertain change that is too large to develop directly on `main`, use a temporary worktree and branch. Implement and commit the candidate there, verify it with an isolated dev server, and prepare a temporary Markdown review document with inline screenshots plus a clear explanation of the behavior and design choices. Open the actual Markdown file in Chris's Google Chrome with `open -a 'google chrome' '/absolute/path/to/review.md'`; do not substitute the in-app browser, a browser-automation preview, an HTML companion, or another Chrome development surface. Wait for Chris's yay or nay before bringing the reviewed commits to `main`, then ship normally after approval.
+
+Once Chris says yay, he is done reviewing: ship it and shut down the review dev server rather than offering further dev-server passes.
+
 When a requested change is complete and confidently verified, commit it to `main` and push it by default rather than leaving finished work uncommitted. Keep commits intentional and exclude unrelated user changes; if Chris later wants completed work undone, prefer an explicit revert or follow-up commit so the repository continues to tell the truth about what happened.
 
 ### Default delivery: ship to /Applications
