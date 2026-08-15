@@ -36,11 +36,19 @@ and named limit buckets. The provider selector includes the same meters, and the
 compact shortcut to the active account's limits. CPH Code uses each window's reported duration
 instead of assuming that the protocol's primary and secondary positions always mean the same thing.
 
-CPH Code is intended to give Codex the same explicit-reset handling as Claude: a shared countdown,
-an error on every affected thread, and **Send after usage resets** for idle existing threads. The
-provider-neutral state and UI are in place, but Codex normalization is not complete or validated
-against a real exhausted-account event yet. CPH Code does not guess from Codex's rolling-window
-telemetry because it does not identify which reset applies.
+When Codex reports that the account has hit its usage limit, CPH Code gives it the same
+explicit-reset handling as Claude: a shared countdown, an error bar on every thread using that
+account, **Until usage resets** in the Snooze menu, and **Send after usage resets** for idle
+existing threads. Exhaustion is recognized only from Codex's explicit usage-limit turn error, never
+inferred from rolling-window telemetry alone; once recognized, the machine-readable window reset
+from the rate-limit RPC refines the countdown, with the reset time printed in the error as a
+fallback.
+
+OpenAI enforces the limit when a turn starts, so Codex work that was already running keeps going
+and finishes normally even while the account is exhausted. Only new turns fail, and a completed
+in-flight turn does not clear the countdown. The limited state clears when the reset passes, when
+the exhausted window is reported back under 100%, or when purchased credits make the account
+usable again.
 
 ## I Want Work And Personal Codex Accounts
 
