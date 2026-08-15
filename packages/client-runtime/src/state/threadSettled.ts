@@ -178,7 +178,7 @@ export type ThreadSnoozeShell = Pick<
 /**
  * A snoozed thread "raises its hand" when something happens that outranks
  * the user's snooze: the agent is blocked on them (approval / user input),
- * the session failed, or a run completed after the snooze was set — the
+ * the session failed or was interrupted, or a run completed after the snooze was set — the
  * v1 taste of event-based snooze ("something happened" wakes early).
  * Raising a hand never clears the server-side snooze fields; it only stops
  * the thread from CLASSIFYING as snoozed, exactly like blocked work and
@@ -191,7 +191,7 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   // now". session.updatedAt stamps the status edge, so an error newer than
   // the snooze is new information.
   if (
-    shell.session?.status === "error" &&
+    (shell.session?.status === "error" || shell.session?.status === "interrupted") &&
     (shell.snoozedAt == null || Date.parse(shell.session.updatedAt) > Date.parse(shell.snoozedAt))
   ) {
     return true;

@@ -36,6 +36,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "./provider/Services/ProviderSessionDirectory.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import { reconcileInterruptedProviderSessions } from "./orchestration/reconcileInterruptedSessions.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import {
@@ -479,6 +480,9 @@ export const make = (options?: StartupOptions) =>
         "auxiliary-roots.parked",
         options?.awaitAuxiliaryParked ?? Effect.void,
       );
+
+      yield* Effect.logDebug("startup phase: reconciling interrupted provider sessions");
+      yield* runStartupPhase("provider-sessions.reconcile", reconcileInterruptedProviderSessions());
 
       // This is the prepared boundary. Every dependency has been acquired and
       // every runtime root has confirmed that it is parked before this request.

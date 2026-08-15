@@ -129,6 +129,7 @@ export interface ThreadStatusPill {
     | "Working"
     | "Monitoring"
     | "Connecting"
+    | "Interrupted"
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
@@ -142,8 +143,9 @@ export interface ThreadStatusPill {
 // then active work, then the actionable plan prompt, then passive
 // monitoring. A Monitoring sibling must never hide a Plan Ready thread.
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
-  "Pending Approval": 6,
-  "Awaiting Input": 5,
+  "Pending Approval": 7,
+  "Awaiting Input": 6,
+  Interrupted: 5,
   Working: 4,
   Connecting: 4,
   "Plan Ready": 3,
@@ -257,7 +259,7 @@ export function useThreadJumpHintVisibility(): {
 }
 
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
-  if (!thread.latestTurn?.completedAt) return false;
+  if (thread.latestTurn?.state !== "completed" || !thread.latestTurn.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
   if (Number.isNaN(completedAt)) return false;
   if (!thread.lastVisitedAt) return false;
@@ -474,8 +476,8 @@ export function resolveThreadRowClassName(input: {
 }
 
 // ── Sidebar thread status model ─────────────────────────────────────
-// Five visual states, three colors: color is reserved for "act now"
-// (approval), "in motion" (working), and "broken" (failed). Ready is the
+// Color is reserved for states that carry meaning at a glance: "act now"
+// (approval/input/interrupted), "in motion" (working), and "broken" (failed). Ready is the
 // unlabeled resting state — the agent stopped and is waiting on the user,
 // whether it finished, asked a question, or proposed a plan.
 // Unread completion is tracked separately: it describes whether a ready
@@ -483,6 +485,7 @@ export function resolveThreadRowClassName(input: {
 export type SidebarThreadStatus =
   | "approval"
   | "input"
+  | "interrupted"
   | "working"
   | "monitoring"
   | "failed"
@@ -494,6 +497,12 @@ type SidebarThreadStatusInput = Pick<
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+  // A terminal runtime loss invalidates any lingering provider request. It
+  // must remain visible until the user sends a new prompt or settles the
+  // thread; merely visiting it does not restore a provider process.
+  if (thread.session?.status === "interrupted") {
+    return "interrupted";
+  }
   if (thread.hasPendingApprovals) {
     return "approval";
   }
@@ -660,6 +669,15 @@ export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
   const { thread } = input;
+
+  if (thread.session?.status === "interrupted") {
+    return {
+      label: "Interrupted",
+      colorClass: "text-orange-700 dark:text-orange-300",
+      dotClass: "bg-orange-600 dark:bg-orange-300",
+      pulse: false,
+    };
+  }
 
   if (thread.hasPendingApprovals) {
     return {
