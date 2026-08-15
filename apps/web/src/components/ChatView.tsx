@@ -150,14 +150,9 @@ import {
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
-import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
-import {
-  selectThreadPreviewMiniPlayer,
-  usePreviewMiniPlayerStore,
-} from "../previewMiniPlayerStore";
 import { isThreadOwnPullRequest } from "./pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
@@ -1731,9 +1726,6 @@ function ChatViewContent(props: ChatViewProps) {
         : undefined,
     [activeThreadRef, activePreviewServerEpoch],
   );
-  const activePreviewMiniPlayer = usePreviewMiniPlayerStore((state) =>
-    selectThreadPreviewMiniPlayer(state.byThreadKey, activeThreadRef),
-  );
   const panelTerminalIds = useMemo(
     () =>
       new Set(
@@ -1760,24 +1752,6 @@ function ChatViewContent(props: ChatViewProps) {
       .getState()
       .reconcileBrowserSurfaces(activeThreadRef, Object.keys(activePreviewState.sessions));
   }, [activePreviewState.sessions, activeThreadRef]);
-
-  useEffect(() => {
-    if (!activeThreadRef || !activePreviewMiniPlayer) return;
-    const miniTabStillExists = Boolean(activePreviewState.sessions[activePreviewMiniPlayer.tabId]);
-    const sameTabOpenInPanel =
-      previewPanelOpen &&
-      activeRightPanelSurface?.kind === "preview" &&
-      activeRightPanelSurface.resourceId === activePreviewMiniPlayer.tabId;
-    if (!miniTabStillExists || sameTabOpenInPanel) {
-      usePreviewMiniPlayerStore.getState().close(activeThreadRef);
-    }
-  }, [
-    activePreviewMiniPlayer,
-    activePreviewState.sessions,
-    activeRightPanelSurface,
-    activeThreadRef,
-    previewPanelOpen,
-  ]);
 
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
@@ -7238,15 +7212,6 @@ function ChatViewContent(props: ChatViewProps) {
                 </div>
               </div>
             </div>
-
-            {activeThreadRef && activePreviewMiniPlayer ? (
-              <ThreadPreviewMiniPlayer
-                key={`${activeThreadKey}:${activePreviewMiniPlayer.tabId}`}
-                threadRef={activeThreadRef}
-                tabId={activePreviewMiniPlayer.tabId}
-                bottomInset={isDraftHeroState ? 0 : timelineBottomInset}
-              />
-            ) : null}
 
             <AlertDialog open={branchRestoreConfirmOpen} onOpenChange={setBranchRestoreConfirmOpen}>
               <AlertDialogPopup>
