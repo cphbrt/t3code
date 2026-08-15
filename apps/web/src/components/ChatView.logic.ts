@@ -480,6 +480,18 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
 }
 
 /**
+ * Opening a thread establishes its creation as the initial read boundary.
+ * Once a completion is visible, that server timestamp becomes the boundary so
+ * a later completion can still announce itself after the user leaves.
+ */
+export function resolveOpenThreadVisitedAt(
+  thread: Pick<Thread, "createdAt" | "latestTurn"> | null | undefined,
+): string | null {
+  if (!thread) return null;
+  return thread.latestTurn?.completedAt ?? thread.createdAt;
+}
+
+/**
  * Draft routes retain the local send bridge until the canonical route can
  * render an equivalent running or terminal state on its first frame.
  */
