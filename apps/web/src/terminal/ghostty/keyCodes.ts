@@ -256,3 +256,13 @@ export function ghosttyUnshiftedCodepoint(
   }
   return event.key.codePointAt(0) ?? 0;
 }
+
+export function ghosttyConsumedMods(
+  event: Pick<KeyboardEvent, "key" | "shiftKey">,
+  unshiftedCodepoint: number,
+): number {
+  if (!event.shiftKey || unshiftedCodepoint === 0) return 0;
+  const characters = [...event.key];
+  if (characters.length !== 1) return 0;
+  return characters[0]?.codePointAt(0) === unshiftedCodepoint ? 0 : 1;
+}
