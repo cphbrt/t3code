@@ -33,6 +33,8 @@ This exact route has been verified for pairing, reconnection, existing and new t
 
 CPH Code keeps meaningful transcript activity—commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. It may coalesce provider lifecycle noise and collapse large details on request, but it does not automatically hide the semantic record of what an agent did.
 
+Thread switches preserve your manual reading position. Live work stays pinned to the end, while a newly completed response you have not seen opens at the beginning of the agent's final message.
+
 Long user messages likewise remain fully visible, without controls to collapse or expand them.
 
 When a provider explicitly reports that an account is unavailable until a reset time, CPH Code keeps that state with the affected provider account, shows the same top error bar on every thread using it, and shows a quiet countdown on its sessions and in the model picker. It does not guess reset times from ambiguous usage data.

@@ -24,6 +24,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -85,6 +86,7 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveTimelineInitialScrollIndex,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
   resolveTimelineMinimapHeightStyle,
@@ -94,12 +96,15 @@ import {
   resolveTimelineMinimapStepIndex,
   resolveTimelineMinimapTickMetrics,
   resolveTimelineMinimapTopPercent,
+  resolveTimelineReadingAnchor,
+  resolveTimelineReadingAnchorScrollTop,
   shouldPreserveAssistantLineBreaks,
   shouldShowTimelineMinimap,
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
   type TimelineMinimapItem,
   type TimelineLatestTurn,
+  type TimelineReadingAnchor,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -251,6 +256,8 @@ interface MessagesTimelineProps {
    * scroll-mode refs whenever the user drifts near the bottom.
    */
   liveFollowEnabled: boolean;
+  initialReadingAnchor: TimelineReadingAnchor | null;
+  onReadingAnchorChange: (anchor: TimelineReadingAnchor | null) => void;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
@@ -290,6 +297,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onContentGeometryChange,
   contentInsetEndAdjustment,
   liveFollowEnabled,
+  initialReadingAnchor,
+  onReadingAnchorChange,
   onIsAtEndChange,
   onManualNavigation,
   hideEmptyPlaceholder = false,
@@ -319,6 +328,32 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const initialScrollIndex = useMemo(
+    () => resolveTimelineInitialScrollIndex(rows, initialReadingAnchor),
+    [initialReadingAnchor, rows],
+  );
+  const readingAnchorRef = useRef<TimelineReadingAnchor | null>(
+    initialScrollIndex === null ? null : initialReadingAnchor,
+  );
+  const readingAnchorRestorePendingRef = useRef(initialScrollIndex !== null);
+  const readingAnchorRestoreCompletedRef = useRef(initialReadingAnchor === null);
+  useEffect(() => {
+    if (liveFollowEnabled) {
+      readingAnchorRef.current = null;
+    } else if (
+      !readingAnchorRestoreCompletedRef.current &&
+      readingAnchorRef.current === null &&
+      initialScrollIndex !== null
+    ) {
+      readingAnchorRef.current = initialReadingAnchor;
+    }
+  }, [initialReadingAnchor, initialScrollIndex, liveFollowEnabled]);
+  useLayoutEffect(
+    () => () => {
+      onReadingAnchorChange(readingAnchorRef.current);
+    },
+    [onReadingAnchorChange],
+  );
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const minimapUserItems = useMemo(
     () => minimapItems.filter((item) => item.actor === "user"),
@@ -341,8 +376,31 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const scrollNode = list?.getScrollableNode();
     const state = list?.getState?.();
     const isAtEnd = resolveTimelineIsAtEnd(scrollNode ?? undefined);
-    if (isAtEnd !== undefined) {
+    if (!readingAnchorRestorePendingRef.current && isAtEnd !== undefined) {
       onIsAtEndChange(isAtEnd);
+    }
+    if (readingAnchorRestorePendingRef.current) {
+      // Initial row sizes are estimates. Keep the requested semantic anchor
+      // stable until the bounded post-layout restoration below finishes.
+    } else if (isAtEnd) {
+      readingAnchorRef.current = null;
+    } else if (!liveFollowEnabled && scrollNode) {
+      const viewportRect = scrollNode.getBoundingClientRect();
+      const renderedRows = Array.from(
+        scrollNode.querySelectorAll<HTMLElement>("[data-timeline-root][data-timeline-row-id]"),
+        (rowElement) => {
+          const rect = rowElement.getBoundingClientRect();
+          return {
+            rowId: rowElement.dataset.timelineRowId ?? "",
+            top: rect.top,
+            bottom: rect.bottom,
+          };
+        },
+      );
+      const nextReadingAnchor = resolveTimelineReadingAnchor(renderedRows, viewportRect);
+      if (nextReadingAnchor !== null) {
+        readingAnchorRef.current = nextReadingAnchor;
+      }
     }
     if (!state || minimapItems.length === 0) {
       minimapStepCursorRef.current = null;
@@ -431,7 +489,88 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         ? current
         : { previous, next, previousUser, nextUser },
     );
-  }, [listRef, minimapItems, minimapStripMap, minimapUserItems, onIsAtEndChange]);
+  }, [
+    listRef,
+    liveFollowEnabled,
+    minimapItems,
+    minimapStripMap,
+    minimapUserItems,
+    onIsAtEndChange,
+    rows,
+  ]);
+
+  useEffect(() => {
+    if (readingAnchorRestoreCompletedRef.current) {
+      return;
+    }
+    if (initialScrollIndex === null) {
+      if (rows.length > 0) {
+        readingAnchorRestorePendingRef.current = false;
+        readingAnchorRestoreCompletedRef.current = true;
+        readingAnchorRef.current = null;
+        handleScroll();
+      }
+      return;
+    }
+
+    readingAnchorRestorePendingRef.current = true;
+    let timeoutId: number | null = null;
+    let remainingAttempts = 5;
+    const restore = () => {
+      const list = listRef.current;
+      const scrollNode = list?.getScrollableNode();
+      const targetIsRendered = scrollNode
+        ? Array.from(
+            scrollNode.querySelectorAll<HTMLElement>("[data-timeline-root][data-timeline-row-id]"),
+          ).some((rowElement) => rowElement.dataset.timelineRowId === initialReadingAnchor?.rowId)
+        : false;
+      if (!targetIsRendered) {
+        void list?.scrollToIndex({
+          ...initialScrollIndex,
+          animated: false,
+        });
+      }
+      remainingAttempts -= 1;
+      timeoutId = window.setTimeout(() => {
+        timeoutId = null;
+        const scrollNode = list?.getScrollableNode();
+        const targetRow = scrollNode
+          ? Array.from(
+              scrollNode.querySelectorAll<HTMLElement>(
+                "[data-timeline-root][data-timeline-row-id]",
+              ),
+            ).find((rowElement) => rowElement.dataset.timelineRowId === initialReadingAnchor?.rowId)
+          : undefined;
+        if (scrollNode && targetRow && initialReadingAnchor) {
+          const targetScrollTop = resolveTimelineReadingAnchorScrollTop({
+            scrollTop: scrollNode.scrollTop,
+            viewportTop: scrollNode.getBoundingClientRect().top,
+            rowTop: targetRow.getBoundingClientRect().top,
+            viewOffset: initialReadingAnchor.viewOffset,
+          });
+          if (targetScrollTop !== null) {
+            scrollNode.scrollTo({ top: targetScrollTop });
+          }
+        }
+        if (remainingAttempts > 0) {
+          restore();
+          return;
+        }
+        readingAnchorRestorePendingRef.current = false;
+        readingAnchorRestoreCompletedRef.current = true;
+        handleScroll();
+      }, 16);
+    };
+    timeoutId = window.setTimeout(() => {
+      timeoutId = null;
+      restore();
+    }, 0);
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [handleScroll, initialReadingAnchor, initialScrollIndex, listRef, rows.length]);
 
   const selectMinimapItem = useCallback(
     (item: TimelineMinimapItem, animated: boolean) => {
@@ -577,6 +716,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       <div
         className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip"
         data-timeline-root="true"
+        data-timeline-row-id={item.id}
         data-timeline-row-index={index}
       >
         <TimelineRowContent row={item} />
@@ -607,7 +747,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
-            initialScrollAtEnd
+            {...(initialScrollIndex === null
+              ? { initialScrollAtEnd: true }
+              : { initialScrollIndex })}
             alignItemsAtEnd
             contentInsetEndAdjustment={contentInsetEndAdjustment}
             maintainScrollAtEnd={liveFollowEnabled ? TIMELINE_MAINTAIN_SCROLL_AT_END : false}
