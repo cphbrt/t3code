@@ -2040,6 +2040,9 @@ const make = Effect.gen(function* () {
             taskType?: string;
             status?: string;
             agentId?: string;
+            description?: string;
+            title?: string;
+            command?: string;
           };
           threadBackgroundLiveness.recordTaskLiveness({
             threadId: thread.id,
@@ -2047,6 +2050,9 @@ const make = Effect.gen(function* () {
             taskType: payload.taskType,
             status: payload.status,
             agentId: payload.agentId,
+            description: payload.description ?? payload.title,
+            command: payload.command,
+            startedAt: now,
             kind:
               event.type === "task.started"
                 ? "started"

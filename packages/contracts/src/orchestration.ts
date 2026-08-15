@@ -510,6 +510,26 @@ export const OrchestrationProjectShell = Schema.Struct({
 });
 export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
+/**
+ * One live native background task (subagent, workflow run, Monitor watch
+ * loop, background shell) behind a thread's backgroundLiveness pill. Derived
+ * from the in-memory liveness registry at shell mapping time — no
+ * persistence, so after a server restart the roster is empty until new task
+ * events arrive, matching the liveness pill.
+ */
+export const OrchestrationBackgroundTask = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  /** Same classification as the pill: any agent entry presents "working". */
+  kind: Schema.Literals(["agent", "monitor"]),
+  /** Provider task_type (subagent/shell/monitor/local_workflow/…) when known. */
+  taskType: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  /** Launching command for shells/monitors (adapter-truncated). */
+  command: Schema.optional(TrimmedNonEmptyString),
+  startedAt: IsoDateTime,
+});
+export type OrchestrationBackgroundTask = typeof OrchestrationBackgroundTask.Type;
+
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -548,6 +568,13 @@ export const OrchestrationThreadShell = Schema.Struct({
    * live work. Optional so old servers/clients interop; absent = none.
    */
   backgroundLiveness: Schema.optional(Schema.NullOr(Schema.Literals(["working", "monitoring"]))),
+  /**
+   * The roster behind backgroundLiveness: one entry per live background task,
+   * oldest first, read from the same in-memory registry at mapping time.
+   * Optional and omitted when empty so old servers/clients interop and idle
+   * threads pay no wire cost.
+   */
+  backgroundTasks: Schema.optional(Schema.Array(OrchestrationBackgroundTask)),
   /**
    * Current plan step while a turn runs, for the Working indicators
    * (sidebar row, in-chat working line). Cleared when the turn settles —

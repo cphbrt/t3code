@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as ThreadBackgroundLiveness from "./ThreadBackgroundLiveness.ts";
 
+const T0 = "2026-08-15T10:00:00.000Z";
+const T1 = "2026-08-15T10:01:00.000Z";
+const T2 = "2026-08-15T10:02:00.000Z";
+
 describe("ThreadBackgroundLiveness", () => {
   it("does not let status-free progress restart an idle task", () => {
     const liveness = ThreadBackgroundLiveness.make();
@@ -10,6 +14,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: undefined,
       status: undefined,
       kind: "started",
+      startedAt: T0,
     });
     liveness.recordTaskLiveness({
       threadId: "thread",
@@ -17,6 +22,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: undefined,
       status: "idle",
       kind: "updated",
+      startedAt: T1,
     });
     liveness.recordTaskLiveness({
       threadId: "thread",
@@ -24,6 +30,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: undefined,
       status: undefined,
       kind: "progress",
+      startedAt: T2,
     });
     expect(liveness.getThreadBackgroundLiveness("thread")).toBeNull();
   });
@@ -37,6 +44,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "local_bash",
       status: undefined,
       kind: "started",
+      startedAt: T0,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
     liveness.recordTaskLiveness({
@@ -45,6 +53,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "subagent",
       status: undefined,
       kind: "started",
+      startedAt: T1,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
     liveness.recordTaskLiveness({
@@ -53,6 +62,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "subagent",
       status: "completed",
       kind: "completed",
+      startedAt: T2,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
     liveness.recordTaskLiveness({
@@ -61,6 +71,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "local_bash",
       status: "completed",
       kind: "completed",
+      startedAt: T2,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
@@ -74,6 +85,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "local_bash",
       status: undefined,
       kind: "started",
+      startedAt: T0,
     });
     // Terminal tick arrives with no taskType (common on task.completed).
     liveness.recordTaskLiveness({
@@ -82,6 +94,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: undefined,
       status: "completed",
       kind: "completed",
+      startedAt: T1,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
@@ -96,6 +109,7 @@ describe("ThreadBackgroundLiveness", () => {
       status: undefined,
       kind: "started",
       agentId: "owner",
+      startedAt: T0,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
     liveness.recordTaskLiveness({
@@ -105,6 +119,7 @@ describe("ThreadBackgroundLiveness", () => {
       status: "completed",
       kind: "completed",
       agentId: "owner",
+      startedAt: T1,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
@@ -118,6 +133,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: undefined,
       status: "running",
       kind: "progress",
+      startedAt: T0,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
     liveness.recordTaskLiveness({
@@ -126,6 +142,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: undefined,
       status: "idle",
       kind: "updated",
+      startedAt: T1,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
     liveness.recordTaskLiveness({
@@ -135,6 +152,7 @@ describe("ThreadBackgroundLiveness", () => {
       status: undefined,
       kind: "started",
       agentId: "owner",
+      startedAt: T1,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
@@ -149,6 +167,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: undefined,
       status: "running",
       kind: "started",
+      startedAt: T0,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
     // Later transition reveals it's a shell: downgrade to monitoring, not
@@ -159,6 +178,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "local_bash",
       status: "running",
       kind: "progress",
+      startedAt: T1,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("monitoring");
     // Turning out to be inert or agent-owned drops the prior entry too.
@@ -169,6 +189,7 @@ describe("ThreadBackgroundLiveness", () => {
       status: "running",
       kind: "progress",
       agentId: "owner",
+      startedAt: T2,
     });
     expect(liveness.getThreadBackgroundLiveness(threadId)).toBeNull();
   });
@@ -182,6 +203,7 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "plan",
       status: undefined,
       kind: "started",
+      startedAt: T0,
     });
     expect(a.getThreadBackgroundLiveness("t")).toBeNull();
     a.recordTaskLiveness({
@@ -190,10 +212,84 @@ describe("ThreadBackgroundLiveness", () => {
       taskType: "local_workflow",
       status: undefined,
       kind: "started",
+      startedAt: T0,
     });
     expect(a.getThreadBackgroundLiveness("t")).toBe("working");
     expect(b.getThreadBackgroundLiveness("t")).toBeNull();
     a.clearThreadLiveness("t");
     expect(a.getThreadBackgroundLiveness("t")).toBeNull();
+  });
+
+  it("roster retains description/command/startedAt across thinner ticks, oldest first", () => {
+    const liveness = ThreadBackgroundLiveness.make();
+    const threadId = "t-roster";
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "sh1",
+      taskType: "local_bash",
+      status: undefined,
+      kind: "started",
+      description: "Watch dev server log",
+      command: "tail -f dev.log | grep --line-buffered ERROR",
+      startedAt: T0,
+    });
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "ag1",
+      taskType: "subagent",
+      status: "running",
+      kind: "started",
+      description: "Explore adapter",
+      startedAt: T1,
+    });
+    // Thinner progress tick: no description/command/type; metadata and the
+    // original startedAt must survive, and the shell must not bounce into
+    // the agent bucket.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "sh1",
+      taskType: undefined,
+      status: "running",
+      kind: "progress",
+      startedAt: T2,
+    });
+    const tasks = liveness.getThreadBackgroundTasks(threadId);
+    expect(tasks).toEqual([
+      {
+        taskId: "sh1",
+        kind: "monitor",
+        taskType: "local_bash",
+        description: "Watch dev server log",
+        command: "tail -f dev.log | grep --line-buffered ERROR",
+        startedAt: T0,
+      },
+      {
+        taskId: "ag1",
+        kind: "agent",
+        taskType: "subagent",
+        description: "Explore adapter",
+        startedAt: T1,
+      },
+    ]);
+    expect(liveness.getThreadBackgroundLiveness(threadId)).toBe("working");
+    // Roster and pill drain together.
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "ag1",
+      taskType: "subagent",
+      status: "completed",
+      kind: "completed",
+      startedAt: T2,
+    });
+    expect(liveness.getThreadBackgroundTasks(threadId)).toHaveLength(1);
+    liveness.recordTaskLiveness({
+      threadId,
+      taskId: "sh1",
+      taskType: "local_bash",
+      status: "stopped",
+      kind: "completed",
+      startedAt: T2,
+    });
+    expect(liveness.getThreadBackgroundTasks(threadId)).toBeUndefined();
   });
 });

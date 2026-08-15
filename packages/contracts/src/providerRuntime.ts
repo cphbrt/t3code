@@ -589,6 +589,13 @@ const taskAgentLinkageFields = {
   /** Reasoning effort when known (e.g. "high"). Open string: provider vocabularies differ. */
   effort: Schema.optional(TrimmedNonEmptyStringSchema),
   toolUseId: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Launching command for shell/monitor tasks, read from the launching tool's
+   * input (Bash `command`, Monitor `command`) at task start so background
+   * rosters can show what a watch loop actually runs. Truncated at the
+   * adapter; absent for agent tasks and when the launching tool is unknown.
+   */
+  command: Schema.optional(TrimmedNonEmptyStringSchema),
   parentAgentId: Schema.optional(TrimmedNonEmptyStringSchema),
   workflowName: Schema.optional(TrimmedNonEmptyStringSchema),
   agentIndex: Schema.optional(NonNegativeInt),

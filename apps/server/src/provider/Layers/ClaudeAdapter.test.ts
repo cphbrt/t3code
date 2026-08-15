@@ -2283,6 +2283,90 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("background shell task.started carries the launching Bash command", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "watch the log",
+        attachments: [],
+      });
+
+      // The Bash tool goes in flight first; the SDK's task_started for the
+      // resulting background shell references it via tool_use_id.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: "stream-bash-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_bash_bg",
+            name: "Bash",
+            input: {
+              command: "tail -f dev.log | grep --line-buffered ERROR",
+              run_in_background: true,
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-shell",
+        description: "Watch dev log",
+        task_type: "shell",
+        tool_use_id: "toolu_bash_bg",
+        uuid: "task-shell-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-shell",
+        description: "Watch dev log",
+        usage: { total_tokens: 0 },
+        uuid: "task-shell-progress-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const started = taskEvents[0];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.taskType, "shell");
+        assert.equal(started.payload.command, "tail -f dev.log | grep --line-buffered ERROR");
+      }
+      // Linkage repeats the command on later rows so folds that only see a
+      // progress row still know what the shell runs.
+      const progress = taskEvents[1];
+      assert.equal(progress?.type, "task.progress");
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.payload.command, "tail -f dev.log | grep --line-buffered ERROR");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
