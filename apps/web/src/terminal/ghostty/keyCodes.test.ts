@@ -63,3 +63,17 @@ describe("ghosttyUnshiftedCodepoint", () => {
     );
   });
 });
+
+describe("ghosttyConsumedMods", () => {
+  it("marks Shift consumed when it produces shifted printable text", () => {
+    expect(ghosttyConsumedMods({ key: "<", shiftKey: true }, ",".codePointAt(0)!)).toBe(1);
+    expect(ghosttyConsumedMods({ key: ">", shiftKey: true }, ".".codePointAt(0)!)).toBe(1);
+    expect(ghosttyConsumedMods({ key: "A", shiftKey: true }, "a".codePointAt(0)!)).toBe(1);
+  });
+
+  it("keeps Shift effective when it does not transform the text", () => {
+    expect(ghosttyConsumedMods({ key: " ", shiftKey: true }, " ".codePointAt(0)!)).toBe(0);
+    expect(ghosttyConsumedMods({ key: ".", shiftKey: false }, ".".codePointAt(0)!)).toBe(0);
+    expect(ghosttyConsumedMods({ key: "Dead", shiftKey: true }, 0)).toBe(0);
+  });
+});
