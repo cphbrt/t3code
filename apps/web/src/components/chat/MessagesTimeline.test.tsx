@@ -190,7 +190,7 @@ function buildProps() {
   };
 }
 
-function buildLongUserMessageText(tail = "deep hidden detail only after expand") {
+function buildLongUserMessageText(tail = "final detail in the full message") {
   return Array.from({ length: 9 }, (_, index) =>
     index === 8 ? tail : `Line ${index + 1}: ${"verbose prompt content ".repeat(8).trim()}`,
   ).join("\n");
@@ -608,7 +608,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-visible-content-position-restore="true"');
   });
 
-  it("renders collapse controls for long user messages", () => {
+  it("always renders long user messages in full without collapse controls", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -616,15 +616,18 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("Show full message");
+    expect(markup).toContain("final detail in the full message");
+    expect(markup).not.toContain("Show less");
+    expect(markup).not.toContain("Show full message");
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
-    expect(markup).toContain('data-user-message-collapsed="true"');
-    expect(markup).toContain('data-user-message-fade="true"');
-    expect(markup).toContain('data-user-message-footer="true"');
+    expect(markup).not.toContain("data-user-message-collapsed");
+    expect(markup).not.toContain("data-user-message-collapsible");
+    expect(markup).not.toContain("data-user-message-fade");
+    expect(markup).not.toContain("data-user-message-footer");
   });
 
   it("does not render collapse controls for short user messages", () => {
@@ -636,7 +639,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).not.toContain("Show full message");
-    expect(markup).toContain('data-user-message-collapsible="false"');
+    expect(markup).not.toContain("Show less");
+    expect(markup).not.toContain("data-user-message-collapsible");
     expect(markup).toContain("rounded-2xl bg-message p-3");
   });
 
@@ -799,7 +803,8 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("lucide-terminal");
     expect(markup).toContain("yoo what&#x27;s</p>");
     expect(markup).toContain('<span aria-hidden="true"> </span>');
-    expect(markup).toContain("Show full message");
+    expect(markup).not.toContain("Show less");
+    expect(markup).not.toContain("Show full message");
   }, 20_000);
 
   it("renders chips for standalone element-pick context messages", () => {
@@ -828,7 +833,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("<element_context");
   });
 
-  it("keeps the copy button for collapsed long user messages", () => {
+  it("keeps the copy button for long user messages", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -837,8 +842,8 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('aria-label="Copy link"');
-    expect(markup).toContain('data-user-message-collapsed="true"');
-    expect(markup).toContain('data-user-message-footer="true"');
+    expect(markup).not.toContain("data-user-message-collapsed");
+    expect(markup).not.toContain("data-user-message-footer");
   });
 
   it("renders context compaction entries in the normal work log", () => {
