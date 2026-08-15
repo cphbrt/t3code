@@ -1,6 +1,6 @@
 /**
  * ThreadBackgroundLivenessService - in-memory per-thread background liveness
- * for the sidebar status pill.
+ * for the sidebar status pill and the composer background-task roster.
  *
  * The turn can settle while native background work runs on (subagent fleets,
  * workflow runs, Monitor watch loops); the shell previously showed nothing.
@@ -11,7 +11,9 @@
  *
  * "monitoring" is reserved for watch loops (monitor tasks and background
  * shells) when they are the ONLY live work; any agent work presents as
- * "working".
+ * "working". Each live entry also retains what the task IS (description,
+ * launching command, start time) so the shell can present a roster, not just
+ * the one-bit pill.
  *
  * @module ThreadBackgroundLivenessService
  */
@@ -22,9 +24,13 @@ import * as Layer from "effect/Layer";
 
 export type ThreadBackgroundLiveness = "working" | "monitoring" | null;
 
-interface ThreadLivenessState {
-  readonly agents: Set<string>;
-  readonly monitors: Set<string>;
+export interface ThreadBackgroundTask {
+  readonly taskId: string;
+  readonly kind: "agent" | "monitor";
+  readonly taskType?: string;
+  readonly description?: string;
+  readonly command?: string;
+  readonly startedAt: string;
 }
 
 // Classification sets are the shared contracts copies (MONITOR_TASK_TYPES:
@@ -51,6 +57,10 @@ export class ThreadBackgroundLivenessService extends Context.Service<
      * internal shells are covered by the owning agent's liveness, but a
      * NESTED AGENT (agentId + agent-flavored taskType) still counts — it
      * can outlive its parent and must keep the thread Working.
+     *
+     * description/command/startedAt enrich the roster entry; ticks that omit
+     * them (progress/updated rows are often thinner than the start row) keep
+     * the previously recorded values.
      */
     readonly recordTaskLiveness: (input: {
       readonly threadId: string;
@@ -59,6 +69,9 @@ export class ThreadBackgroundLivenessService extends Context.Service<
       readonly status: string | undefined;
       readonly kind: "started" | "progress" | "updated" | "completed";
       readonly agentId?: string | undefined;
+      readonly description?: string | undefined;
+      readonly command?: string | undefined;
+      readonly startedAt: string;
     }) => void;
 
     /** Session death orphans all of a thread's background work. */
@@ -69,21 +82,16 @@ export class ThreadBackgroundLivenessService extends Context.Service<
      * "monitoring" only when watch loops are the ONLY live work.
      */
     readonly getThreadBackgroundLiveness: (threadId: string) => ThreadBackgroundLiveness;
+
+    /** Live roster, oldest first; undefined when the thread has none. */
+    readonly getThreadBackgroundTasks: (
+      threadId: string,
+    ) => ReadonlyArray<ThreadBackgroundTask> | undefined;
   }
 >()("t3/orchestration/ThreadBackgroundLiveness/ThreadBackgroundLivenessService") {}
 
 export function make(): ThreadBackgroundLivenessService["Service"] {
-  const stateByThreadId = new Map<string, ThreadLivenessState>();
-
-  const stateFor = (threadId: string): ThreadLivenessState => {
-    const existing = stateByThreadId.get(threadId);
-    if (existing) {
-      return existing;
-    }
-    const created: ThreadLivenessState = { agents: new Set(), monitors: new Set() };
-    stateByThreadId.set(threadId, created);
-    return created;
-  };
+  const stateByThreadId = new Map<string, Map<string, ThreadBackgroundTask>>();
 
   // Classification is per-transition, not sticky: a task first seen without
   // a taskType may later reveal itself as a shell, become inert, or turn out
@@ -94,9 +102,8 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
     if (!state) {
       return;
     }
-    state.agents.delete(taskId);
-    state.monitors.delete(taskId);
-    if (state.agents.size === 0 && state.monitors.size === 0) {
+    state.delete(taskId);
+    if (state.size === 0) {
       stateByThreadId.delete(threadId);
     }
   };
@@ -130,24 +137,43 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
         return;
       }
 
+      const existing = stateByThreadId.get(input.threadId)?.get(input.taskId);
       // Status-free progress is a description tick, not a restart. A delayed
       // progress event after idle must not put the task back in the live set
-      // (#7128).
-      if (input.kind === "progress" && input.status === undefined) {
-        const existing = stateByThreadId.get(input.threadId);
-        const stillLive =
-          existing !== undefined &&
-          (existing.agents.has(input.taskId) || existing.monitors.has(input.taskId));
-        if (!stillLive) {
-          return;
-        }
+      // (#7128). An unknown task id here means it is no longer live.
+      if (input.kind === "progress" && input.status === undefined && existing === undefined) {
+        return;
       }
 
-      drop(input.threadId, input.taskId);
-      const state = stateFor(input.threadId);
-      const bucket =
-        taskType !== undefined && MONITOR_TASK_TYPES.has(taskType) ? state.monitors : state.agents;
-      bucket.add(input.taskId);
+      let state = stateByThreadId.get(input.threadId);
+      if (!state) {
+        state = new Map();
+        stateByThreadId.set(input.threadId, state);
+      }
+      // Re-records keep their original startedAt and any previously seen
+      // metadata; a tick that carries a taskType wins over the remembered one
+      // (reclassification), while a thinner tick without one must not bounce
+      // a known shell back into the agent bucket.
+      const effectiveTaskType = taskType ?? existing?.taskType;
+      state.set(input.taskId, {
+        taskId: input.taskId,
+        kind:
+          effectiveTaskType !== undefined && MONITOR_TASK_TYPES.has(effectiveTaskType)
+            ? "monitor"
+            : "agent",
+        ...(effectiveTaskType !== undefined ? { taskType: effectiveTaskType } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : existing?.description !== undefined
+            ? { description: existing.description }
+            : {}),
+        ...(input.command !== undefined
+          ? { command: input.command }
+          : existing?.command !== undefined
+            ? { command: existing.command }
+            : {}),
+        startedAt: existing?.startedAt ?? input.startedAt,
+      });
     },
 
     clearThreadLiveness: (threadId) => {
@@ -156,16 +182,23 @@ export function make(): ThreadBackgroundLivenessService["Service"] {
 
     getThreadBackgroundLiveness: (threadId) => {
       const state = stateByThreadId.get(threadId);
-      if (!state) {
+      if (!state || state.size === 0) {
         return null;
       }
-      if (state.agents.size > 0) {
-        return "working";
+      for (const entry of state.values()) {
+        if (entry.kind === "agent") {
+          return "working";
+        }
       }
-      if (state.monitors.size > 0) {
-        return "monitoring";
+      return "monitoring";
+    },
+
+    getThreadBackgroundTasks: (threadId) => {
+      const state = stateByThreadId.get(threadId);
+      if (!state || state.size === 0) {
+        return undefined;
       }
-      return null;
+      return Array.from(state.values()).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
     },
   };
 }

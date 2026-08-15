@@ -282,6 +282,7 @@ import {
   resolveDisplayedThreadPr,
   threadChangeRequestSnapshotsAtom,
 } from "./ThreadStatusIndicators";
+import { BackgroundTaskRoster } from "./chat/BackgroundTaskRoster";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ThreadSyncStatusPill } from "./chat/ThreadSyncStatusPill";
 import {
@@ -4475,7 +4476,10 @@ function ChatViewContent(props: ChatViewProps) {
   // interrupting, and works by session, so no active turn is needed.
   const activeBackgroundLiveness =
     !isWorking && activeThread ? (activeThreadShell?.backgroundLiveness ?? null) : null;
+  const activeBackgroundTasks =
+    activeBackgroundLiveness !== null ? (activeThreadShell?.backgroundTasks ?? []) : [];
   const [isStoppingBackgroundWork, setIsStoppingBackgroundWork] = useState(false);
+  const [isBackgroundRosterExpanded, setIsBackgroundRosterExpanded] = useState(false);
   useEffect(() => {
     // "Stopping..." holds until the liveness clears; the interrupt command
     // returning only means the request was accepted.
@@ -4485,8 +4489,10 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeBackgroundLiveness]);
   useEffect(() => {
     // Per-thread state: switching threads while A's stop is pending must not
-    // disable B's Stop button (review finding).
+    // disable B's Stop button (review finding); the roster expansion is
+    // per-thread too.
     setIsStoppingBackgroundWork(false);
+    setIsBackgroundRosterExpanded(false);
   }, [activeThreadId]);
   const handleStopBackgroundWork = useCallback(async () => {
     if (!activeThread) return;
@@ -4515,6 +4521,8 @@ function ChatViewContent(props: ChatViewProps) {
     }
     const working = activeBackgroundLiveness === "working";
     const liveCount = agentPanelModel.liveCount;
+    const rosterCount = activeBackgroundTasks.length;
+    const rosterExpanded = isBackgroundRosterExpanded && rosterCount > 0;
     return {
       id: `background-liveness:${activeThread.id}`,
       variant: "default",
@@ -4528,23 +4536,45 @@ function ChatViewContent(props: ChatViewProps) {
         ? liveCount > 0
           ? `${liveCount} ${liveCount === 1 ? "agent" : "agents"} working in the background`
           : "Background work running"
-        : "Monitoring in the background",
+        : rosterCount > 0
+          ? `Monitoring ${rosterCount} background ${rosterCount === 1 ? "task" : "tasks"}`
+          : "Monitoring in the background",
+      description: rosterExpanded ? (
+        <BackgroundTaskRoster tasks={activeBackgroundTasks} />
+      ) : undefined,
       actions: (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={isStoppingBackgroundWork}
-          onClick={() => void handleStopBackgroundWork()}
-        >
-          {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
-        </Button>
+        <>
+          {rosterCount > 0 ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              aria-label={rosterExpanded ? "Collapse background tasks" : "Expand background tasks"}
+              aria-expanded={rosterExpanded}
+              onClick={() => setIsBackgroundRosterExpanded((expanded) => !expanded)}
+            >
+              <ChevronDownIcon
+                className={cn("size-3.5 transition-transform", rosterExpanded && "rotate-180")}
+              />
+            </Button>
+          ) : null}
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={isStoppingBackgroundWork}
+            onClick={() => void handleStopBackgroundWork()}
+          >
+            {isStoppingBackgroundWork ? "Stopping..." : "Stop"}
+          </Button>
+        </>
       ),
     };
   }, [
     activeBackgroundLiveness,
+    activeBackgroundTasks,
     activeThread,
     agentPanelModel.liveCount,
     handleStopBackgroundWork,
+    isBackgroundRosterExpanded,
     isStoppingBackgroundWork,
   ]);
   // A woken thread announces itself in the open view, not just the sidebar
