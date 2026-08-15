@@ -6836,6 +6836,7 @@ function ChatViewContent(props: ChatViewProps) {
                             }
                             activeThreadModelSelection={activeThread?.modelSelection}
                             activeThreadActivities={activeThread?.activities}
+                            activeThreadCacheWarmth={routeServerThreadShell?.cacheWarmth}
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}

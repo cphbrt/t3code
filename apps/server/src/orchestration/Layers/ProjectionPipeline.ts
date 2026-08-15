@@ -5,13 +5,16 @@ import {
   type OrchestrationSessionStatus,
   ThreadId,
 } from "@t3tools/contracts";
+import { defaultPromptCacheTtlMs, estimatePromptCacheTtl } from "@t3tools/shared/promptCache";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import { toPersistenceSqlError, type ProjectionRepositoryError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
@@ -65,10 +68,116 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
   pendingApprovals: "projection.pending-approvals",
+  promptCache: "projection.prompt-cache",
 } as const;
 
 type ProjectorName =
   (typeof ORCHESTRATION_PROJECTOR_NAMES)[keyof typeof ORCHESTRATION_PROJECTOR_NAMES];
+
+const PromptCacheProjectionStateRow = Schema.Struct({
+  threadId: Schema.String,
+  turnId: Schema.String,
+  provider: Schema.String,
+  providerInstanceId: Schema.String,
+  model: Schema.String,
+  lastCacheActivityAt: Schema.String,
+  cacheableTokens: Schema.Number,
+  lastOutcome: Schema.NullOr(Schema.Literals(["hit", "miss", "partial"])),
+  lastCachedInputTokens: Schema.Number,
+  lastCacheWriteInputTokens: Schema.Number,
+  updatedAt: Schema.String,
+});
+
+const PromptCacheObservationRow = Schema.Struct({
+  idleGapMs: Schema.Number,
+  outcome: Schema.Literals(["hit", "miss"]),
+  observedAt: Schema.String,
+});
+
+function finiteNonNegative(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+interface PromptCacheActivityData {
+  readonly provider: string;
+  readonly providerInstanceId: string;
+  readonly model: string;
+  readonly requestStartedAt: string;
+  readonly usedTokens: number;
+  readonly inputTokens: number;
+  readonly cachedInputTokens: number;
+  readonly cacheWriteInputTokens: number;
+}
+
+function promptCacheActivityData(payload: unknown): PromptCacheActivityData | null {
+  const usage = recordValue(payload);
+  const telemetry = recordValue(usage?.cacheTelemetry);
+  const provider = telemetry?.provider;
+  const providerInstanceId = telemetry?.providerInstanceId;
+  const model = telemetry?.model;
+  const requestStartedAt = telemetry?.requestStartedAt;
+  const usedTokens = finiteNonNegative(usage?.usedTokens);
+  if (
+    typeof provider !== "string" ||
+    typeof providerInstanceId !== "string" ||
+    typeof model !== "string" ||
+    typeof requestStartedAt !== "string" ||
+    usedTokens === null ||
+    usedTokens === 0
+  ) {
+    return null;
+  }
+
+  return {
+    provider,
+    providerInstanceId,
+    model,
+    requestStartedAt,
+    usedTokens,
+    inputTokens:
+      finiteNonNegative(usage?.lastInputTokens) ?? finiteNonNegative(usage?.inputTokens) ?? 0,
+    cachedInputTokens:
+      finiteNonNegative(usage?.lastCachedInputTokens) ??
+      finiteNonNegative(usage?.cachedInputTokens) ??
+      0,
+    cacheWriteInputTokens:
+      finiteNonNegative(usage?.lastCacheWriteInputTokens) ??
+      finiteNonNegative(usage?.cacheWriteInputTokens) ??
+      0,
+  };
+}
+
+function classifyPromptCacheObservation(
+  previous: Schema.Schema.Type<typeof PromptCacheProjectionStateRow>,
+  current: PromptCacheActivityData,
+): "hit" | "miss" | "partial" | null {
+  if (
+    previous.providerInstanceId !== current.providerInstanceId ||
+    previous.model !== current.model ||
+    current.usedTokens < previous.cacheableTokens * 0.75
+  ) {
+    return null;
+  }
+
+  const materialTokens = Math.max(1_024, Math.round(previous.cacheableTokens * 0.1));
+  if (current.cachedInputTokens >= materialTokens) return "hit";
+  if (current.cachedInputTokens > 0) return "partial";
+  if (
+    current.cacheWriteInputTokens >= materialTokens ||
+    current.inputTokens >= previous.cacheableTokens * 0.5
+  ) {
+    return "miss";
+  }
+  return null;
+}
 
 /**
  * Turn state to settle still-running turns with when their session leaves the
@@ -484,6 +593,242 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const serverConfig = yield* ServerConfig;
+
+    const getPromptCacheState = SqlSchema.findOneOption({
+      Request: Schema.Struct({ threadId: Schema.String }),
+      Result: PromptCacheProjectionStateRow,
+      execute: ({ threadId }) =>
+        sql`
+          SELECT
+            thread_id AS "threadId",
+            turn_id AS "turnId",
+            provider,
+            provider_instance_id AS "providerInstanceId",
+            model,
+            last_cache_activity_at AS "lastCacheActivityAt",
+            cacheable_tokens AS "cacheableTokens",
+            last_outcome AS "lastOutcome",
+            last_cached_input_tokens AS "lastCachedInputTokens",
+            last_cache_write_input_tokens AS "lastCacheWriteInputTokens",
+            updated_at AS "updatedAt"
+          FROM projection_thread_prompt_cache
+          WHERE thread_id = ${threadId}
+        `,
+    });
+
+    const listPromptCacheObservations = SqlSchema.findAll({
+      Request: Schema.Struct({
+        providerInstanceId: Schema.String,
+        model: Schema.String,
+        outcome: Schema.Literals(["hit", "miss"]),
+      }),
+      Result: PromptCacheObservationRow,
+      execute: ({ providerInstanceId, model, outcome }) =>
+        sql`
+          SELECT
+            idle_gap_ms AS "idleGapMs",
+            outcome,
+            observed_at AS "observedAt"
+          FROM projection_prompt_cache_observations
+          WHERE provider_instance_id = ${providerInstanceId}
+            AND model = ${model}
+            AND outcome = ${outcome}
+          ORDER BY observed_at DESC
+          LIMIT 100
+        `,
+    });
+
+    const refreshPromptCacheProfile = Effect.fn("refreshPromptCacheProfile")(
+      function* (activity: PromptCacheActivityData, observedAt: string) {
+        const [hits, misses] = yield* Effect.all([
+          listPromptCacheObservations({
+            providerInstanceId: activity.providerInstanceId,
+            model: activity.model,
+            outcome: "hit",
+          }),
+          listPromptCacheObservations({
+            providerInstanceId: activity.providerInstanceId,
+            model: activity.model,
+            outcome: "miss",
+          }),
+        ]);
+        const estimate = estimatePromptCacheTtl(
+          [...hits, ...misses],
+          defaultPromptCacheTtlMs(activity.provider),
+        );
+        yield* sql`
+        INSERT INTO projection_prompt_cache_profiles (
+          provider_instance_id,
+          model,
+          provider,
+          estimated_ttl_ms,
+          observed_warm_through_ms,
+          observed_cold_from_ms,
+          hit_sample_count,
+          miss_sample_count,
+          basis,
+          confidence,
+          updated_at
+        ) VALUES (
+          ${activity.providerInstanceId},
+          ${activity.model},
+          ${activity.provider},
+          ${estimate.estimatedTtlMs},
+          ${estimate.observedWarmThroughMs},
+          ${estimate.observedColdFromMs},
+          ${estimate.hitSampleCount},
+          ${estimate.missSampleCount},
+          ${estimate.basis},
+          ${estimate.confidence},
+          ${observedAt}
+        )
+        ON CONFLICT (provider_instance_id, model)
+        DO UPDATE SET
+          provider = excluded.provider,
+          estimated_ttl_ms = excluded.estimated_ttl_ms,
+          observed_warm_through_ms = excluded.observed_warm_through_ms,
+          observed_cold_from_ms = excluded.observed_cold_from_ms,
+          hit_sample_count = excluded.hit_sample_count,
+          miss_sample_count = excluded.miss_sample_count,
+          basis = excluded.basis,
+          confidence = excluded.confidence,
+          updated_at = excluded.updated_at
+      `;
+      },
+      Effect.mapError(toPersistenceSqlError("ProjectionPipeline.promptCache:query")),
+    );
+
+    const clearThreadPromptCacheState = (threadId: string) =>
+      sql`
+        DELETE FROM projection_thread_prompt_cache
+        WHERE thread_id = ${threadId}
+      `.pipe(Effect.asVoid);
+
+    const applyPromptCacheProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyPromptCacheProjection",
+    )(
+      function* (event, _attachmentSideEffects) {
+        if (event.type === "thread.reverted" || event.type === "thread.deleted") {
+          yield* clearThreadPromptCacheState(event.payload.threadId);
+          return;
+        }
+        if (event.type !== "thread.activity-appended") return;
+
+        const activity = event.payload.activity;
+        if (activity.kind === "context-compaction") {
+          yield* clearThreadPromptCacheState(event.payload.threadId);
+          return;
+        }
+        if (activity.kind !== "context-window.updated" || activity.turnId === null) return;
+
+        const current = promptCacheActivityData(activity.payload);
+        if (current === null) return;
+        const previousOption = yield* getPromptCacheState({ threadId: event.payload.threadId });
+        const previous = Option.isSome(previousOption) ? previousOption.value : null;
+        const isNewTurn = previous !== null && previous.turnId !== activity.turnId;
+        const idleGapMs =
+          previous === null
+            ? null
+            : Date.parse(current.requestStartedAt) - Date.parse(previous.lastCacheActivityAt);
+        const outcome = !isNewTurn
+          ? (previous?.lastOutcome ?? null)
+          : idleGapMs !== null && Number.isFinite(idleGapMs) && idleGapMs >= 0
+            ? classifyPromptCacheObservation(previous, current)
+            : null;
+
+        if (
+          isNewTurn &&
+          idleGapMs !== null &&
+          idleGapMs >= 0 &&
+          (outcome === "hit" || outcome === "miss")
+        ) {
+          yield* sql`
+          INSERT INTO projection_prompt_cache_observations (
+            observation_id,
+            thread_id,
+            turn_id,
+            provider,
+            provider_instance_id,
+            model,
+            idle_gap_ms,
+            outcome,
+            cacheable_tokens,
+            cached_input_tokens,
+            cache_write_input_tokens,
+            observed_at
+          ) VALUES (
+            ${activity.id},
+            ${event.payload.threadId},
+            ${activity.turnId},
+            ${current.provider},
+            ${current.providerInstanceId},
+            ${current.model},
+            ${Math.round(idleGapMs)},
+            ${outcome},
+            ${previous?.cacheableTokens ?? 0},
+            ${current.cachedInputTokens},
+            ${current.cacheWriteInputTokens},
+            ${activity.createdAt}
+          )
+          ON CONFLICT (observation_id) DO NOTHING
+        `;
+          yield* sql`
+          DELETE FROM projection_prompt_cache_observations
+          WHERE observation_id IN (
+            SELECT observation_id
+            FROM projection_prompt_cache_observations
+            WHERE provider_instance_id = ${current.providerInstanceId}
+              AND model = ${current.model}
+              AND outcome = ${outcome}
+            ORDER BY observed_at DESC
+            LIMIT -1 OFFSET 100
+          )
+        `;
+        }
+
+        yield* refreshPromptCacheProfile(current, activity.createdAt);
+        yield* sql`
+        INSERT INTO projection_thread_prompt_cache (
+          thread_id,
+          turn_id,
+          provider,
+          provider_instance_id,
+          model,
+          last_cache_activity_at,
+          cacheable_tokens,
+          last_outcome,
+          last_cached_input_tokens,
+          last_cache_write_input_tokens,
+          updated_at
+        ) VALUES (
+          ${event.payload.threadId},
+          ${activity.turnId},
+          ${current.provider},
+          ${current.providerInstanceId},
+          ${current.model},
+          ${activity.createdAt},
+          ${current.usedTokens},
+          ${outcome},
+          ${current.cachedInputTokens},
+          ${current.cacheWriteInputTokens},
+          ${activity.createdAt}
+        )
+        ON CONFLICT (thread_id)
+        DO UPDATE SET
+          turn_id = excluded.turn_id,
+          provider = excluded.provider,
+          provider_instance_id = excluded.provider_instance_id,
+          model = excluded.model,
+          last_cache_activity_at = excluded.last_cache_activity_at,
+          cacheable_tokens = excluded.cacheable_tokens,
+          last_outcome = excluded.last_outcome,
+          last_cached_input_tokens = excluded.last_cached_input_tokens,
+          last_cache_write_input_tokens = excluded.last_cache_write_input_tokens,
+          updated_at = excluded.updated_at
+      `;
+      },
+      Effect.mapError(toPersistenceSqlError("ProjectionPipeline.promptCache:query")),
+    );
 
     const applyProjectsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyProjectsProjection",
@@ -1657,6 +2002,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadTurns,
         apply: applyThreadTurnsProjection,
+      },
+      {
+        name: ORCHESTRATION_PROJECTOR_NAMES.promptCache,
+        apply: applyPromptCacheProjection,
       },
       {
         name: ORCHESTRATION_PROJECTOR_NAMES.checkpoints,

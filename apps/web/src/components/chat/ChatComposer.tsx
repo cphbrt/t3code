@@ -5,6 +5,7 @@ import type {
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  PromptCacheWarmth,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -112,6 +113,8 @@ import {
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { resolveContextWindowModelDisplayName } from "./ContextWindowMeter.logic";
+import { PromptCacheWarmthMeter } from "./PromptCacheWarmthMeter";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
@@ -424,6 +427,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
   activeThreadModelDisplayName: string | null;
+  activePromptCacheWarmth: PromptCacheWarmth | null;
+  nowMs: number;
   activeThreadProviderDisplayName: string | null;
   providerQuota: ServerProvider["quota"];
   providerQuotaDisplayName: string;
@@ -463,6 +468,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
           usage={props.activeContextWindow}
           modelDisplayName={props.activeThreadModelDisplayName}
         />
+      ) : null}
+      {props.activePromptCacheWarmth ? (
+        <PromptCacheWarmthMeter warmth={props.activePromptCacheWarmth} nowMs={props.nowMs} />
       ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-secondary-label text-xs">Preparing worktree...</span>
@@ -604,6 +612,7 @@ export interface ChatComposerProps {
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
+  activeThreadCacheWarmth?: PromptCacheWarmth | null | undefined;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -696,6 +705,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     activeThreadActivities,
+    activeThreadCacheWarmth,
     resolvedTheme,
     settings,
     keybindings,
@@ -949,6 +959,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
+  );
+  const nowMinute = useNowMinute();
+  const promptCacheNowMs = Date.parse(`${nowMinute}:00.000Z`);
+  const activePromptCacheWarmth = useMemo(
+    () =>
+      activeThreadCacheWarmth?.providerInstanceId === selectedModelSelection.instanceId &&
+      activeThreadCacheWarmth.model === selectedModelSelection.model
+        ? activeThreadCacheWarmth
+        : null,
+    [activeThreadCacheWarmth, selectedModelSelection.instanceId, selectedModelSelection.model],
   );
   const selectedModelForPicker = selectedModel;
   // Instance-keyed option list so the picker can show each configured
@@ -3389,6 +3409,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
+                    activePromptCacheWarmth={activePromptCacheWarmth}
+                    nowMs={promptCacheNowMs}
                     activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                     providerQuota={selectedProviderStatus?.quota}
                     providerQuotaDisplayName={

@@ -560,6 +560,8 @@ function claudeTotalProcessedTokens(value: unknown): number | undefined {
 function makeClaudeTokenUsageSnapshot(input: {
   readonly activeTokens: number;
   readonly inputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly cacheWriteInputTokens?: number;
   readonly outputTokens?: number;
   readonly contextWindow?: number;
   readonly totalProcessedTokens?: number;
@@ -578,6 +580,8 @@ function makeClaudeTokenUsageSnapshot(input: {
     (maxTokens !== undefined ? Math.min(activeTokens, maxTokens) : activeTokens);
   const totalProcessedTokens = finiteNonNegativeInteger(input.totalProcessedTokens);
   const inputTokens = finiteNonNegativeInteger(input.inputTokens);
+  const cachedInputTokens = finiteNonNegativeInteger(input.cachedInputTokens);
+  const cacheWriteInputTokens = finiteNonNegativeInteger(input.cacheWriteInputTokens);
   const outputTokens = finiteNonNegativeInteger(input.outputTokens);
 
   return {
@@ -587,8 +591,14 @@ function makeClaudeTokenUsageSnapshot(input: {
       ? { totalProcessedTokens }
       : {}),
     ...(inputTokens !== undefined && inputTokens > 0 ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
     ...(outputTokens !== undefined && outputTokens > 0 ? { outputTokens } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
+    ...(cacheWriteInputTokens !== undefined
+      ? { lastCacheWriteInputTokens: cacheWriteInputTokens }
+      : {}),
     ...(input.compactsAutomatically !== undefined
       ? { compactsAutomatically: input.compactsAutomatically }
       : {}),
@@ -607,6 +617,8 @@ function normalizeClaudeActiveTokenUsage(
   const usage = value as Record<string, unknown>;
   const activeUsage = lastClaudeUsageIteration(usage) ?? usage;
   const inputTokens = claudeUsageInputTokens(activeUsage);
+  const cachedInputTokens = finiteNonNegativeInteger(activeUsage.cache_read_input_tokens);
+  const cacheWriteInputTokens = finiteNonNegativeInteger(activeUsage.cache_creation_input_tokens);
   const outputTokens = claudeUsageOutputTokens(activeUsage);
   const activeTokens = claudeTotalProcessedTokens(activeUsage) ?? inputTokens + outputTokens;
   if (activeTokens <= 0) {
@@ -616,6 +628,8 @@ function normalizeClaudeActiveTokenUsage(
   return makeClaudeTokenUsageSnapshot({
     activeTokens,
     inputTokens,
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
     outputTokens,
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
@@ -626,9 +640,17 @@ function normalizeClaudeContextUsageApiSnapshot(
   value: SDKControlGetContextUsageResponse,
   totalProcessedTokens?: number,
 ): ThreadTokenUsageSnapshot | undefined {
+  const apiUsage = value.apiUsage;
   return makeClaudeTokenUsageSnapshot({
     activeTokens: value.totalTokens,
     contextWindow: value.maxTokens,
+    ...(apiUsage
+      ? {
+          inputTokens: claudeUsageInputTokens(apiUsage),
+          cachedInputTokens: apiUsage.cache_read_input_tokens,
+          cacheWriteInputTokens: apiUsage.cache_creation_input_tokens,
+        }
+      : {}),
     ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
     compactsAutomatically: value.isAutoCompactEnabled,
   });
