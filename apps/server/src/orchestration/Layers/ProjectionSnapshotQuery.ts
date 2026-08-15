@@ -26,7 +26,10 @@ import {
   ModelSelection,
   ScheduledThreadTurn,
   ProjectId,
+  PositiveInt,
+  ProviderInstanceId,
   ThreadId,
+  type PromptCacheWarmth,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Effect from "effect/Effect";
@@ -119,6 +122,25 @@ const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
 });
 const ProjectionStateDbRowSchema = ProjectionState;
+const PromptCacheWarmthDbRowSchema = Schema.Struct({
+  threadId: ThreadId,
+  provider: Schema.String,
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  lastCacheActivityAt: IsoDateTime,
+  cacheableTokens: NonNegativeInt,
+  estimatedTtlMs: PositiveInt,
+  observedWarmThroughMs: Schema.NullOr(NonNegativeInt),
+  observedColdFromMs: Schema.NullOr(NonNegativeInt),
+  hitSampleCount: NonNegativeInt,
+  missSampleCount: NonNegativeInt,
+  basis: Schema.Literals(["default", "learning", "learned"]),
+  confidence: Schema.Literals(["low", "medium", "high"]),
+  profileUpdatedAt: IsoDateTime,
+  lastOutcome: Schema.NullOr(Schema.Literals(["hit", "miss", "partial"])),
+  lastCachedInputTokens: NonNegativeInt,
+  lastCacheWriteInputTokens: NonNegativeInt,
+});
 const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
   threadCount: Schema.Number,
@@ -203,6 +225,7 @@ const REQUIRED_SNAPSHOT_PROJECTORS = [
   ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans,
   ORCHESTRATION_PROJECTOR_NAMES.threadActivities,
   ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
+  ORCHESTRATION_PROJECTOR_NAMES.promptCache,
   ORCHESTRATION_PROJECTOR_NAMES.checkpoints,
 ] as const;
 
@@ -311,6 +334,29 @@ function mapSessionRow(
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
     updatedAt: row.updatedAt,
+  };
+}
+
+function mapPromptCacheWarmth(
+  row: Schema.Schema.Type<typeof PromptCacheWarmthDbRowSchema>,
+): PromptCacheWarmth {
+  return {
+    provider: row.provider,
+    providerInstanceId: row.providerInstanceId,
+    model: row.model,
+    lastCacheActivityAt: row.lastCacheActivityAt,
+    cacheableTokens: row.cacheableTokens,
+    estimatedTtlMs: row.estimatedTtlMs,
+    observedWarmThroughMs: row.observedWarmThroughMs,
+    observedColdFromMs: row.observedColdFromMs,
+    hitSampleCount: row.hitSampleCount,
+    missSampleCount: row.missSampleCount,
+    basis: row.basis,
+    confidence: row.confidence,
+    profileUpdatedAt: row.profileUpdatedAt,
+    lastOutcome: row.lastOutcome,
+    lastCachedInputTokens: row.lastCachedInputTokens,
+    lastCacheWriteInputTokens: row.lastCacheWriteInputTokens,
   };
 }
 
@@ -680,6 +726,41 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         WHERE threads.deleted_at IS NULL
           AND threads.archived_at IS NOT NULL
         ORDER BY sessions.thread_id ASC
+      `,
+  });
+
+  const listActivePromptCacheWarmthRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: PromptCacheWarmthDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          cache.thread_id AS "threadId",
+          cache.provider,
+          cache.provider_instance_id AS "providerInstanceId",
+          cache.model,
+          cache.last_cache_activity_at AS "lastCacheActivityAt",
+          cache.cacheable_tokens AS "cacheableTokens",
+          profile.estimated_ttl_ms AS "estimatedTtlMs",
+          profile.observed_warm_through_ms AS "observedWarmThroughMs",
+          profile.observed_cold_from_ms AS "observedColdFromMs",
+          profile.hit_sample_count AS "hitSampleCount",
+          profile.miss_sample_count AS "missSampleCount",
+          profile.basis,
+          profile.confidence,
+          profile.updated_at AS "profileUpdatedAt",
+          cache.last_outcome AS "lastOutcome",
+          cache.last_cached_input_tokens AS "lastCachedInputTokens",
+          cache.last_cache_write_input_tokens AS "lastCacheWriteInputTokens"
+        FROM projection_thread_prompt_cache cache
+        INNER JOIN projection_prompt_cache_profiles profile
+          ON profile.provider_instance_id = cache.provider_instance_id
+          AND profile.model = cache.model
+        INNER JOIN projection_threads threads
+          ON threads.thread_id = cache.thread_id
+        WHERE threads.deleted_at IS NULL
+          AND threads.archived_at IS NULL
+        ORDER BY cache.thread_id ASC
       `,
   });
 
@@ -1091,6 +1172,38 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
+        LIMIT 1
+      `,
+  });
+
+  const getPromptCacheWarmthRowByThread = SqlSchema.findOneOption({
+    Request: ThreadIdLookupInput,
+    Result: PromptCacheWarmthDbRowSchema,
+    execute: ({ threadId }) =>
+      sql`
+        SELECT
+          cache.thread_id AS "threadId",
+          cache.provider,
+          cache.provider_instance_id AS "providerInstanceId",
+          cache.model,
+          cache.last_cache_activity_at AS "lastCacheActivityAt",
+          cache.cacheable_tokens AS "cacheableTokens",
+          profile.estimated_ttl_ms AS "estimatedTtlMs",
+          profile.observed_warm_through_ms AS "observedWarmThroughMs",
+          profile.observed_cold_from_ms AS "observedColdFromMs",
+          profile.hit_sample_count AS "hitSampleCount",
+          profile.miss_sample_count AS "missSampleCount",
+          profile.basis,
+          profile.confidence,
+          profile.updated_at AS "profileUpdatedAt",
+          cache.last_outcome AS "lastOutcome",
+          cache.last_cached_input_tokens AS "lastCachedInputTokens",
+          cache.last_cache_write_input_tokens AS "lastCacheWriteInputTokens"
+        FROM projection_thread_prompt_cache cache
+        INNER JOIN projection_prompt_cache_profiles profile
+          ON profile.provider_instance_id = cache.provider_instance_id
+          AND profile.model = cache.model
+        WHERE cache.thread_id = ${threadId}
         LIMIT 1
       `,
   });
@@ -2013,11 +2126,27 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
+          listActivePromptCacheWarmthRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:listPromptCacheWarmth:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:listPromptCacheWarmth:decodeRows",
+              ),
+            ),
+          ),
         ]),
       )
       .pipe(
-        Effect.flatMap(([projectRows, threadRows, sessionRows, latestTurnRows, stateRows]) =>
+        Effect.flatMap((rows) =>
           Effect.gen(function* () {
+            const [
+              projectRows,
+              threadRows,
+              sessionRows,
+              latestTurnRows,
+              stateRows,
+              cacheWarmthRows,
+            ] = rows;
             let updatedAt: string | null = null;
             for (const row of projectRows) {
               updatedAt = maxIso(updatedAt, row.updatedAt);
@@ -2048,6 +2177,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             const sessionByThread = new Map(
               sessionRows.map((row) => [row.threadId, mapSessionRow(row)] as const),
             );
+            const cacheWarmthByThread = new Map(
+              cacheWarmthRows.map((row) => [row.threadId, row] as const),
+            );
 
             const snapshot = {
               snapshotSequence: computeSnapshotSequence(stateRows),
@@ -2058,41 +2190,50 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     )
                   : Result.failVoid,
               ),
-              threads: Arr.filterMap(threadRows, (row) =>
-                row.deletedAt === null
-                  ? Result.succeed({
-                      id: row.threadId,
-                      projectId: row.projectId,
-                      title: row.title,
-                      modelSelection: row.modelSelection,
-                      runtimeMode: row.runtimeMode,
-                      interactionMode: row.interactionMode,
-                      branch: row.branch,
-                      worktreePath: row.worktreePath,
-                      latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-                      createdAt: row.createdAt,
-                      updatedAt: row.updatedAt,
-                      archivedAt: row.archivedAt,
-                      settledOverride: row.settledOverride,
-                      settledAt: row.settledAt,
-                      snoozedUntil: row.snoozedUntil,
-                      snoozedAt: row.snoozedAt,
-                      pinnedAt: row.pinnedAt,
-                      pinOrderKey: row.pinOrderKey ?? null,
-                      titleRegeneration: mapTitleRegeneration(row),
-                      scheduledTurn: row.scheduledTurn ?? null,
-                      session: sessionByThread.get(row.threadId) ?? null,
-                      latestUserMessageAt: row.latestUserMessageAt,
-                      hasPendingApprovals: row.pendingApprovalCount > 0,
-                      hasPendingUserInput: row.pendingUserInputCount > 0,
-                      hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
-                      backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
-                        row.threadId,
-                      ),
-                      planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
-                    } satisfies OrchestrationThreadShell)
-                  : Result.failVoid,
-              ),
+              threads: Arr.filterMap(threadRows, (row) => {
+                if (row.deletedAt !== null) return Result.failVoid;
+                const session = sessionByThread.get(row.threadId) ?? null;
+                const cacheWarmthRow = cacheWarmthByThread.get(row.threadId);
+                const activeInstanceId =
+                  session?.providerInstanceId ?? row.modelSelection.instanceId;
+                const cacheWarmth =
+                  cacheWarmthRow?.providerInstanceId === activeInstanceId &&
+                  cacheWarmthRow.model === row.modelSelection.model
+                    ? mapPromptCacheWarmth(cacheWarmthRow)
+                    : null;
+                return Result.succeed({
+                  id: row.threadId,
+                  projectId: row.projectId,
+                  title: row.title,
+                  modelSelection: row.modelSelection,
+                  runtimeMode: row.runtimeMode,
+                  interactionMode: row.interactionMode,
+                  branch: row.branch,
+                  worktreePath: row.worktreePath,
+                  latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                  cacheWarmth,
+                  createdAt: row.createdAt,
+                  updatedAt: row.updatedAt,
+                  archivedAt: row.archivedAt,
+                  settledOverride: row.settledOverride,
+                  settledAt: row.settledAt,
+                  snoozedUntil: row.snoozedUntil,
+                  snoozedAt: row.snoozedAt,
+                  pinnedAt: row.pinnedAt,
+                  pinOrderKey: row.pinOrderKey ?? null,
+                  titleRegeneration: mapTitleRegeneration(row),
+                  scheduledTurn: row.scheduledTurn ?? null,
+                  session,
+                  latestUserMessageAt: row.latestUserMessageAt,
+                  hasPendingApprovals: row.pendingApprovalCount > 0,
+                  hasPendingUserInput: row.pendingUserInputCount > 0,
+                  hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                  backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
+                    row.threadId,
+                  ),
+                  planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
+                } satisfies OrchestrationThreadShell);
+              }),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
             };
 
@@ -2455,7 +2596,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
 
   const getThreadShellById: ProjectionSnapshotQueryShape["getThreadShellById"] = (threadId) =>
     Effect.gen(function* () {
-      const [threadRow, latestTurnRow, sessionRow] = yield* Effect.all([
+      const [threadRow, latestTurnRow, sessionRow, cacheWarmthRow] = yield* Effect.all([
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -2480,11 +2621,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ),
           ),
         ),
+        getPromptCacheWarmthRowByThread({ threadId }).pipe(
+          Effect.mapError(
+            toPersistenceSqlOrDecodeError(
+              "ProjectionSnapshotQuery.getThreadShellById:getPromptCacheWarmth:query",
+              "ProjectionSnapshotQuery.getThreadShellById:getPromptCacheWarmth:decodeRow",
+            ),
+          ),
+        ),
       ]);
 
       if (Option.isNone(threadRow)) {
         return Option.none<OrchestrationThreadShell>();
       }
+
+      const session = Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null;
+      const activeInstanceId =
+        session?.providerInstanceId ?? threadRow.value.modelSelection.instanceId;
+      const cacheWarmth =
+        Option.isSome(cacheWarmthRow) &&
+        cacheWarmthRow.value.providerInstanceId === activeInstanceId &&
+        cacheWarmthRow.value.model === threadRow.value.modelSelection.model
+          ? mapPromptCacheWarmth(cacheWarmthRow.value)
+          : null;
 
       return Option.some({
         id: threadRow.value.threadId,
@@ -2496,6 +2655,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
+        cacheWarmth,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
@@ -2507,7 +2667,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         pinOrderKey: threadRow.value.pinOrderKey ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         scheduledTurn: threadRow.value.scheduledTurn ?? null,
-        session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
+        session,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,

@@ -176,6 +176,7 @@ import {
   type ProviderInstanceEntry,
 } from "../providerInstances";
 import { providerUsageLimitCountdown } from "../providerUsageLimit";
+import { derivePromptCacheWarmthState, promptCacheSidebarStyle } from "../lib/promptCacheWarmth";
 import { primaryServerProvidersAtom } from "../state/server";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -764,6 +765,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   snoozeWakeLabelText: string | null;
   providerUsageLimitLabel: string | null;
   providerUsageLimitResetsAt: string | null;
+  nowMs: number;
   // When a snooze ended (timer or early wake); drives the Woke pill until
   // the user visits the thread.
   wokeAt: string | null;
@@ -863,6 +865,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const promptCacheWarmth = thread.cacheWarmth
+    ? derivePromptCacheWarmthState(thread.cacheWarmth, props.nowMs)
+    : null;
+  const promptCacheStyle = promptCacheSidebarStyle(promptCacheWarmth);
   // A woken thread reappears at its original position (the sort is
   // deliberately static), so the pill has to carry the weight. Snoozing is
   // an explicit act, so the pill clears only when the user re-engages:
@@ -1277,8 +1283,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 data-testid="sidebar-row-slim"
                 data-app-action="thread.open"
                 data-app-action-target={`${thread.environmentId}/${thread.id}`}
+                data-cache-temperature={promptCacheWarmth?.temperature}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                style={promptCacheStyle}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1435,8 +1443,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               data-testid="sidebar-row-card"
               data-app-action="thread.open"
               data-app-action-target={`${thread.environmentId}/${thread.id}`}
+              data-cache-temperature={promptCacheWarmth?.temperature}
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
+              style={promptCacheStyle}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
@@ -3865,6 +3875,7 @@ export default function Sidebar() {
                             `${thread.environmentId}:${thread.session?.providerInstanceId ?? thread.modelSelection.instanceId}`,
                           ) ?? null
                         }
+                        nowMs={Date.parse(`${nowMinute}:00.000Z`)}
                         // All sections: a woken thread can classify straight
                         // into the settled tail (PR merged while snoozed), and
                         // the wake signal must survive the trip. Still-snoozed

@@ -222,6 +222,10 @@
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"
+    },
+    "./promptCache": {
+      "types": "./src/promptCache.ts",
+      "import": "./src/promptCache.ts"
     }
   },
   "scripts": {

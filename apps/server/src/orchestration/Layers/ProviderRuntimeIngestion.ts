@@ -249,13 +249,26 @@ function assistantSegmentMessageId(baseKey: string, segmentIndex: number): Messa
     segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
   );
 }
+interface ContextWindowCacheTelemetry {
+  readonly provider: string;
+  readonly providerInstanceId: string;
+  readonly model: string;
+  readonly requestStartedAt: string;
+}
+
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
-): ThreadTokenUsageSnapshot | undefined {
+  cacheTelemetry?: ContextWindowCacheTelemetry,
+):
+  | (ThreadTokenUsageSnapshot & { readonly cacheTelemetry?: ContextWindowCacheTelemetry })
+  | undefined {
   if (event.type !== "thread.token-usage.updated" || event.payload.usage.usedTokens <= 0) {
     return undefined;
   }
-  return event.payload.usage;
+  return {
+    ...event.payload.usage,
+    ...(cacheTelemetry ? { cacheTelemetry } : {}),
+  };
 }
 
 function normalizeRuntimeTurnState(
@@ -364,6 +377,7 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
   taskTitle?: string,
+  cacheTelemetry?: ContextWindowCacheTelemetry,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const maybeSequence = (() => {
     const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
@@ -766,7 +780,7 @@ export function runtimeEventToActivities(
     }
 
     case "thread.token-usage.updated": {
-      const payload = buildContextWindowActivityPayload(event);
+      const payload = buildContextWindowActivityPayload(event, cacheTelemetry);
       if (!payload) {
         return [];
       }
@@ -2048,7 +2062,21 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event, taskTitle);
+      const cacheTelemetry =
+        event.type === "thread.token-usage.updated" &&
+        eventTurnId !== undefined &&
+        thread.latestTurn?.turnId === eventTurnId
+          ? {
+              provider: event.provider,
+              providerInstanceId:
+                event.providerInstanceId ??
+                thread.session?.providerInstanceId ??
+                thread.modelSelection.instanceId,
+              model: thread.modelSelection.model,
+              requestStartedAt: thread.latestTurn.requestedAt,
+            }
+          : undefined;
+      const activities = runtimeEventToActivities(event, taskTitle, cacheTelemetry);
       yield* Effect.forEach(activities, (activity) =>
         providerCommandId(event, "thread-activity-append").pipe(
           Effect.flatMap((commandId) =>

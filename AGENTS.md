@@ -99,6 +99,10 @@ When an explicit future provider reset is known, let an idle existing thread dur
 
 Present that reset-delayed prompt as a direct alternate send action beside the normal send button. Use a warm yellow/orange send treatment with both send and clock cues; do not hide the action behind an informational-looking popover or menu.
 
+Treat provider prompt-cache warmth as a visible cost risk. Track eligible cache hits and misses per provider instance and model, retain the latest 100 of each, and estimate the likely cache lifetime from those observations. Fall back per provider while evidence is sparse: one hour for Claude, matching Anthropic's documented session cache TTL, and five minutes otherwise. Bound warmth at the p95 of observed hit gaps so long-gap warm evidence counts while stray mislabeled observations do not, and keep the miss bound conservative because a false-warm estimate costs more than an early cold one. Never present the estimate as a provider guarantee.
+
+Show that estimate without consuming thread-title space: sidebar rows drift from an ember/orange left-edge glow through orchid/violet to cold blue, and the composer exposes a matching hoverable meter beside the context-window meter. Drive the decay from the shared minute clock rather than continuously repainting every row. Include the estimated lifetime, idle time, remaining likely warmth, evidence counts, and approximate context tokens exposed to a cold resubmit.
+
 As Chris's workflow and product preferences become clear through use, proactively record durable choices in this CPH Code prefix and the corresponding `README.md` introduction. Keep those additions concise and specific so future work preserves intentional fork behavior instead of repeatedly rediscovering it.
 
 For routine product checks that require a live agent, use economical models such as Luna for Codex and Sonnet for Claude unless the behavior under test specifically depends on a frontier model.
