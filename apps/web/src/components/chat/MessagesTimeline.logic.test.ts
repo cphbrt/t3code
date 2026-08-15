@@ -6,6 +6,9 @@ import {
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  resolveTimelineInitialScrollIndex,
+  resolveTimelineReadingAnchor,
+  resolveTimelineReadingAnchorScrollTop,
   reconcileTimelineScrollToEnd,
   resolveTimelineMinimapStepIndex,
   resolveTimelineMinimapTickMetrics,
@@ -21,6 +24,55 @@ describe("shouldPreserveAssistantLineBreaks", () => {
       ),
     ).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
+  });
+});
+
+describe("timeline reading positions", () => {
+  const rows = [{ id: "first" }, { id: "long-response" }, { id: "last" }];
+
+  it("captures progress within a long semantic row", () => {
+    expect(
+      resolveTimelineReadingAnchor(
+        [
+          { rowId: "long-response", top: -400, bottom: 600 },
+          { rowId: "last", top: 600, bottom: 700 },
+        ],
+        { top: 0, bottom: 500 },
+      ),
+    ).toEqual({ rowId: "long-response", viewOffset: -400 });
+  });
+
+  it("skips a measured row that is no longer visible", () => {
+    expect(
+      resolveTimelineReadingAnchor(
+        [
+          { rowId: "first", top: -150, bottom: -50 },
+          { rowId: "long-response", top: -50, bottom: 950 },
+        ],
+        { top: 0, bottom: 500 },
+      ),
+    ).toEqual({ rowId: "long-response", viewOffset: -50 });
+  });
+
+  it("computes the physical correction for an estimated initial placement", () => {
+    expect(
+      resolveTimelineReadingAnchorScrollTop({
+        scrollTop: 3_182,
+        viewportTop: 52,
+        rowTop: 3_647,
+        viewOffset: -640,
+      }),
+    ).toBe(7_417);
+  });
+
+  it("resolves a saved row to LegendList's initial semantic index", () => {
+    expect(
+      resolveTimelineInitialScrollIndex(rows, {
+        rowId: "long-response",
+        viewOffset: -400,
+      }),
+    ).toEqual({ index: 1, viewOffset: -400 });
+    expect(resolveTimelineInitialScrollIndex(rows, { rowId: "missing", viewOffset: 0 })).toBeNull();
   });
 });
 

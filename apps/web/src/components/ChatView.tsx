@@ -264,6 +264,7 @@ import { MessagesTimeline } from "./chat/MessagesTimeline";
 import {
   reconcileTimelineScrollToEnd,
   resolveTimelineIsAtEnd,
+  type TimelineReadingAnchor,
 } from "./chat/MessagesTimeline.logic";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -331,6 +332,7 @@ import {
   reconcileMountedTerminalThreadIds,
   revealComposerForTypedKey,
   resolveOpenThreadVisitedAt,
+  resolveTimelineEntryReadingAnchor,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -1725,6 +1727,9 @@ function ChatViewContent(props: ChatViewProps) {
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
   }, [draftThreadKeys, openTerminalThreadKeys, serverThreadKeys]);
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const activeThreadLastVisitedAt = useUiStateStore((store) =>
+    activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
+  );
   const openThreadVisitedAt = resolveOpenThreadVisitedAt(activeThread);
   // Opening a thread records its creation as an initial read boundary, so its
   // first completion can become unread after the user leaves. Reading a
@@ -2606,6 +2611,26 @@ function ChatViewContent(props: ChatViewProps) {
       ),
     [activeThread?.proposedPlans, timelineMessages, turnPlans, workLogEntries],
   );
+  const timelineEntryReadingAnchorRef = useRef<{
+    readonly threadKey: string | null;
+    readonly anchor: TimelineReadingAnchor | null;
+  }>({ threadKey: null, anchor: null });
+  if (timelineEntryReadingAnchorRef.current.threadKey !== activeThreadKey) {
+    const savedAnchor =
+      activeThreadKey === null
+        ? null
+        : (useChatSessionUiStore.getState().timelineReadingAnchorByThreadKey[activeThreadKey] ??
+          null);
+    timelineEntryReadingAnchorRef.current = {
+      threadKey: activeThreadKey,
+      anchor: resolveTimelineEntryReadingAnchor({
+        savedAnchor,
+        latestTurn: activeLatestTurn,
+        lastVisitedAt: activeThreadLastVisitedAt,
+      }),
+    };
+  }
+  const timelineEntryReadingAnchor = timelineEntryReadingAnchorRef.current.anchor;
   const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
   const draftHeroDockRequested =
     activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
@@ -2625,6 +2650,7 @@ function ChatViewContent(props: ChatViewProps) {
   const toggleReadingFocusForThread = useChatSessionUiStore((state) => state.toggleReadingFocus);
   const enableReadingFocusForThread = useChatSessionUiStore((state) => state.enableReadingFocus);
   const clearReadingFocusForThread = useChatSessionUiStore((state) => state.clearReadingFocus);
+  const setTimelineReadingAnchor = useChatSessionUiStore((state) => state.setTimelineReadingAnchor);
   const readingFocusAvailable = activeThreadKey !== null && timelineEntries.length > 0;
   const readingFocus = readingFocusAvailable && readingFocusRequested;
   const timelineBottomInset = readingFocus
@@ -3847,6 +3873,7 @@ function ChatViewContent(props: ChatViewProps) {
   // re-pins on its own (independent of the refs), so the timeline needs a
   // render-visible flag to switch it off once the user scrolls away.
   const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
+  const timelineScrollModeThreadKeyRef = useRef<string | null>(null);
   const anchorUserScrollGenerationRef = useRef(0);
   const liveFollowUserScrollGenerationRef = useRef<number | null>(0);
   const timelineFollowReconcileFrameRef = useRef<number | null>(null);
@@ -3900,26 +3927,32 @@ function ChatViewContent(props: ChatViewProps) {
     },
     [timelineBottomInset],
   );
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      scrollToEndRequestedRef.current = false;
-      timelineScrollModeRef.current = "following-end";
-      liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-      setTimelineLiveFollowEnabled(true);
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      return;
-    }
-    if (timelineScrollModeRef.current !== "free-scrolling") {
-      showScrollDebouncer.current.cancel();
-      if (!scrollToEndRequestedRef.current) {
+  const onIsAtEndChange = useCallback(
+    (isAtEnd: boolean) => {
+      isAtEndRef.current = isAtEnd;
+      if (isAtEnd) {
+        if (activeThreadKey !== null) {
+          setTimelineReadingAnchor(activeThreadKey, null);
+        }
+        scrollToEndRequestedRef.current = false;
+        timelineScrollModeRef.current = "following-end";
+        liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
+        setTimelineLiveFollowEnabled(true);
+        showScrollDebouncer.current.cancel();
         setShowScrollToBottom(false);
+        return;
       }
-      return;
-    }
-    showScrollDebouncer.current.maybeExecute();
-  }, []);
+      if (timelineScrollModeRef.current !== "free-scrolling") {
+        showScrollDebouncer.current.cancel();
+        if (!scrollToEndRequestedRef.current) {
+          setShowScrollToBottom(false);
+        }
+        return;
+      }
+      showScrollDebouncer.current.maybeExecute();
+    },
+    [activeThreadKey, setTimelineReadingAnchor],
+  );
   const reconcileTimelineFollow = useCallback((): boolean => {
     if (liveFollowUserScrollGenerationRef.current !== anchorUserScrollGenerationRef.current) {
       return false;
@@ -3970,6 +4003,9 @@ function ChatViewContent(props: ChatViewProps) {
         timelineFollowReconcileFrameRef.current = null;
       }
       scrollToEndRequestedRef.current = true;
+      if (activeThreadKey !== null) {
+        setTimelineReadingAnchor(activeThreadKey, null);
+      }
       timelineScrollModeRef.current = "following-end";
       liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
       setTimelineLiveFollowEnabled(true);
@@ -3980,8 +4016,19 @@ function ChatViewContent(props: ChatViewProps) {
       }
       scheduleTimelineFollowReconcile();
     },
-    [scheduleTimelineFollowReconcile],
+    [activeThreadKey, scheduleTimelineFollowReconcile, setTimelineReadingAnchor],
   );
+  const persistTimelineReadingAnchor = useCallback(
+    (anchor: TimelineReadingAnchor | null) => {
+      if (activeThreadKey === null) return;
+      setTimelineReadingAnchor(activeThreadKey, anchor);
+    },
+    [activeThreadKey, setTimelineReadingAnchor],
+  );
+  const timelineLiveFollowEnabledForThread =
+    timelineScrollModeThreadKeyRef.current === activeThreadKey
+      ? timelineLiveFollowEnabled
+      : timelineEntryReadingAnchor === null;
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
@@ -4099,17 +4146,24 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThread?.id, scheduleTimelineFollowReconcile, timelineBottomInset, timelineEntries]);
 
-  useEffect(() => {
-    setPullRequestDialogState(null);
+  useLayoutEffect(() => {
+    const shouldFollowEnd = timelineEntryReadingAnchor === null;
+    timelineScrollModeThreadKeyRef.current = activeThreadKey;
     isAtEndRef.current = false;
     scrollToEndRequestedRef.current = false;
-    timelineScrollModeRef.current = "following-end";
-    liveFollowUserScrollGenerationRef.current = anchorUserScrollGenerationRef.current;
-    setTimelineLiveFollowEnabled(true);
+    timelineScrollModeRef.current = shouldFollowEnd ? "following-end" : "free-scrolling";
+    liveFollowUserScrollGenerationRef.current = shouldFollowEnd
+      ? anchorUserScrollGenerationRef.current
+      : null;
+    setTimelineLiveFollowEnabled(shouldFollowEnd);
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
     // activeThreadRef resets transitively with the active thread.
-  }, [activeThread?.id, activeThreadKey]);
+  }, [activeThread?.id, activeThreadKey, timelineEntryReadingAnchor]);
+
+  useEffect(() => {
+    setPullRequestDialogState(null);
+  }, [activeThread?.id]);
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
@@ -4279,9 +4333,6 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
   // Mirror of the sidebar's Woke pill for the open thread. It uses the same
   // visit comparison and change request settle rule.
-  const activeThreadLastVisitedAt = useUiStateStore((store) =>
-    activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
-  );
   const activeThreadWokeVisible = useMemo(() => {
     if (activeThreadWokeAt === null) return false;
     if (
@@ -6595,7 +6646,7 @@ function ChatViewContent(props: ChatViewProps) {
               <MessagesTimeline
                 agentPanelModel={agentPanelModel}
                 onOpenAgents={addAgentsSurface}
-                key={activeThread.id}
+                key={activeThreadKey ?? activeThread.id}
                 isWorking={isWorking}
                 workingStepLabel={workingStepLabel}
                 activeTurnInProgress={isWorking || !latestTurnSettled}
@@ -6623,7 +6674,9 @@ function ChatViewContent(props: ChatViewProps) {
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
                 onContentGeometryChange={scheduleTimelineFollowReconcile}
                 contentInsetEndAdjustment={timelineBottomInset}
-                liveFollowEnabled={timelineLiveFollowEnabled}
+                liveFollowEnabled={timelineLiveFollowEnabledForThread}
+                initialReadingAnchor={timelineEntryReadingAnchor}
+                onReadingAnchorChange={persistTimelineReadingAnchor}
                 onIsAtEndChange={onIsAtEndChange}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}

@@ -28,6 +28,7 @@ import {
   reconcileRetainedMountedThreadIds,
   revealComposerForTypedKey,
   resolveOpenThreadVisitedAt,
+  resolveTimelineEntryReadingAnchor,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -44,6 +45,51 @@ const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
 const now = "2026-03-29T00:00:00.000Z";
+
+describe("timeline entry reading position", () => {
+  const latestTurn = {
+    completedAt: "2026-03-29T00:10:00.000Z",
+    assistantMessageId: "assistant-final",
+  };
+
+  it("prefers saved manual progress over an unseen completion", () => {
+    const savedAnchor = { rowId: "older-message", viewOffset: -240 };
+    expect(
+      resolveTimelineEntryReadingAnchor({
+        savedAnchor,
+        latestTurn,
+        lastVisitedAt: now,
+      }),
+    ).toEqual(savedAnchor);
+  });
+
+  it("opens an unseen completion at the top of its final assistant message", () => {
+    expect(
+      resolveTimelineEntryReadingAnchor({
+        savedAnchor: null,
+        latestTurn,
+        lastVisitedAt: now,
+      }),
+    ).toEqual({ rowId: "assistant-final", viewOffset: 24 });
+  });
+
+  it("follows the end when the completion was already seen or has no visit baseline", () => {
+    expect(
+      resolveTimelineEntryReadingAnchor({
+        savedAnchor: null,
+        latestTurn,
+        lastVisitedAt: latestTurn.completedAt,
+      }),
+    ).toBeNull();
+    expect(
+      resolveTimelineEntryReadingAnchor({
+        savedAnchor: null,
+        latestTurn,
+        lastVisitedAt: undefined,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("reading focus by thread", () => {
   it("keeps focus enabled on other threads when another thread is toggled", () => {
