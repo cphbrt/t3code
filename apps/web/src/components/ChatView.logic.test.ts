@@ -27,6 +27,7 @@ import {
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
   revealComposerForTypedKey,
+  resolveOpenThreadVisitedAt,
   resolveThreadMetadataUpdateForNextTurn,
   resolveSendEnvMode,
   scheduleEnvironmentReconnectWarning,
@@ -153,6 +154,15 @@ const readySession = {
   lastError: null,
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
+
+describe("open thread visit timestamp", () => {
+  it("uses creation as the read boundary until the first response completes", () => {
+    expect(resolveOpenThreadVisitedAt(makeThread())).toBe(now);
+    expect(resolveOpenThreadVisitedAt(makeThread({ latestTurn: completedTurn }))).toBe(
+      completedTurn.completedAt,
+    );
+  });
+});
 
 describe("draft route handoff", () => {
   it("waits through server setup until the canonical route has visible turn state", () => {
