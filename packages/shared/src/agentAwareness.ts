@@ -92,6 +92,12 @@ function resolveThreadAwarenessPhase(
   if (thread.session?.status === "running" || thread.latestTurn?.state === "running") {
     return "running";
   }
+  // The released awareness contract has no interrupted phase. Removing the
+  // live entry is more truthful (and backward-compatible) than publishing a
+  // false completion; the thread shell still carries the durable status.
+  if (thread.session?.status === "interrupted") {
+    return null;
+  }
   if (thread.latestTurn?.state === "completed") {
     return "completed";
   }

@@ -1309,7 +1309,15 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             data-assistant-message-footer="true"
             className="mt-1.5 flex items-center gap-2 text-xs tabular-nums"
           >
-            <span className="text-secondary-label">Done</span>
+            <span
+              className={cn(
+                row.assistantCompletionLabel === "Interrupted"
+                  ? "text-orange-700 dark:text-orange-300"
+                  : "text-secondary-label",
+              )}
+            >
+              {row.assistantCompletionLabel ?? "Done"}
+            </span>
             <AssistantCopyButton row={row} />
             {!row.message.streaming && (
               <Tooltip>
@@ -2403,7 +2411,12 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     expandedOverride ?? (workLogEntryIsCommand(workEntry) || workEntry.itemType === "file_change");
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
-  const entryIconName = showWarningIndicator ? "x" : workEntryIconName(workEntry);
+  const showInterruptedIndicator = workEntry.sourceActivityKind === "turn.interrupted";
+  const entryIconName = showWarningIndicator
+    ? "x"
+    : showInterruptedIndicator
+      ? "circle-alert"
+      : workEntryIconName(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
   const rawPreview = workEntryPreview(workEntry, workspaceRoot);
   const preview =
@@ -2423,17 +2436,21 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
     "flex size-5 shrink-0 items-center justify-center",
     showWarningIndicator
       ? "text-destructive"
-      : showDestructiveRowStyle
-        ? "text-destructive"
-        : workEntry.tone === "tool" || showFailedIndicator
-          ? "text-icon-muted"
-          : iconConfig.className,
+      : showInterruptedIndicator
+        ? "text-orange-600 dark:text-orange-300"
+        : showDestructiveRowStyle
+          ? "text-destructive"
+          : workEntry.tone === "tool" || showFailedIndicator
+            ? "text-icon-muted"
+            : iconConfig.className,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"
-    : showDestructiveRowStyle
-      ? "font-medium text-destructive"
-      : "font-medium text-foreground";
+    : showInterruptedIndicator
+      ? "font-medium text-orange-700 dark:text-orange-300"
+      : showDestructiveRowStyle
+        ? "font-medium text-destructive"
+        : "font-medium text-foreground";
   const turnSettled = !activity.activeTurnInProgress;
   const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
   const showSuccessIndicator =
