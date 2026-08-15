@@ -87,7 +87,7 @@ function renderRunningActions(showSendWhileRunning: boolean, hasSendableContent:
   );
 }
 
-function renderSendButton() {
+function renderSendButton(usageResetScheduleLabel: string | null = null) {
   return renderToStaticMarkup(
     createElement(ComposerPrimaryActions, {
       compact: true,
@@ -104,6 +104,8 @@ function renderSendButton() {
       onPreviousPendingQuestion: () => {},
       onInterrupt: () => {},
       onImplementPlanInNewThread: () => {},
+      usageResetScheduleLabel,
+      onScheduleAfterUsageReset: () => {},
     }),
   );
 }
@@ -259,5 +261,14 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Send message"');
+  });
+
+  it("adds a direct reset-aware send action only when a future reset is available", () => {
+    expect(renderSendButton()).not.toContain("Send after reset");
+    expect(renderSendButton("Send after usage resets · 3:11 AM")).toContain(
+      'aria-label="Send after usage resets · 3:11 AM"',
+    );
+    expect(renderSendButton("Send after usage resets · 3:11 AM")).toContain("Send after reset");
+    expect(renderSendButton("Send after usage resets · 3:11 AM")).not.toContain("aria-haspopup");
   });
 });

@@ -43,6 +43,8 @@ survives app and server restarts, disappears at the reset time, and does not aut
 resume a stopped turn. Open an affected thread's **Snooze** menu and choose **Until usage resets** to
 hide it until that explicit reset time.
 
+For an idle existing thread, the Send menu also offers **Send after usage resets**. The prompt waits on the server, remains outside the transcript until it is actually sent, and releases one minute after the provider's reset. A waiting prompt survives restarts and can be cancelled or sent immediately from the composer.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then

@@ -30,6 +30,8 @@ import {
   ThreadUnarchivedPayload,
   ThreadUnsettledPayload,
   ThreadUnsnoozedPayload,
+  ThreadTurnScheduledPayload,
+  ThreadTurnScheduleClearedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -305,6 +307,7 @@ export function projectEvent(
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            scheduledTurn: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -548,6 +551,33 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-scheduled":
+      return decodeForEvent(ThreadTurnScheduledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            scheduledTurn: payload.scheduledTurn,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.turn-schedule-cleared":
+      return decodeForEvent(
+        ThreadTurnScheduleClearedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            scheduledTurn: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
 
     case "thread.session-set":
       return Effect.gen(function* () {
