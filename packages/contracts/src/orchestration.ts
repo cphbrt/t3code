@@ -387,6 +387,25 @@ export const ThreadTitleRegeneration = Schema.Struct({
 });
 export type ThreadTitleRegeneration = typeof ThreadTitleRegeneration.Type;
 
+export const ScheduledThreadTurn = Schema.Struct({
+  scheduleId: CommandId,
+  message: Schema.Struct({
+    messageId: MessageId,
+    role: Schema.Literal("user"),
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+  }),
+  modelSelection: ModelSelection,
+  titleSeed: Schema.optional(TrimmedNonEmptyString),
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  providerInstanceId: ProviderInstanceId,
+  reportedResetAt: IsoDateTime,
+  scheduledFor: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+export type ScheduledThreadTurn = typeof ScheduledThreadTurn.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -423,6 +442,7 @@ export const OrchestrationThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  scheduledTurn: Schema.optional(Schema.NullOr(ScheduledThreadTurn)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -481,6 +501,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  scheduledTurn: Schema.optional(Schema.NullOr(ScheduledThreadTurn)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -855,6 +876,48 @@ export const ThreadTurnStartCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadTurnScheduleCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.schedule"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: ThreadTurnStartCommand.fields.message,
+  modelSelection: ModelSelection,
+  titleSeed: Schema.optional(TrimmedNonEmptyString),
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  providerInstanceId: ProviderInstanceId,
+  reportedResetAt: IsoDateTime,
+  scheduledFor: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnCancelScheduledCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.cancel-scheduled"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  scheduleId: CommandId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnReleaseScheduledCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.release-scheduled"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  scheduleId: CommandId,
+  force: Schema.optional(Schema.Boolean),
+  createdAt: IsoDateTime,
+});
+
+const ThreadTurnRescheduleCommand = Schema.Struct({
+  type: Schema.Literal("thread.turn.reschedule"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  scheduleId: CommandId,
+  reportedResetAt: IsoDateTime,
+  scheduledFor: IsoDateTime,
+  createdAt: IsoDateTime,
+});
+
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
@@ -872,6 +935,11 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
+});
+
+const ClientThreadTurnScheduleCommand = Schema.Struct({
+  ...ThreadTurnScheduleCommand.fields,
+  message: ClientThreadTurnStartCommand.fields.message,
 });
 
 const ThreadTurnInterruptCommand = Schema.Struct({
@@ -940,6 +1008,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
+  ThreadTurnScheduleCommand,
+  ThreadTurnCancelScheduledCommand,
+  ThreadTurnReleaseScheduledCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -968,6 +1039,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
+  ClientThreadTurnScheduleCommand,
+  ThreadTurnCancelScheduledCommand,
+  ThreadTurnReleaseScheduledCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
@@ -1058,6 +1132,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  ThreadTurnRescheduleCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1087,6 +1162,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.interaction-mode-set",
   "thread.message-sent",
   "thread.turn-start-requested",
+  "thread.turn-scheduled",
+  "thread.turn-schedule-cleared",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
@@ -1191,6 +1268,19 @@ export const ThreadUnsnoozedPayload = Schema.Struct({
   // thread.unsettled's activity resets. Timer wakes emit no event: clients
   // derive them from snoozedUntil passing.
   reason: Schema.Literals(["user", "activity"]),
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadTurnScheduledPayload = Schema.Struct({
+  threadId: ThreadId,
+  scheduledTurn: ScheduledThreadTurn,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadTurnScheduleClearedPayload = Schema.Struct({
+  threadId: ThreadId,
+  scheduleId: CommandId,
+  reason: Schema.Literals(["cancelled", "released"]),
   updatedAt: IsoDateTime,
 });
 
@@ -1460,6 +1550,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.turn-start-requested"),
     payload: ThreadTurnStartRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-scheduled"),
+    payload: ThreadTurnScheduledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.turn-schedule-cleared"),
+    payload: ThreadTurnScheduleClearedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

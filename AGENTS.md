@@ -85,6 +85,10 @@ Claude usage-reset handling has been developed and validated against real exhaus
 
 Offer that explicit provider reset as **Until usage resets** in the affected thread's Snooze menu. Route it through the thread's active provider instance, and omit it when no future reset is known rather than guessing.
 
+When an explicit future provider reset is known, let an idle existing thread durably hold one prompt for that provider and release it one minute after the reset. Keep the held prompt out of transcript history until release, preserve it across server restarts, postpone it for a newer explicit reset, and make cancellation win cleanly against a raced timer.
+
+Present that reset-delayed prompt as a direct alternate send action beside the normal send button. Use a warm yellow/orange send treatment with both send and clock cues; do not hide the action behind an informational-looking popover or menu.
+
 When a requested change is complete and confidently verified, commit it to `main` and push it by default rather than leaving finished work uncommitted. Keep commits intentional and exclude unrelated user changes; if Chris later wants completed work undone, prefer an explicit revert or follow-up commit so the repository continues to tell the truth about what happened.
 
 ### Default delivery: ship to /Applications

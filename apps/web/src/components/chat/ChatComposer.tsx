@@ -457,6 +457,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  usageResetScheduleLabel: string | null;
+  onScheduleAfterUsageReset: () => void;
 }) {
   return (
     <>
@@ -486,6 +488,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+        usageResetScheduleLabel={props.usageResetScheduleLabel}
+        onScheduleAfterUsageReset={props.onScheduleAfterUsageReset}
       />
     </>
   );
@@ -625,6 +629,8 @@ export interface ChatComposerProps {
   onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  usageResetScheduleLabel: string | null;
+  onScheduleAfterUsageReset: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
     decision: ProviderApprovalDecision,
@@ -711,6 +717,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onSend,
     onInterrupt,
     onImplementPlanInNewThread,
+    usageResetScheduleLabel,
+    onScheduleAfterUsageReset,
     onRespondToApproval,
     onSelectActivePendingUserInputOption,
     onAdvanceActivePendingUserInput,
@@ -3503,6 +3511,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                    usageResetScheduleLabel={usageResetScheduleLabel}
+                    onScheduleAfterUsageReset={onScheduleAfterUsageReset}
                   />
                 </div>
               </div>

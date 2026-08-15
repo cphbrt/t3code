@@ -129,7 +129,10 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       } satisfies OrchestrationCommand;
     }
 
-    if (canonicalCommand.type !== "thread.turn.start") {
+    if (
+      canonicalCommand.type !== "thread.turn.start" &&
+      canonicalCommand.type !== "thread.turn.schedule"
+    ) {
       return canonicalCommand as OrchestrationCommand;
     }
 
