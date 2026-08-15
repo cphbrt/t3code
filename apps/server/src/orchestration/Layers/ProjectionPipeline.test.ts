@@ -2861,4 +2861,142 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
       ]);
     }),
   );
+
+  it.effect("learns prompt cache lifetime from eligible hit and miss observations", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-prompt-cache");
+
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-cache-project"),
+        projectId: ProjectId.make("project-prompt-cache"),
+        title: "Prompt Cache Project",
+        workspaceRoot: "/tmp/project-prompt-cache",
+        defaultModelSelection: null,
+        createdAt: "2026-08-15T11:59:58.000Z",
+      });
+      yield* engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-cache-thread"),
+        threadId,
+        projectId: ProjectId.make("project-prompt-cache"),
+        title: "Prompt Cache Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("claude-personal"),
+          model: "claude-fable-5",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-08-15T11:59:59.000Z",
+      });
+
+      const projectUsage = (input: {
+        eventId: string;
+        turnId: string;
+        requestStartedAt: string;
+        observedAt: string;
+        usedTokens: number;
+        cachedInputTokens: number;
+        cacheWriteInputTokens: number;
+      }) =>
+        engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make(`cmd-${input.eventId}`),
+          threadId,
+          activity: {
+            id: EventId.make(`activity-${input.eventId}`),
+            tone: "info",
+            kind: "context-window.updated",
+            summary: "Context window updated",
+            payload: {
+              usedTokens: input.usedTokens,
+              inputTokens: input.usedTokens,
+              cachedInputTokens: input.cachedInputTokens,
+              cacheWriteInputTokens: input.cacheWriteInputTokens,
+              lastCachedInputTokens: input.cachedInputTokens,
+              lastCacheWriteInputTokens: input.cacheWriteInputTokens,
+              cacheTelemetry: {
+                provider: "claudeAgent",
+                providerInstanceId: "claude-personal",
+                model: "claude-fable-5",
+                requestStartedAt: input.requestStartedAt,
+              },
+            },
+            turnId: TurnId.make(input.turnId),
+            createdAt: input.observedAt,
+          },
+          createdAt: input.observedAt,
+        });
+
+      yield* projectUsage({
+        eventId: "cache-1",
+        turnId: "turn-cache-1",
+        requestStartedAt: "2026-08-15T12:00:00.000Z",
+        observedAt: "2026-08-15T12:00:10.000Z",
+        usedTokens: 100_000,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 100_000,
+      });
+      yield* projectUsage({
+        eventId: "cache-2",
+        turnId: "turn-cache-2",
+        requestStartedAt: "2026-08-15T12:04:00.000Z",
+        observedAt: "2026-08-15T12:04:10.000Z",
+        usedTokens: 110_000,
+        cachedInputTokens: 90_000,
+        cacheWriteInputTokens: 20_000,
+      });
+      yield* projectUsage({
+        eventId: "cache-3",
+        turnId: "turn-cache-3",
+        requestStartedAt: "2026-08-15T12:14:10.000Z",
+        observedAt: "2026-08-15T12:14:20.000Z",
+        usedTokens: 120_000,
+        cachedInputTokens: 0,
+        cacheWriteInputTokens: 120_000,
+      });
+
+      const observations = yield* sql<{
+        readonly outcome: string;
+        readonly idleGapMs: number;
+      }>`
+        SELECT outcome, idle_gap_ms AS "idleGapMs"
+        FROM projection_prompt_cache_observations
+        ORDER BY observed_at ASC
+      `;
+      assert.deepEqual(observations, [
+        { outcome: "hit", idleGapMs: 230_000 },
+        { outcome: "miss", idleGapMs: 600_000 },
+      ]);
+
+      const profiles = yield* sql<{
+        readonly estimatedTtlMs: number;
+        readonly basis: string;
+        readonly hitSampleCount: number;
+        readonly missSampleCount: number;
+      }>`
+        SELECT
+          estimated_ttl_ms AS "estimatedTtlMs",
+          basis,
+          hit_sample_count AS "hitSampleCount",
+          miss_sample_count AS "missSampleCount"
+        FROM projection_prompt_cache_profiles
+      `;
+      // One hit at 230s and one miss at 600s bracket the boundary at 415s, but
+      // two of the twenty samples needed for full confidence only move the
+      // estimate a tenth of the way there from Claude's one-hour prior.
+      assert.deepEqual(profiles, [
+        {
+          estimatedTtlMs: 3_281_500,
+          basis: "learning",
+          hitSampleCount: 1,
+          missSampleCount: 1,
+        },
+      ]);
+    }),
+  );
 });

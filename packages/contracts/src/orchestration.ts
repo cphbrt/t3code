@@ -381,6 +381,39 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+export const PromptCacheObservationOutcome = Schema.Literals(["hit", "miss", "partial"]);
+export type PromptCacheObservationOutcome = typeof PromptCacheObservationOutcome.Type;
+
+export const PromptCacheEstimateBasis = Schema.Literals(["default", "learning", "learned"]);
+export type PromptCacheEstimateBasis = typeof PromptCacheEstimateBasis.Type;
+
+export const PromptCacheEstimateConfidence = Schema.Literals(["low", "medium", "high"]);
+export type PromptCacheEstimateConfidence = typeof PromptCacheEstimateConfidence.Type;
+
+/**
+ * Server-derived prompt-cache state for one thread. The provider cache itself
+ * remains opaque: this is an evidence-backed risk estimate, never a guarantee.
+ */
+export const PromptCacheWarmth = Schema.Struct({
+  provider: TrimmedNonEmptyString,
+  providerInstanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  lastCacheActivityAt: IsoDateTime,
+  cacheableTokens: NonNegativeInt,
+  estimatedTtlMs: PositiveInt,
+  observedWarmThroughMs: Schema.NullOr(NonNegativeInt),
+  observedColdFromMs: Schema.NullOr(NonNegativeInt),
+  hitSampleCount: NonNegativeInt,
+  missSampleCount: NonNegativeInt,
+  basis: PromptCacheEstimateBasis,
+  confidence: PromptCacheEstimateConfidence,
+  profileUpdatedAt: IsoDateTime,
+  lastOutcome: Schema.NullOr(PromptCacheObservationOutcome),
+  lastCachedInputTokens: NonNegativeInt,
+  lastCacheWriteInputTokens: NonNegativeInt,
+});
+export type PromptCacheWarmth = typeof PromptCacheWarmth.Type;
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -489,6 +522,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  // Optional so released clients and cached pre-feature snapshots interoperate.
+  cacheWarmth: Schema.optional(Schema.NullOr(PromptCacheWarmth)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
