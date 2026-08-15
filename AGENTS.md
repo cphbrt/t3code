@@ -77,6 +77,8 @@ This path has been verified end to end for pairing, environment discovery, authe
 
 CPH Code treats the transcript as a durable, inspectable record. Keep meaningful agent activity—including commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. Coalesce provider lifecycle churn, and let users collapse large details explicitly, but do not automatically hide semantic activity behind summaries or elapsed-time rows.
 
+Always show long user messages in full. Do not offer controls to collapse or expand them.
+
 When a provider explicitly reports that an account is unavailable until a reset time, preserve that state per provider instance, show the top error bar on every thread using that instance, and show a quiet countdown on affected sessions and in the model picker. Keep the state and UI provider-neutral; do not infer a reset from ambiguous rolling-window data.
 
 Claude usage-reset handling has been developed and validated against real exhausted-account events. Give Codex the same quality of handling, but treat its adapter normalization as unfinished until an actual Codex exhausted-account payload has been captured and tested; rolling-window telemetry alone does not identify which reset applies.
