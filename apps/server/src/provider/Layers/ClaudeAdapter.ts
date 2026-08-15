@@ -264,6 +264,8 @@ interface ClaudeTaskAgentState {
    * assistant snapshots (authoritative API model). */
   model: string | undefined;
   effort: string | undefined;
+  /** Launching command for shell/monitor tasks (Bash/Monitor tool input). */
+  command: string | undefined;
 }
 
 interface ClaudeSessionContext {
@@ -1184,6 +1186,7 @@ function taskLinkageFor(
     ...(agent.model ? { model: agent.model } : {}),
     ...(agent.effort ? { effort: agent.effort } : {}),
     ...(agent.toolUseId ? { toolUseId: agent.toolUseId } : {}),
+    ...(agent.command ? { command: agent.command } : {}),
     ...(agent.workflowName ? { workflowName: agent.workflowName } : {}),
     ...(agent.runHandles ? { runHandles: agent.runHandles } : {}),
   };
@@ -2996,6 +2999,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             owningAgentId: existing?.owningAgentId,
             model: existing?.model,
             effort: existing?.effort,
+            command: existing?.command,
           });
         }
       }
@@ -3365,6 +3369,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           (typeof rawLaunchEffort === "number" && Number.isFinite(rawLaunchEffort)
             ? String(rawLaunchEffort)
             : context.currentEffort);
+        // Shell/monitor tasks: the launching tool's input carries the actual
+        // command (Bash `command`, Monitor `command`). The SDK caps its own
+        // BackgroundTaskSummary command at 1000 chars; mirror that so roster
+        // payloads stay bounded.
+        const rawLaunchCommand = trimmedString(launchInput?.command);
+        const command =
+          rawLaunchCommand === undefined
+            ? undefined
+            : rawLaunchCommand.length > 1000
+              ? `${rawLaunchCommand.slice(0, 1000)}…`
+              : rawLaunchCommand;
         // Remember the agent identity so every later task.* payload for this
         // taskId is self-describing (identity must survive activity retention).
         context.taskAgents.set(message.task_id, {
@@ -3379,6 +3394,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           owningAgentId,
           model,
           effort,
+          command,
         });
         context.liveTaskIds.add(message.task_id);
         yield* offerRuntimeEvent({
@@ -3394,6 +3410,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
             ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
+            ...(command ? { command } : {}),
             ...(message.workflow_name ? { workflowName: message.workflow_name } : {}),
           },
         });

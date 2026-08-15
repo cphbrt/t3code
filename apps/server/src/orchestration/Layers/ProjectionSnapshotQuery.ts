@@ -2231,6 +2231,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
                     row.threadId,
                   ),
+                  backgroundTasks: threadBackgroundLiveness.getThreadBackgroundTasks(row.threadId),
                   planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
                 } satisfies OrchestrationThreadShell);
               }),
@@ -2376,6 +2377,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
                     row.threadId,
                   ),
+                  backgroundTasks: threadBackgroundLiveness.getThreadBackgroundTasks(row.threadId),
                   planProgress: threadPlanProgress.getThreadPlanProgress(row.threadId),
                 }),
               ),
@@ -2673,6 +2675,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
         backgroundLiveness: threadBackgroundLiveness.getThreadBackgroundLiveness(
+          threadRow.value.threadId,
+        ),
+        backgroundTasks: threadBackgroundLiveness.getThreadBackgroundTasks(
           threadRow.value.threadId,
         ),
         planProgress: threadPlanProgress.getThreadPlanProgress(threadRow.value.threadId),
