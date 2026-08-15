@@ -22,6 +22,7 @@ import {
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 import type { ComposerSubmissionIntent } from "../composer-logic";
+import type { TimelineReadingAnchor } from "./chat/MessagesTimeline.logic";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -102,6 +103,34 @@ export function clearReadingFocusThread(
   const next = new Set(focusedThreadKeys);
   next.delete(threadKey);
   return next;
+}
+
+export function resolveTimelineEntryReadingAnchor(input: {
+  readonly savedAnchor: TimelineReadingAnchor | null;
+  readonly latestTurn: {
+    readonly completedAt: string | null;
+    readonly assistantMessageId: string | null;
+  } | null;
+  readonly lastVisitedAt: string | undefined;
+}): TimelineReadingAnchor | null {
+  if (input.savedAnchor) {
+    return input.savedAnchor;
+  }
+
+  const completedAt = input.latestTurn?.completedAt;
+  const assistantMessageId = input.latestTurn?.assistantMessageId;
+  if (!completedAt || !assistantMessageId || input.lastVisitedAt === undefined) {
+    return null;
+  }
+  const completedAtMs = Date.parse(completedAt);
+  if (Number.isNaN(completedAtMs)) {
+    return null;
+  }
+  const lastVisitedAtMs = Date.parse(input.lastVisitedAt);
+  if (!Number.isNaN(lastVisitedAtMs) && completedAtMs <= lastVisitedAtMs) {
+    return null;
+  }
+  return { rowId: assistantMessageId, viewOffset: 24 };
 }
 
 export function scheduleEnvironmentReconnectWarning(showWarning: () => void): () => void {

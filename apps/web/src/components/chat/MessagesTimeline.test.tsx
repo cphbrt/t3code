@@ -15,6 +15,8 @@ vi.mock("@legendapp/list/react", async () => {
     ListHeaderComponent?: ReactNode;
     ListFooterComponent?: ReactNode;
     alignItemsAtEnd?: boolean;
+    initialScrollAtEnd?: boolean;
+    initialScrollIndex?: number | { index: number; viewOffset?: number };
     contentInsetEndAdjustment?: number;
     className?: string;
     maintainScrollAtEnd?:
@@ -40,6 +42,17 @@ vi.mock("@legendapp/list/react", async () => {
     <div
       data-testid={legendListTestId}
       data-align-items-at-end={props.alignItemsAtEnd}
+      data-initial-scroll-at-end={props.initialScrollAtEnd}
+      data-initial-scroll-index={
+        typeof props.initialScrollIndex === "object"
+          ? props.initialScrollIndex.index
+          : props.initialScrollIndex
+      }
+      data-initial-scroll-view-offset={
+        typeof props.initialScrollIndex === "object"
+          ? props.initialScrollIndex.viewOffset
+          : undefined
+      }
       data-on-item-size-changed={Boolean(props.onItemSizeChanged)}
       data-content-inset-end={props.contentInsetEndAdjustment}
       data-class-name={props.className}
@@ -185,6 +198,8 @@ function buildProps() {
     onContentGeometryChange: () => {},
     contentInsetEndAdjustment: 0,
     liveFollowEnabled: true,
+    initialReadingAnchor: null,
+    onReadingAnchorChange: () => {},
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},
   };
@@ -316,6 +331,22 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Worked for 8.0s");
     expect(markup).toContain("px-1 text-sm leading-relaxed text-muted-foreground");
+  });
+
+  it("starts at a saved semantic row without enabling end follow", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        liveFollowEnabled={false}
+        initialReadingAnchor={{ rowId: "entry-1", viewOffset: -180 }}
+        timelineEntries={[buildUserTimelineEntry(buildLongUserMessageText())]}
+      />,
+    );
+
+    expect(markup).not.toContain("data-initial-scroll-at-end");
+    expect(markup).toContain('data-initial-scroll-index="0"');
+    expect(markup).toContain('data-initial-scroll-view-offset="-180"');
+    expect(markup).not.toContain('data-maintain-scroll-at-end="enabled"');
   });
 
   it("renders distinct user and agent landmarks with step controls", () => {

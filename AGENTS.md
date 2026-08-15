@@ -77,6 +77,8 @@ This path has been verified end to end for pairing, environment discovery, authe
 
 CPH Code treats the transcript as a durable, inspectable record. Keep meaningful agent activity—including commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. Coalesce provider lifecycle churn, and let users collapse large details explicitly, but do not automatically hide semantic activity behind summaries or elapsed-time rows.
 
+Preserve each thread's manually chosen transcript reading position across thread switches. Without one, keep following live work at the end, but open an unseen completed turn at the top of its final assistant message so the response can be read from the beginning.
+
 Always show long user messages in full. Do not offer controls to collapse or expand them.
 
 When a provider explicitly reports that an account is unavailable until a reset time, preserve that state per provider instance, show the top error bar on every thread using that instance, and show a quiet countdown on affected sessions and in the model picker. Keep the state and UI provider-neutral; do not infer a reset from ambiguous rolling-window data.

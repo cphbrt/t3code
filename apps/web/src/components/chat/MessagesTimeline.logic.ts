@@ -29,6 +29,61 @@ export interface TimelineScrollTarget extends TimelineScrollGeometry {
   scrollTo(options: { top: number }): void;
 }
 
+export interface TimelineReadingAnchor {
+  readonly rowId: string;
+  /** The row's top edge relative to the viewport's top edge. */
+  readonly viewOffset: number;
+}
+
+export interface TimelineRenderedRowGeometry {
+  readonly rowId: string;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** Capture the first visible semantic row instead of a layout-dependent scrollTop. */
+export function resolveTimelineReadingAnchor(
+  rows: ReadonlyArray<TimelineRenderedRowGeometry>,
+  viewport: { readonly top: number; readonly bottom: number },
+): TimelineReadingAnchor | null {
+  if (![viewport.top, viewport.bottom].every(Number.isFinite)) {
+    return null;
+  }
+  for (const row of rows) {
+    if (![row.top, row.bottom].every(Number.isFinite)) {
+      continue;
+    }
+    if (row.bottom <= viewport.top || row.top >= viewport.bottom) {
+      continue;
+    }
+    return { rowId: row.rowId, viewOffset: row.top - viewport.top };
+  }
+  return null;
+}
+
+export function resolveTimelineReadingAnchorScrollTop(input: {
+  readonly scrollTop: number;
+  readonly viewportTop: number;
+  readonly rowTop: number;
+  readonly viewOffset: number;
+}): number | null {
+  if (!Object.values(input).every(Number.isFinite)) {
+    return null;
+  }
+  return input.scrollTop + input.rowTop - input.viewportTop - input.viewOffset;
+}
+
+export function resolveTimelineInitialScrollIndex(
+  rows: ReadonlyArray<{ readonly id: string }>,
+  anchor: TimelineReadingAnchor | null,
+): { readonly index: number; readonly viewOffset: number } | null {
+  if (!anchor || !Number.isFinite(anchor.viewOffset)) {
+    return null;
+  }
+  const index = rows.findIndex((row) => row.id === anchor.rowId);
+  return index === -1 ? null : { index, viewOffset: anchor.viewOffset };
+}
+
 export const TIMELINE_END_EPSILON_PX = 1;
 
 export function resolveTimelineIsAtEnd(
