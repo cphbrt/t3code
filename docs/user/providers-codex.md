@@ -42,6 +42,12 @@ app. Some tools also offer approval for the current session or permanent approva
 
 ## Usage-limit resets
 
+For ChatGPT-backed Codex accounts, CPH Code reads provider-reported allowances through Codex's
+app-server rate-limit RPC. The Usage page shows every reported window, including five-hour, weekly,
+and named limit buckets. The provider selector includes the same meters, and the composer shows a
+compact shortcut to the active account's limits. CPH Code uses each window's reported duration
+instead of assuming that the protocol's primary and secondary positions always mean the same thing.
+
 CPH Code is intended to give Codex the same explicit-reset handling as Claude: a shared countdown,
 an error on every affected thread, and **Send after usage resets** for idle existing threads. The
 provider-neutral state and UI are in place, but Codex normalization is not complete or validated

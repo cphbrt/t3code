@@ -105,13 +105,21 @@ const mergeProviderModels = (
 export const mergeProviderSnapshot = (
   previousProvider: ServerProvider | undefined,
   nextProvider: ServerProvider,
-): ServerProvider =>
-  !previousProvider
-    ? nextProvider
-    : {
-        ...nextProvider,
-        models: mergeProviderModels(previousProvider.models, nextProvider.models),
-      };
+): ServerProvider => {
+  if (!previousProvider) return nextProvider;
+  const sameAuthenticatedAccount =
+    previousProvider.auth.status === "authenticated" &&
+    nextProvider.auth.status === "authenticated" &&
+    previousProvider.auth.type === nextProvider.auth.type &&
+    previousProvider.auth.email === nextProvider.auth.email;
+  return {
+    ...nextProvider,
+    models: mergeProviderModels(previousProvider.models, nextProvider.models),
+    ...(!nextProvider.quota && previousProvider.quota && sameAuthenticatedAccount
+      ? { quota: previousProvider.quota }
+      : {}),
+  };
+};
 
 export const mergeProviderSnapshots = (
   previousProviders: ReadonlyArray<ServerProvider>,

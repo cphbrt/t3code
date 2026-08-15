@@ -87,6 +87,8 @@ Always show long user messages in full. Do not offer controls to collapse or exp
 
 When a provider explicitly reports that an account is unavailable until a reset time, preserve that state per provider instance, show the top error bar on every thread using that instance, and show a quiet countdown on affected sessions and in the model picker. Keep the state and UI provider-neutral; do not infer a reset from ambiguous rolling-window data.
 
+Keep proactive provider-reported plan quotas separate from that hard-exhaustion state. Prefer provider-owned integration surfaces—the Codex app-server rate-limit RPC and Claude Agent SDK usage control method—and show their five-hour, weekly, and model-scoped windows on the Usage page, in the provider selector, and near the composer. Missing or stale telemetry means unknown, never zero, and quota percentages alone must not schedule prompts or declare a provider unavailable. Treat high quota plus a large uncached context as a future combined send-risk signal rather than conflating either input on its own.
+
 Claude usage-reset handling has been developed and validated against real exhausted-account events. Give Codex the same quality of handling, but treat its adapter normalization as unfinished until an actual Codex exhausted-account payload has been captured and tested; rolling-window telemetry alone does not identify which reset applies.
 
 Offer that explicit provider reset as **Until usage resets** in the affected thread's Snooze menu. Route it through the thread's active provider instance, and omit it when no future reset is known rather than guessing.

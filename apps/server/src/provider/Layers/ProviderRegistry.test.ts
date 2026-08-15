@@ -601,6 +601,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it("keeps a last-known quota only while the authenticated account is unchanged", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated", type: "chatgpt", email: "person@example.test" },
+          checkedAt: "2026-08-15T12:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+          quota: {
+            observedAt: "2026-08-15T12:00:00.000Z",
+            windows: [{ id: "five-hour", label: "5-hour", usedPercent: 40 }],
+          },
+        } as const satisfies ServerProvider;
+        const { quota: _quota, ...refreshedProvider } = previousProvider;
+
+        assert.deepStrictEqual(
+          mergeProviderSnapshot(previousProvider, {
+            ...refreshedProvider,
+            checkedAt: "2026-08-15T12:05:00.000Z",
+          }).quota,
+          previousProvider.quota,
+        );
+        assert.strictEqual(
+          mergeProviderSnapshot(previousProvider, {
+            ...refreshedProvider,
+            checkedAt: "2026-08-15T12:05:00.000Z",
+            auth: { status: "authenticated", type: "apiKey" },
+          }).quota,
+          undefined,
+        );
+      });
+
       it("fills missing capabilities from the previous provider snapshot", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("claudeAgent"),

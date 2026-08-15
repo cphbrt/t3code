@@ -20,6 +20,8 @@ import type {
   ModelCapabilities,
   ProviderOptionDescriptor,
   ServerProviderModel,
+  ServerProviderQuota,
+  ServerProviderQuotaWindow,
   ServerProviderSkill,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
@@ -45,9 +47,130 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+}
+
+type CodexRateLimitSnapshot = CodexSchema.V2GetAccountRateLimitsResponse["rateLimits"];
+type CodexRateLimitWindow = NonNullable<CodexRateLimitSnapshot["primary"]>;
+
+function codexPlanLabel(planType: CodexRateLimitSnapshot["planType"]): string | undefined {
+  switch (planType) {
+    case "free":
+      return "ChatGPT Free";
+    case "go":
+      return "ChatGPT Go";
+    case "plus":
+      return "ChatGPT Plus";
+    case "pro":
+      return "ChatGPT Pro 20x";
+    case "prolite":
+      return "ChatGPT Pro 5x";
+    case "team":
+      return "ChatGPT Team";
+    case "self_serve_business_usage_based":
+    case "business":
+      return "ChatGPT Business";
+    case "enterprise_cbp_usage_based":
+    case "enterprise":
+      return "ChatGPT Enterprise";
+    case "edu":
+      return "ChatGPT Edu";
+    case "unknown":
+    case null:
+    case undefined:
+      return undefined;
+    default:
+      planType satisfies never;
+      return undefined;
+  }
+}
+
+function codexQuotaWindowLabel(durationMinutes: number | null | undefined): string {
+  if (durationMinutes === 300) return "5-hour";
+  if (durationMinutes === 10_080) return "Weekly";
+  if (durationMinutes && durationMinutes % 1_440 === 0) {
+    return `${durationMinutes / 1_440}-day`;
+  }
+  if (durationMinutes && durationMinutes % 60 === 0) {
+    return `${durationMinutes / 60}-hour`;
+  }
+  return durationMinutes ? `${durationMinutes}-minute` : "Allowance";
+}
+
+function normalizeCodexQuotaWindow(input: {
+  readonly id: string;
+  readonly scopeLabel?: string;
+  readonly window: CodexRateLimitWindow | null | undefined;
+}): ServerProviderQuotaWindow | undefined {
+  const { window } = input;
+  if (!window || !Number.isFinite(window.usedPercent)) return undefined;
+  const durationMinutes =
+    window.windowDurationMins && window.windowDurationMins > 0
+      ? window.windowDurationMins
+      : undefined;
+  const resetsAt =
+    window.resetsAt && Number.isFinite(window.resetsAt)
+      ? DateTime.formatIso(DateTime.makeUnsafe(window.resetsAt * 1_000))
+      : undefined;
+  return {
+    id: input.id,
+    label: codexQuotaWindowLabel(durationMinutes),
+    usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
+    ...(durationMinutes ? { durationMinutes } : {}),
+    ...(resetsAt ? { resetsAt } : {}),
+    ...(input.scopeLabel ? { scopeLabel: input.scopeLabel } : {}),
+  };
+}
+
+export function normalizeCodexProviderQuota(
+  response: CodexSchema.V2GetAccountRateLimitsResponse,
+  observedAt: string,
+): ServerProviderQuota | undefined {
+  const windowsById = new Map<string, ServerProviderQuotaWindow>();
+  const appendSnapshot = (snapshot: CodexRateLimitSnapshot, fallbackId: string) => {
+    const limitId = snapshot.limitId?.trim() || fallbackId;
+    const scopeLabel = snapshot.limitName?.trim() || undefined;
+    for (const [kind, window] of [
+      ["primary", snapshot.primary],
+      ["secondary", snapshot.secondary],
+    ] as const) {
+      const normalized = normalizeCodexQuotaWindow({
+        id: `${limitId}:${kind}`,
+        ...(scopeLabel ? { scopeLabel } : {}),
+        window,
+      });
+      if (normalized) windowsById.set(normalized.id, normalized);
+    }
+  };
+
+  appendSnapshot(response.rateLimits, "default");
+  for (const [limitId, snapshot] of Object.entries(response.rateLimitsByLimitId ?? {})) {
+    appendSnapshot(snapshot, limitId);
+  }
+
+  const credits = response.rateLimits.credits;
+  const balance = credits?.balance?.trim() || undefined;
+  const windows = [...windowsById.values()];
+  if (windows.length === 0 && !credits) return undefined;
+
+  const planLabel = codexPlanLabel(response.rateLimits.planType);
+  return {
+    observedAt,
+    ...(planLabel ? { planLabel } : {}),
+    windows,
+    ...(credits
+      ? {
+          credits: {
+            ...(balance ? { balance } : {}),
+            hasCredits: credits.hasCredits,
+            unlimited: credits.unlimited,
+          },
+        }
+      : {}),
+  };
 }
 
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
@@ -401,18 +524,22 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models] = yield* Effect.all(
+  const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      accountResponse.account?.type === "chatgpt"
+        ? client.request("account/rateLimits/read", undefined).pipe(Effect.option)
+        : Effect.succeed(Option.none()),
     ],
     { concurrency: "unbounded" },
   );
 
   return {
     account: accountResponse,
+    ...(Option.isSome(rateLimits) ? { rateLimits: rateLimits.value } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
       appendCustomCodexModels(models, input.customModels ?? []),
@@ -600,6 +727,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   const snapshot = probeResult.success.value;
   const accountStatus = accountProbeStatus(snapshot.account);
+  const quota = snapshot.rateLimits
+    ? normalizeCodexProviderQuota(snapshot.rateLimits, checkedAt)
+    : undefined;
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
@@ -614,6 +744,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         input: { hint: "Describe the issue (optional)" },
       },
     ],
+    ...(quota ? { quota } : {}),
     probe: {
       installed: true,
       version: snapshot.version ?? null,

@@ -36,6 +36,14 @@ the rest of your environment stay as they are.
 
 ## Usage-limit countdowns
 
+For signed-in Claude subscription accounts, CPH Code reads Claude's provider-reported plan usage
+through the Claude Agent SDK. The Usage page shows the five-hour and weekly windows your plan
+reports, along with any per-model weekly windows Claude reports for that account. The set of
+per-model windows comes from Claude and changes as your plan and the available models change.
+The provider selector includes the same meters, and the composer shows a compact shortcut
+to the active account's limits. This SDK surface is experimental, so an unavailable snapshot is
+shown as unknown rather than treated as an empty allowance.
+
 When Claude Code reports that an account has reached its usage limit and includes a reset time,
 CPH Code shows the usage-limit error bar on every thread using that Claude provider, the remaining
 time on those sessions, and the countdown beside the provider in the model picker. The shared state

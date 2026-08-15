@@ -4,7 +4,60 @@ import {
   applyPreferredCodexDefaultModel,
   isLegacyCodexModel,
   mapCodexModelCapabilities,
+  normalizeCodexProviderQuota,
 } from "./CodexProvider.ts";
+
+it("normalizes primary, weekly, and named Codex quota windows", () => {
+  const quota = normalizeCodexProviderQuota(
+    {
+      rateLimits: {
+        planType: "pro",
+        limitId: "codex",
+        primary: { usedPercent: 64, windowDurationMins: 300, resetsAt: 1_800_000_000 },
+        secondary: { usedPercent: 31, windowDurationMins: 10_080, resetsAt: 1_800_500_000 },
+        credits: { balance: "12", hasCredits: true, unlimited: false },
+      },
+      rateLimitsByLimitId: {
+        reviews: {
+          limitId: "reviews",
+          limitName: "Code reviews",
+          primary: { usedPercent: 82, windowDurationMins: 1_440, resetsAt: 1_800_100_000 },
+        },
+      },
+    },
+    "2026-08-15T12:00:00.000Z",
+  );
+
+  assert.deepStrictEqual(quota, {
+    observedAt: "2026-08-15T12:00:00.000Z",
+    planLabel: "ChatGPT Pro 20x",
+    windows: [
+      {
+        id: "codex:primary",
+        label: "5-hour",
+        usedPercent: 64,
+        durationMinutes: 300,
+        resetsAt: "2027-01-15T08:00:00.000Z",
+      },
+      {
+        id: "codex:secondary",
+        label: "Weekly",
+        usedPercent: 31,
+        durationMinutes: 10_080,
+        resetsAt: "2027-01-21T02:53:20.000Z",
+      },
+      {
+        id: "reviews:primary",
+        label: "1-day",
+        usedPercent: 82,
+        durationMinutes: 1_440,
+        resetsAt: "2027-01-16T11:46:40.000Z",
+        scopeLabel: "Code reviews",
+      },
+    ],
+    credits: { balance: "12", hasCredits: true, unlimited: false },
+  });
+});
 
 it("keeps current Codex models out of legacy models", () => {
   assert.deepStrictEqual(

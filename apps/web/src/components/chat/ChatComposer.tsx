@@ -133,6 +133,7 @@ import {
   submitComposerDraft,
 } from "./composerSubmission";
 import { ComposerPromptLengthValidation } from "./ComposerPromptLengthValidation";
+import { ProviderQuotaIndicator } from "../providerQuota/ProviderQuotaPresentation";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -247,7 +248,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
+import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -262,7 +263,10 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
-import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatProviderDisplayName,
+} from "../../lib/contextWindow";
 import {
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
@@ -436,6 +440,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
   activeThreadModelDisplayName: string | null;
+  activeThreadProviderDisplayName: string | null;
+  providerQuota: ServerProvider["quota"];
+  providerQuotaDisplayName: string;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -462,6 +469,11 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
+      <ProviderQuotaIndicator
+        quota={props.providerQuota}
+        displayName={props.providerQuotaDisplayName}
+        compact={props.compact}
+      />
       {props.activeContextWindow ? (
         <ContextWindowMeter
           usage={props.activeContextWindow}
@@ -1014,6 +1026,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     () => resolveContextWindowModelDisplayName(activeThreadModelSelection, modelOptionsByInstance),
     [activeThreadModelSelection, modelOptionsByInstance],
   );
+  const activeThreadProviderDisplayName = useMemo(() => {
+    if (!activeThreadModelSelection) return null;
+    const entry = providerStatuses.find(
+      (p) => p.instanceId === activeThreadModelSelection.instanceId,
+    );
+    if (entry) {
+      return getProviderDisplayName(providerStatuses, entry.driver);
+    }
+    return formatProviderDisplayName(activeThreadModelSelection.instanceId);
+  }, [providerStatuses, activeThreadModelSelection]);
 
   // ------------------------------------------------------------------
   // Composer-local state
@@ -3490,6 +3512,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
                     activeThreadModelDisplayName={activeThreadModelDisplayName}
+                    activeThreadProviderDisplayName={activeThreadProviderDisplayName}
+                    providerQuota={selectedProviderStatus?.quota}
+                    providerQuotaDisplayName={
+                      selectedProviderEntry?.displayName ??
+                      activeThreadProviderDisplayName ??
+                      "Provider"
+                    }
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={

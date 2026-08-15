@@ -10,10 +10,132 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   isLegacyClaudeModel,
+  normalizeClaudeProviderQuota,
   probeClaudeCapabilities,
 } from "./ClaudeProvider.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+
+it("normalizes Claude plan, account, per-model, and extra-usage limits", () => {
+  // Current subscription accounts report the fixed per-model fields as null and
+  // carry per-model weekly allowances in the additive `model_scoped` list.
+  const quota = normalizeClaudeProviderQuota(
+    {
+      subscription_type: "max_20x",
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 72.4, resets_at: "2026-08-15T16:00:00.000Z" },
+        seven_day: { utilization: 10, resets_at: "2026-08-20T12:00:00.000Z" },
+        seven_day_oauth_apps: {
+          utilization: 41,
+          resets_at: "2026-08-20T12:00:00.000Z",
+        },
+        seven_day_opus: null,
+        seven_day_sonnet: null,
+        model_scoped: [
+          { display_name: "Fable", utilization: 61, resets_at: "2026-08-20T12:00:00.000Z" },
+          { display_name: "Example", utilization: 0, resets_at: null },
+        ],
+        extra_usage: {
+          is_enabled: true,
+          monthly_limit: 100,
+          used_credits: 23,
+          utilization: 23,
+          currency: "USD",
+        },
+      },
+    },
+    "2026-08-15T12:00:00.000Z",
+  );
+
+  assert.deepStrictEqual(quota, {
+    observedAt: "2026-08-15T12:00:00.000Z",
+    planLabel: "Claude Max 20x",
+    windows: [
+      {
+        id: "five_hour",
+        label: "5-hour",
+        usedPercent: 72.4,
+        durationMinutes: 300,
+        resetsAt: "2026-08-15T16:00:00.000Z",
+      },
+      {
+        id: "seven_day",
+        label: "Weekly",
+        usedPercent: 41,
+        durationMinutes: 10_080,
+        resetsAt: "2026-08-20T12:00:00.000Z",
+      },
+      {
+        id: "model_scoped:Fable",
+        label: "Weekly",
+        usedPercent: 61,
+        durationMinutes: 10_080,
+        resetsAt: "2026-08-20T12:00:00.000Z",
+        scopeLabel: "Fable",
+      },
+      {
+        id: "model_scoped:Example",
+        label: "Weekly",
+        usedPercent: 0,
+        durationMinutes: 10_080,
+        scopeLabel: "Example",
+      },
+    ],
+    extraUsage: {
+      enabled: true,
+      usedPercent: 23,
+      monthlyLimit: 100,
+      usedCredits: 23,
+      currency: "USD",
+    },
+  });
+});
+
+it("falls back to the fixed per-model limits when model_scoped is absent", () => {
+  const quota = normalizeClaudeProviderQuota(
+    {
+      subscription_type: "max",
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 12, resets_at: "2026-08-15T16:00:00.000Z" },
+        seven_day_opus: { utilization: 88, resets_at: "2026-08-20T12:00:00.000Z" },
+        seven_day_sonnet: { utilization: 34, resets_at: "2026-08-20T12:00:00.000Z" },
+      },
+    },
+    "2026-08-15T12:00:00.000Z",
+  );
+
+  assert.deepStrictEqual(quota, {
+    observedAt: "2026-08-15T12:00:00.000Z",
+    planLabel: "Claude Max",
+    windows: [
+      {
+        id: "five_hour",
+        label: "5-hour",
+        usedPercent: 12,
+        durationMinutes: 300,
+        resetsAt: "2026-08-15T16:00:00.000Z",
+      },
+      {
+        id: "seven_day_opus",
+        label: "Weekly",
+        usedPercent: 88,
+        durationMinutes: 10_080,
+        resetsAt: "2026-08-20T12:00:00.000Z",
+        scopeLabel: "Opus",
+      },
+      {
+        id: "seven_day_sonnet",
+        label: "Weekly",
+        usedPercent: 34,
+        durationMinutes: 10_080,
+        resetsAt: "2026-08-20T12:00:00.000Z",
+        scopeLabel: "Sonnet",
+      },
+    ],
+  });
+});
 
 it("keeps only the Claude 5 family out of legacy models", () => {
   assert.deepStrictEqual(
@@ -89,6 +211,17 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "const lines = createInterface({ input: process.stdin });",
           'lines.on("line", (line) => {',
           "  const message = JSON.parse(line);",
+          '  if (message.type === "control_request" && message.request?.subtype === "get_usage") {',
+          "    process.stdout.write(JSON.stringify({",
+          '      type: "control_response",',
+          "      response: {",
+          '        subtype: "success",',
+          "        request_id: message.request_id,",
+          '        response: { session: { total_cost_usd: 0, total_api_duration_ms: 0, total_duration_ms: 0, total_lines_added: 0, total_lines_removed: 0, model_usage: {} }, subscription_type: "pro", rate_limits_available: false, rate_limits: null, behaviors: null },',
+          "      },",
+          '    }) + "\\n");',
+          "    return;",
+          "  }",
           '  if (message.type !== "control_request" || message.request?.subtype !== "initialize") return;',
           "  process.stdout.write(JSON.stringify({",
           '    type: "control_response",',
@@ -134,6 +267,20 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             input: { hint: "[path]" },
           },
         ],
+        usage: {
+          session: {
+            total_cost_usd: 0,
+            total_api_duration_ms: 0,
+            total_duration_ms: 0,
+            total_lines_added: 0,
+            total_lines_removed: 0,
+            model_usage: {},
+          },
+          subscription_type: "pro",
+          rate_limits_available: false,
+          rate_limits: null,
+          behaviors: null,
+        },
       });
 
       // @effect-diagnostics-next-line preferSchemaOverJson:off
