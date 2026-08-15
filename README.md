@@ -41,6 +41,10 @@ This path is validated against real Claude usage-limit events. Equivalent Codex 
 
 That explicit reset also appears as **Until usage resets** in the affected thread's Snooze menu, so the thread can return with the provider account instead of relying on a guessed duration.
 
+An idle existing thread can also hold one prompt until that provider reset. CPH Code keeps the prompt out of the transcript until it is actually released, waits a one-minute grace period, survives server restarts, follows a newer explicit reset, and offers **Cancel** and **Send now** while it waits.
+
+When that option is available, the composer presents **Send after reset** as a direct warm yellow/orange alternate send button beside the normal send action, rather than hiding it inside a popover.
+
 When Chris requests a change, the default finish line is shipped: commit, push, build the macOS desktop release, and install it to `/Applications`—without quitting or restarting the running app, which Chris relaunches on his own schedule. The install step is skipped whenever he indicates he wants something less final, such as trying the change in dev or just seeing a test pass.
 
 CPH Code carries those deviations as a deliberately curated patch series on top of `upstream/main`. Its commits describe product decisions rather than the chronology of implementation: related fixes are folded into the change they complete, while independent choices stay independently reviewable. This keeps upstream rebases tractable and makes useful changes legible enough to evaluate—or adopt—one commit at a time.

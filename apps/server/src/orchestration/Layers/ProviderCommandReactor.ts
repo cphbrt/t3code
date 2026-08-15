@@ -10,13 +10,16 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type ScheduledThreadTurn,
   type TurnId,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
@@ -1376,6 +1379,71 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
+  const schedulePendingTurn = Effect.fn("schedulePendingTurn")(function* (
+    threadId: ThreadId,
+    scheduledTurn: ScheduledThreadTurn,
+  ) {
+    const nowMs = yield* Clock.currentTimeMillis;
+    const delayMs = Math.max(0, Date.parse(scheduledTurn.scheduledFor) - nowMs);
+    if (delayMs > 0) {
+      yield* Effect.sleep(Duration.millis(delayMs));
+    }
+
+    const thread = yield* resolveThread(threadId);
+    if (
+      thread?.scheduledTurn?.scheduleId !== scheduledTurn.scheduleId ||
+      thread.scheduledTurn.scheduledFor !== scheduledTurn.scheduledFor
+    ) {
+      return;
+    }
+
+    const providers = yield* providerRegistry.getProviders;
+    const currentLimit = providers.find(
+      (provider) => provider.instanceId === scheduledTurn.providerInstanceId,
+    )?.usageLimit;
+    const releaseAt = DateTime.formatIso(yield* DateTime.now);
+    if (
+      currentLimit !== undefined &&
+      Date.parse(currentLimit.resetsAt) > Date.parse(scheduledTurn.reportedResetAt) &&
+      Date.parse(currentLimit.resetsAt) > Date.parse(releaseAt)
+    ) {
+      const scheduledFor = DateTime.formatIso(
+        DateTime.add(DateTime.makeUnsafe(currentLimit.resetsAt), { minutes: 1 }),
+      );
+      yield* orchestrationEngine.dispatch({
+        type: "thread.turn.reschedule",
+        commandId: yield* serverCommandId("usage-reset-turn-reschedule"),
+        threadId,
+        scheduleId: scheduledTurn.scheduleId,
+        reportedResetAt: currentLimit.resetsAt,
+        scheduledFor,
+        createdAt: releaseAt,
+      });
+      return;
+    }
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.release-scheduled",
+      commandId: yield* serverCommandId("usage-reset-turn-release"),
+      threadId,
+      scheduleId: scheduledTurn.scheduleId,
+      createdAt: releaseAt,
+    });
+  });
+
+  const launchScheduledTurn = (threadId: ThreadId, scheduledTurn: ScheduledThreadTurn) =>
+    schedulePendingTurn(threadId, scheduledTurn).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("scheduled usage-reset prompt failed", {
+          threadId,
+          scheduleId: scheduledTurn.scheduleId,
+          cause: Cause.pretty(cause),
+        }),
+      ),
+      Effect.forkScoped,
+      Effect.asVoid,
+    );
+
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const interruptedTitleRegenerations = yield* findInterruptedThreadTitleRegenerations().pipe(
       Effect.catchCause((cause) => {
@@ -1389,6 +1457,10 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      if (event.type === "thread.turn-scheduled") {
+        yield* launchScheduledTurn(event.payload.threadId, event.payload.scheduledTurn);
+        return;
+      }
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
@@ -1403,6 +1475,21 @@ const make = Effect.gen(function* () {
     });
 
     yield* forkParked(Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent));
+
+    const snapshot = yield* projectionSnapshotQuery.getSnapshot().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to restore scheduled prompts", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (snapshot === null) return;
+    yield* Effect.forEach(
+      snapshot.threads,
+      (thread) =>
+        thread.scheduledTurn ? launchScheduledTurn(thread.id, thread.scheduledTurn) : Effect.void,
+      { discard: true },
+    );
 
     // The domain event stream is hot, so work pending before this reactor
     // starts cannot be resumed. Correlated completions only clear the request

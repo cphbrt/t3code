@@ -929,6 +929,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (targetThread.scheduledTurn != null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} already has a prompt waiting to send`,
+        });
+      }
       const sourceProposedPlan = command.sourceProposedPlan;
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
@@ -1034,6 +1040,219 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
       return [...lifecycleResetEvents, userMessageEvent, turnStartRequestedEvent];
+    }
+
+    case "thread.turn.schedule": {
+      const thread = yield* requireThreadNotArchived({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (thread.scheduledTurn != null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} already has a prompt waiting to send`,
+        });
+      }
+      if (thread.session?.status === "starting" || thread.session?.status === "running") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has an active session and cannot schedule a prompt`,
+        });
+      }
+      if (hasOpenBlockingRequest(thread) || threadHasQueuedTurnStart(thread, command.createdAt)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} has pending work and cannot schedule a prompt`,
+        });
+      }
+      if (
+        command.modelSelection.instanceId !== command.providerInstanceId ||
+        !(Date.parse(command.scheduledFor) > Date.parse(command.createdAt)) ||
+        !(Date.parse(command.scheduledFor) > Date.parse(command.reportedResetAt))
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} received an invalid usage-reset schedule`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-scheduled",
+        payload: {
+          threadId: command.threadId,
+          scheduledTurn: {
+            scheduleId: command.commandId,
+            message: command.message,
+            modelSelection: command.modelSelection,
+            ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
+            runtimeMode: command.runtimeMode,
+            interactionMode: command.interactionMode,
+            providerInstanceId: command.providerInstanceId,
+            reportedResetAt: command.reportedResetAt,
+            scheduledFor: command.scheduledFor,
+            createdAt: command.createdAt,
+          },
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.cancel-scheduled": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.scheduledTurn?.scheduleId !== command.scheduleId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `scheduled prompt ${command.scheduleId} is no longer pending`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-schedule-cleared",
+        payload: {
+          threadId: command.threadId,
+          scheduleId: command.scheduleId,
+          reason: "cancelled",
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.reschedule": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const scheduledTurn = thread.scheduledTurn;
+      if (scheduledTurn?.scheduleId !== command.scheduleId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `scheduled prompt ${command.scheduleId} is no longer pending`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-scheduled",
+        payload: {
+          threadId: command.threadId,
+          scheduledTurn: {
+            ...scheduledTurn,
+            reportedResetAt: command.reportedResetAt,
+            scheduledFor: command.scheduledFor,
+          },
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.turn.release-scheduled": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const scheduledTurn = thread.scheduledTurn;
+      if (scheduledTurn?.scheduleId !== command.scheduleId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `scheduled prompt ${command.scheduleId} is no longer pending`,
+        });
+      }
+      if (
+        command.force !== true &&
+        Date.parse(scheduledTurn.scheduledFor) > Date.parse(command.createdAt)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `scheduled prompt ${command.scheduleId} is not due yet`,
+        });
+      }
+      const clearedEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.turn-schedule-cleared",
+        payload: {
+          threadId: command.threadId,
+          scheduleId: command.scheduleId,
+          reason: "released",
+          updatedAt: command.createdAt,
+        },
+      };
+      const messageEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        causationEventId: clearedEvent.eventId,
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          ...scheduledTurn.message,
+          turnId: null,
+          streaming: false,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+      const startEvent: Omit<OrchestrationEvent, "sequence"> = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        causationEventId: messageEvent.eventId,
+        type: "thread.turn-start-requested",
+        payload: {
+          threadId: command.threadId,
+          messageId: scheduledTurn.message.messageId,
+          modelSelection: scheduledTurn.modelSelection,
+          ...(scheduledTurn.titleSeed !== undefined ? { titleSeed: scheduledTurn.titleSeed } : {}),
+          runtimeMode: scheduledTurn.runtimeMode,
+          interactionMode: scheduledTurn.interactionMode,
+          createdAt: command.createdAt,
+        },
+      };
+      const lifecycleEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      if (thread.settledOverride !== null) {
+        lifecycleEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsettled",
+          payload: { threadId: command.threadId, reason: "activity", updatedAt: command.createdAt },
+        });
+      }
+      if (thread.snoozedUntil != null) {
+        lifecycleEvents.push({
+          ...(yield* withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          })),
+          type: "thread.unsnoozed",
+          payload: { threadId: command.threadId, reason: "activity", updatedAt: command.createdAt },
+        });
+      }
+      return [...lifecycleEvents, clearedEvent, messageEvent, startEvent];
     }
 
     case "thread.turn.interrupt": {

@@ -1,5 +1,5 @@
 import { memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { AlarmClockIcon, ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
@@ -34,6 +34,8 @@ interface ComposerPrimaryActionsProps {
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
+  usageResetScheduleLabel?: string | null;
+  onScheduleAfterUsageReset?: () => void;
 }
 
 export const formatPendingPrimaryActionLabel = (input: {
@@ -75,6 +77,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onPreviousPendingQuestion,
   onInterrupt,
   onImplementPlanInNewThread,
+  usageResetScheduleLabel = null,
+  onScheduleAfterUsageReset = () => {},
 }: ComposerPrimaryActionsProps) {
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
@@ -271,7 +275,42 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   );
 
   if (!isRunning) {
-    return sendButton;
+    // An idle thread can also offer to hold the prompt until the provider resets.
+    if (usageResetScheduleLabel === null) {
+      return sendButton;
+    }
+
+    return (
+      <div className="flex items-center">
+        {sendButton}
+        <button
+          type="button"
+          className="ml-2 flex h-9 items-center gap-1.5 rounded-full bg-amber-500 px-3 text-xs font-semibold text-amber-950 shadow-xs shadow-amber-500/24 transition-all duration-150 enabled:cursor-pointer enabled:inset-shadow-[0_1px_--theme(--color-white/24%)] enabled:hover:scale-105 enabled:hover:bg-amber-400 active:inset-shadow-[0_1px_--theme(--color-black/8%)] active:shadow-none disabled:pointer-events-none disabled:opacity-30 disabled:shadow-none disabled:hover:scale-100 sm:h-8"
+          aria-label={usageResetScheduleLabel}
+          {...pointerFocusProps}
+          disabled={
+            isSendBusy ||
+            isSendDisabled ||
+            isConnecting ||
+            isEnvironmentUnavailable ||
+            !hasSendableContent
+          }
+          onClick={() => void onScheduleAfterUsageReset()}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path
+              d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <AlarmClockIcon className="size-3.5" aria-hidden="true" />
+          <span>Send after reset</span>
+        </button>
+      </div>
+    );
   }
 
   return (

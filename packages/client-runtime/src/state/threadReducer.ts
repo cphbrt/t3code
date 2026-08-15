@@ -94,6 +94,7 @@ export function applyThreadDetailEvent(
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          scheduledTurn: null,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -238,6 +239,26 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           interactionMode: event.payload.interactionMode,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.turn-scheduled":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          scheduledTurn: event.payload.scheduledTurn,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.turn-schedule-cleared":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          scheduledTurn: null,
           updatedAt: event.payload.updatedAt,
         },
       };

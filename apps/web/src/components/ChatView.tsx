@@ -1248,6 +1248,15 @@ function ChatViewContent(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const scheduleThreadTurn = useAtomCommand(threadEnvironment.scheduleTurn, {
+    reportFailure: false,
+  });
+  const cancelScheduledThreadTurn = useAtomCommand(threadEnvironment.cancelScheduledTurn, {
+    reportFailure: false,
+  });
+  const releaseScheduledThreadTurn = useAtomCommand(threadEnvironment.releaseScheduledTurn, {
+    reportFailure: false,
+  });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -2404,6 +2413,7 @@ function ChatViewContent(props: ChatViewProps) {
     });
   }, []);
   const serverMessages = activeThread?.messages;
+  const scheduledAttachments = activeThread?.scheduledTurn?.message.attachments;
   const serverAttachmentIds = useMemo(() => {
     const attachmentIds = new Set<string>();
     for (const message of serverMessages ?? []) {
@@ -2411,8 +2421,11 @@ function ChatViewContent(props: ChatViewProps) {
         attachmentIds.add(attachment.id);
       }
     }
+    for (const attachment of scheduledAttachments ?? []) {
+      attachmentIds.add(attachment.id);
+    }
     return [...attachmentIds];
-  }, [serverMessages]);
+  }, [scheduledAttachments, serverMessages]);
   const serverAttachmentResources = useMemo(
     () =>
       serverAttachmentIds.map((attachmentId) => ({
@@ -2776,6 +2789,26 @@ function ChatViewContent(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
+  const usageResetSchedule = useMemo(() => {
+    if (
+      routeKind !== "server" ||
+      activeThread?.scheduledTurn != null ||
+      activeThread?.messages.length === 0 ||
+      serverConfig?.environment.capabilities.threadTurnScheduling !== true
+    ) {
+      return null;
+    }
+    const resetsAt = activeProviderStatus?.usageLimit?.resetsAt;
+    if (!resetsAt) return null;
+    const resetMs = Date.parse(resetsAt);
+    if (!Number.isFinite(resetMs) || resetMs <= Date.now()) return null;
+    const scheduledFor = new Date(resetMs + 60_000).toISOString();
+    return {
+      resetsAt,
+      scheduledFor,
+      label: `Send after usage resets · ${new Date(scheduledFor).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`,
+    };
+  }, [activeProviderStatus?.usageLimit?.resetsAt, activeThread, routeKind, serverConfig]);
   const hasTimelineTopBanner = Boolean(visibleTopError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
@@ -5021,6 +5054,7 @@ function ChatViewContent(props: ChatViewProps) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    scheduleAfterUsageReset = false,
   ) => {
     e?.preventDefault();
     const notifyDirectAnnotationAttached = () => {
@@ -5041,6 +5075,12 @@ function ChatViewContent(props: ChatViewProps) {
       sendInFlightRef.current
     ) {
       notifyDirectAnnotationAttached();
+      return;
+    }
+    if (
+      scheduleAfterUsageReset &&
+      (activeThread.scheduledTurn != null || usageResetSchedule === null)
+    ) {
       return;
     }
     if (activeEnvironmentUnavailable) {
@@ -5078,6 +5118,22 @@ function ChatViewContent(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    const selectedProviderUsageLimit = providerStatuses.find(
+      (provider) => provider.instanceId === ctxSelectedModelSelection.instanceId,
+    )?.usageLimit;
+    if (
+      scheduleAfterUsageReset &&
+      (selectedProviderUsageLimit === undefined ||
+        usageResetSchedule === null ||
+        selectedProviderUsageLimit.resetsAt !== usageResetSchedule.resetsAt)
+    ) {
+      toastManager.add({
+        type: "warning",
+        title: "Usage reset changed",
+        description: "Reopen the send menu to use the provider's current reset time.",
+      });
+      return;
+    }
     const composerImages =
       directAnnotation?.image &&
       !sendContextImages.some((image) => image.id === directAnnotation.image?.id)
@@ -5226,7 +5282,7 @@ function ChatViewContent(props: ChatViewProps) {
     }
 
     sendInFlightRef.current = true;
-    if (activeThreadKey !== null) {
+    if (!scheduleAfterUsageReset && activeThreadKey !== null) {
       enableReadingFocusForThread(activeThreadKey);
     }
     if (isDraftHeroState && activeThreadKey) {
@@ -5244,7 +5300,9 @@ function ChatViewContent(props: ChatViewProps) {
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
     }
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    if (!scheduleAfterUsageReset) {
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    }
 
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -5267,20 +5325,22 @@ function ChatViewContent(props: ChatViewProps) {
     }));
     // The submitted prompt enters at the current live edge. New activity grows
     // below it and ordinary end-follow keeps the newest content visible.
-    void scrollToEnd(false);
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        turnId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
+    if (!scheduleAfterUsageReset) {
+      void scrollToEnd(false);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+    }
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -5393,30 +5453,61 @@ function ChatViewContent(props: ChatViewProps) {
                 : {}),
             }
           : undefined;
-      beginLocalDispatch({ preparingWorktree: false });
-      const startResult = await startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            attachments: turnAttachmentsResult.value,
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: title,
-          runtimeMode,
-          interactionMode,
-          ...(bootstrap ? { bootstrap } : {}),
-          createdAt: messageCreatedAt,
-        },
-      });
+      if (!scheduleAfterUsageReset) {
+        beginLocalDispatch({ preparingWorktree: false });
+      }
+      const startResult = scheduleAfterUsageReset
+        ? await scheduleThreadTurn({
+            environmentId,
+            input: {
+              threadId: threadIdForSend,
+              message: {
+                messageId: messageIdForSend,
+                role: "user",
+                text: outgoingMessageText,
+                attachments: turnAttachmentsResult.value,
+              },
+              modelSelection: ctxSelectedModelSelection,
+              titleSeed: title,
+              runtimeMode,
+              interactionMode,
+              providerInstanceId: ctxSelectedModelSelection.instanceId,
+              reportedResetAt: usageResetSchedule!.resetsAt,
+              scheduledFor: usageResetSchedule!.scheduledFor,
+              createdAt: messageCreatedAt,
+            },
+          })
+        : await startThreadTurn({
+            environmentId,
+            input: {
+              threadId: threadIdForSend,
+              message: {
+                messageId: messageIdForSend,
+                role: "user",
+                text: outgoingMessageText,
+                attachments: turnAttachmentsResult.value,
+              },
+              modelSelection: ctxSelectedModelSelection,
+              titleSeed: title,
+              runtimeMode,
+              interactionMode,
+              ...(bootstrap ? { bootstrap } : {}),
+              createdAt: messageCreatedAt,
+            },
+          });
       if (startResult._tag === "Failure") {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
-        acknowledgeActiveThreadWoke();
+        if (scheduleAfterUsageReset) {
+          toastManager.add({
+            type: "success",
+            title: "Prompt waiting to send",
+            description: `It will send at ${new Date(usageResetSchedule!.scheduledFor).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,
+          });
+        } else {
+          acknowledgeActiveThreadWoke();
+        }
       }
     }
 
@@ -5465,6 +5556,10 @@ function ChatViewContent(props: ChatViewProps) {
       }
     }
     sendInFlightRef.current = false;
+    if (scheduleAfterUsageReset) {
+      resetLocalDispatch();
+      return;
+    }
     if (!turnStartSucceeded) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
@@ -5485,6 +5580,98 @@ function ChatViewContent(props: ChatViewProps) {
       setThreadError(
         activeThread.id,
         error instanceof Error ? error.message : "Failed to interrupt the current turn.",
+      );
+    }
+  };
+
+  const onCancelScheduledTurn = async () => {
+    const scheduledTurn = activeThread?.scheduledTurn;
+    if (!activeThread || !scheduledTurn) return;
+    const restoredImages: ComposerImageAttachment[] = [];
+    try {
+      for (const attachment of scheduledTurn.message.attachments) {
+        const assetUrl = serverAttachmentUrlById.get(attachment.id);
+        if (!assetUrl) {
+          throw new Error(`The scheduled attachment ${attachment.name} is not available yet.`);
+        }
+        const response = await fetch(assetUrl);
+        if (!response.ok) {
+          throw new Error(`Could not restore the scheduled attachment ${attachment.name}.`);
+        }
+        const blob = await response.blob();
+        const file = new File([blob], attachment.name, { type: attachment.mimeType });
+        restoredImages.push({
+          ...attachment,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        });
+      }
+    } catch (error) {
+      for (const image of restoredImages) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to restore the scheduled prompt.",
+      );
+      return;
+    }
+    const result = await cancelScheduledThreadTurn({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        scheduleId: scheduledTurn.scheduleId,
+      },
+    });
+    if (result._tag === "Failure") {
+      for (const image of restoredImages) {
+        revokeBlobPreviewUrl(image.previewUrl);
+      }
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : "Failed to cancel the scheduled prompt.",
+        );
+      }
+      return;
+    }
+
+    clearComposerDraftContent(composerDraftTarget);
+    promptRef.current = scheduledTurn.message.text;
+    composerImagesRef.current = restoredImages;
+    setComposerDraftPrompt(composerDraftTarget, scheduledTurn.message.text);
+    addComposerDraftImages(composerDraftTarget, restoredImages);
+    setComposerDraftModelSelection(composerDraftTarget, scheduledTurn.modelSelection);
+    setComposerDraftRuntimeMode(composerDraftTarget, scheduledTurn.runtimeMode);
+    setComposerDraftInteractionMode(composerDraftTarget, scheduledTurn.interactionMode);
+    composerRef.current?.resetCursorState({
+      cursor: collapseExpandedComposerCursor(
+        scheduledTurn.message.text,
+        scheduledTurn.message.text.length,
+      ),
+      prompt: scheduledTurn.message.text,
+      detectTrigger: true,
+    });
+    showComposerAndFocus();
+  };
+
+  const onReleaseScheduledTurn = async () => {
+    const scheduledTurn = activeThread?.scheduledTurn;
+    if (!activeThread || !scheduledTurn) return;
+    const result = await releaseScheduledThreadTurn({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        scheduleId: scheduledTurn.scheduleId,
+        force: true,
+      },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      setThreadError(
+        activeThread.id,
+        error instanceof Error ? error.message : "Failed to send the scheduled prompt.",
       );
     }
   };
@@ -6522,6 +6709,40 @@ function ChatViewContent(props: ChatViewProps) {
                   {threadSyncPhase && !activeEnvironmentUnavailable ? (
                     <ThreadSyncStatusPill phase={threadSyncPhase} />
                   ) : null}
+                  {activeThread.scheduledTurn ? (
+                    <div
+                      data-testid="scheduled-turn-panel"
+                      className="relative z-20 mx-auto mb-2 flex w-full max-w-3xl items-start gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3 shadow-sm backdrop-blur"
+                    >
+                      <AlarmClockIcon className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-medium text-foreground">
+                          Waiting to send at{" "}
+                          {new Date(activeThread.scheduledTurn.scheduledFor).toLocaleTimeString(
+                            [],
+                            {
+                              hour: "numeric",
+                              minute: "2-digit",
+                            },
+                          )}
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-secondary-label">
+                          {activeThread.scheduledTurn.message.text}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void onCancelScheduledTurn()}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="button" size="sm" onClick={() => void onReleaseScheduledTurn()}>
+                        Send now
+                      </Button>
+                    </div>
+                  ) : null}
                   <div
                     className="relative"
                     style={
@@ -6556,7 +6777,13 @@ function ChatViewContent(props: ChatViewProps) {
                             phase={phase}
                             isConnecting={isConnecting}
                             isSendBusy={isSendBusy}
-                            sendDisabledReason={threadDetailLoading ? "Messages loading" : null}
+                            sendDisabledReason={
+                              threadDetailLoading
+                                ? "Messages loading"
+                                : activeThread.scheduledTurn
+                                  ? "Cancel or send the waiting prompt first"
+                                  : null
+                            }
                             isPreparingWorktree={isPreparingWorktree}
                             externalDrawerAttached={externalComposerDrawerAttached}
                             environmentUnavailable={activeEnvironmentUnavailableState}
@@ -6594,6 +6821,10 @@ function ChatViewContent(props: ChatViewProps) {
                             onSend={onSend}
                             onInterrupt={onInterrupt}
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
+                            usageResetScheduleLabel={usageResetSchedule?.label ?? null}
+                            onScheduleAfterUsageReset={() =>
+                              void onSend(undefined, undefined, true)
+                            }
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={
                               onSelectActivePendingUserInputOption

@@ -46,6 +46,9 @@ export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
+export type ScheduleThreadTurnInput = CommandInput<"thread.turn.schedule">;
+export type CancelScheduledThreadTurnInput = CommandInput<"thread.turn.cancel-scheduled">;
+export type ReleaseScheduledThreadTurnInput = CommandInput<"thread.turn.release-scheduled">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
 export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond">;
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
@@ -274,6 +277,40 @@ export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = E
     createdAt: metadata.createdAt,
   });
 });
+
+export const scheduleThreadTurn: (input: ScheduleThreadTurnInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.scheduleThreadTurn",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.turn.schedule",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const cancelScheduledThreadTurn: (input: CancelScheduledThreadTurnInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.cancelScheduledThreadTurn")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.turn.cancel-scheduled",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
+
+export const releaseScheduledThreadTurn: (input: ReleaseScheduledThreadTurnInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.releaseScheduledThreadTurn")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.turn.release-scheduled",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
 
 export const interruptThreadTurn: (input: InterruptThreadTurnInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.interruptThreadTurn",
