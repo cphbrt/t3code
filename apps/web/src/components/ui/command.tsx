@@ -4,6 +4,7 @@ import { Dialog as CommandDialogPrimitive } from "@base-ui/react/dialog";
 import { SearchIcon } from "lucide-react";
 import type * as React from "react";
 import { cn } from "~/lib/utils";
+import { markInAppShortcut } from "~/lib/inAppActionSignals";
 import {
   Autocomplete,
   AutocompleteCollection,
@@ -122,6 +123,10 @@ function CommandInput({
           if (event.defaultPrevented) return;
           const navigationKey = commandListNavigationKey(event);
           if (navigationKey === null) return;
+          markInAppShortcut(event.nativeEvent, {
+            action: navigationKey === "ArrowDown" ? "list.next" : "list.previous",
+            shortcut: navigationKey === "ArrowDown" ? "⌃N" : "⌃P",
+          });
           event.preventDefault();
           event.stopPropagation();
           event.currentTarget.dispatchEvent(

@@ -31,6 +31,7 @@ import {
   threadTraversalDirectionFromCommand,
   type ShortcutEventLike,
 } from "./keybindings";
+import { inAppShortcutForEvent } from "./lib/inAppActionSignals";
 
 function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
   return {
@@ -677,6 +678,19 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("marks a matched in-app shortcut with its semantic command and display chord", () => {
+    const shortcutEvent = event({ key: "j", metaKey: true });
+
+    assert.strictEqual(
+      resolveShortcutCommand(shortcutEvent, DEFAULT_BINDINGS, { platform: "MacIntel" }),
+      "terminal.toggle",
+    );
+    assert.deepEqual(inAppShortcutForEvent(shortcutEvent), {
+      action: "terminal.toggle",
+      shortcut: "⌘J",
+    });
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 

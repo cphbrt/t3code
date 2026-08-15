@@ -64,6 +64,11 @@ In the command palette and other command-style searchable lists, `Control-N` sel
 and `Control-P` selects the previous item. These are fixed list-navigation keys, equivalent to the
 down and up arrow keys; they do not replace configurable application commands.
 
+CPH Code also keeps a local, timestamped history of semantic actions performed inside its own UI.
+Handled application shortcuts and mouse activations are distinguished in that history. Unhandled
+keystrokes, operating-system shortcuts, pointer movement, coordinates, and text typed into inputs
+are not recorded.
+
 The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
 always matches the build you are running. Use that rather than a copied list.
 
