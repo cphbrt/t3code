@@ -7,6 +7,10 @@ import type { DailyTotals, HourlyTotals } from "@t3tools/shared/usageMerge";
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useServerConfigs } from "../../state/entities";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -33,6 +37,7 @@ import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
+import { ProviderQuotaDetails } from "../providerQuota/ProviderQuotaPresentation";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -51,6 +56,29 @@ export function UsagePage() {
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const { merged, environments, isPending, isPartial, refresh } = useUsage(window);
+  const serverConfigs = useServerConfigs();
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const quotaProviders = useMemo(() => {
+    const environmentLabelById = new Map(
+      environments.map((environment) => [environment.environmentId, environment.label] as const),
+    );
+    return [...serverConfigs].flatMap(([environmentId, config]) =>
+      deriveProviderInstanceEntries(config.providers).flatMap((entry) =>
+        entry.snapshot.quota
+          ? [
+              {
+                key: `${environmentId}:${entry.instanceId}`,
+                displayName: entry.displayName,
+                environmentLabel: environmentLabelById.get(environmentId) ?? String(environmentId),
+                quota: entry.snapshot.quota,
+              },
+            ]
+          : [],
+      ),
+    );
+  }, [environments, serverConfigs]);
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -85,6 +113,9 @@ export function UsagePage() {
     });
   };
   const refreshWindow = () => {
+    for (const environment of environments) {
+      void refreshProviders({ environmentId: environment.environmentId, input: {} });
+    }
     const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay === window.sinceDay &&
@@ -200,6 +231,37 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
+            {quotaProviders.length > 0 ? (
+              <section className="grid gap-4" aria-labelledby="plan-limits-heading">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h1 id="plan-limits-heading" className="text-lg font-semibold text-foreground">
+                      Plan limits
+                    </h1>
+                    <p className="text-xs text-muted-foreground">
+                      Provider-reported subscription allowances. These are separate from transcript
+                      token totals.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {quotaProviders.map((provider) => (
+                    <div
+                      key={provider.key}
+                      className="rounded-xl border border-border bg-card/40 p-4 shadow-xs"
+                    >
+                      <ProviderQuotaDetails
+                        quota={provider.quota}
+                        displayName={provider.displayName}
+                        {...(environments.length > 1
+                          ? { environmentLabel: provider.environmentLabel }
+                          : {})}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             {settling ? (
               <>
                 {environments.length > 1 ? <UsageDeviceStrip environments={environments} /> : null}

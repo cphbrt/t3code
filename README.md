@@ -43,6 +43,8 @@ Long user messages likewise remain fully visible, without controls to collapse o
 
 When a provider explicitly reports that an account is unavailable until a reset time, CPH Code keeps that state with the affected provider account, shows the same top error bar on every thread using it, and shows a quiet countdown on its sessions and in the model picker. It does not guess reset times from ambiguous usage data.
 
+Provider-reported plan quotas are a separate signal. CPH Code reads Codex allowances through the app-server rate-limit RPC and Claude allowances through the Agent SDK usage control method, then presents five-hour, weekly, and provider-specific windows on the Usage page, in the provider selector, and beside the composer. Missing telemetry remains unknown rather than appearing as unused capacity, and utilization percentages never trigger reset-delayed prompts by themselves.
+
 This path is validated against real Claude usage-limit events. Equivalent Codex handling is an intentional target: the shared state and UI are ready, but Codex adapter normalization remains unfinished until a real exhausted-account event can be captured and tested.
 
 That explicit reset also appears as **Until usage resets** in the affected thread's Snooze menu, so the thread can return with the provider account instead of relying on a guessed duration.

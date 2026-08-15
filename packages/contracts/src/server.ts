@@ -169,6 +169,53 @@ export const ServerProviderUsageLimit = Schema.Struct({
 });
 export type ServerProviderUsageLimit = typeof ServerProviderUsageLimit.Type;
 
+/**
+ * One provider-reported allowance window. This is descriptive quota
+ * telemetry, not proof that the provider is unavailable; hard exhaustion is
+ * represented separately by `ServerProviderUsageLimit`.
+ */
+export const ServerProviderQuotaWindow = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  durationMinutes: Schema.optionalKey(PositiveInt),
+  resetsAt: Schema.optionalKey(IsoDateTime),
+  scopeLabel: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerProviderQuotaWindow = typeof ServerProviderQuotaWindow.Type;
+
+export const ServerProviderQuotaCredits = Schema.Struct({
+  balance: Schema.optionalKey(TrimmedNonEmptyString),
+  hasCredits: Schema.Boolean,
+  unlimited: Schema.Boolean,
+});
+export type ServerProviderQuotaCredits = typeof ServerProviderQuotaCredits.Type;
+
+export const ServerProviderQuotaExtraUsage = Schema.Struct({
+  enabled: Schema.Boolean,
+  usedPercent: Schema.optionalKey(
+    Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  ),
+  monthlyLimit: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  usedCredits: Schema.optionalKey(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
+  currency: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerProviderQuotaExtraUsage = typeof ServerProviderQuotaExtraUsage.Type;
+
+/**
+ * A best-effort account quota snapshot reported by the provider itself.
+ * Optional for wire compatibility and absent when a provider, auth mode, or
+ * provider version cannot report subscription allowances.
+ */
+export const ServerProviderQuota = Schema.Struct({
+  observedAt: IsoDateTime,
+  planLabel: Schema.optionalKey(TrimmedNonEmptyString),
+  windows: Schema.Array(ServerProviderQuotaWindow),
+  credits: Schema.optionalKey(ServerProviderQuotaCredits),
+  extraUsage: Schema.optionalKey(ServerProviderQuotaExtraUsage),
+});
+export type ServerProviderQuota = typeof ServerProviderQuota.Type;
+
 export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
@@ -206,6 +253,7 @@ export const ServerProvider = Schema.Struct({
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   updateState: Schema.optionalKey(ServerProviderUpdateState),
   usageLimit: Schema.optionalKey(ServerProviderUsageLimit),
+  quota: Schema.optionalKey(ServerProviderQuota),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

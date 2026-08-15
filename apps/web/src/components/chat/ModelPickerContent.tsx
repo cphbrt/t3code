@@ -46,6 +46,7 @@ import {
   providerUsageLimitCountdown,
   type ProviderUsageLimitCountdown,
 } from "../../providerUsageLimit";
+import { ProviderQuotaPickerSummary } from "../providerQuota/ProviderQuotaPresentation";
 
 type ModelPickerItem = {
   slug: string;
@@ -740,6 +741,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   available in {selectedUsageLimitCountdown.exact}
                 </span>
               </div>
+            ) : null}
+            {selectedInstanceEntry?.snapshot.quota ? (
+              <ProviderQuotaPickerSummary
+                quota={selectedInstanceEntry.snapshot.quota}
+                displayName={selectedInstanceEntry.displayName}
+              />
             ) : null}
 
             {/* Model list */}
