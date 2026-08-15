@@ -1,7 +1,51 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { Command, CommandFooter, CommandInput } from "./command";
+import { Command, CommandFooter, CommandInput, commandListNavigationKey } from "./command";
+
+describe("command list navigation shortcuts", () => {
+  it("maps Control-N and Control-P to the matching arrow navigation", () => {
+    expect(
+      commandListNavigationKey({
+        key: "n",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+      }),
+    ).toBe("ArrowDown");
+    expect(
+      commandListNavigationKey({
+        key: "P",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+      }),
+    ).toBe("ArrowUp");
+  });
+
+  it("leaves modified and ordinary typing alone", () => {
+    expect(
+      commandListNavigationKey({
+        key: "n",
+        ctrlKey: false,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+      }),
+    ).toBeNull();
+    expect(
+      commandListNavigationKey({
+        key: "n",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: true,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("command compact geometry", () => {
   it("keeps shell selectors on the wrapper and direct-input padding on AutocompleteInput", () => {

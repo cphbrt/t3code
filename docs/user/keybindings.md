@@ -60,6 +60,10 @@ agent responses across connected environments. Message matches show one labeled 
 keeping the thread's project, branch, and machine context visible. Message search begins after two
 characters and uses SQLite's ASCII case-insensitive matching.
 
+In the command palette and other command-style searchable lists, `Control-N` selects the next item
+and `Control-P` selects the previous item. These are fixed list-navigation keys, equivalent to the
+down and up arrow keys; they do not replace configurable application commands.
+
 The full command list and the current defaults are shown in **Settings** → **Keybindings**, which
 always matches the build you are running. Use that rather than a copied list.
 

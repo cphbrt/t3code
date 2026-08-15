@@ -99,6 +99,7 @@ function CommandInput({
   className,
   wrapperClassName,
   placeholder,
+  onKeyDown,
   ...props
 }: React.ComponentProps<typeof AutocompleteInput> & {
   wrapperClassName?: string | undefined;
@@ -117,12 +118,37 @@ function CommandInput({
           className,
         )}
         placeholder={placeholder}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (event.defaultPrevented) return;
+          const navigationKey = commandListNavigationKey(event);
+          if (navigationKey === null) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.currentTarget.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: navigationKey,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+        }}
         size="lg"
         startAddon={<SearchIcon className="translate-x-0.5 text-icon-muted" />}
         {...props}
       />
     </div>
   );
+}
+
+export function commandListNavigationKey(
+  event: Pick<React.KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+): "ArrowDown" | "ArrowUp" | null {
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
+  const key = event.key.toLowerCase();
+  if (key === "n") return "ArrowDown";
+  if (key === "p") return "ArrowUp";
+  return null;
 }
 
 function CommandList({ className, ...props }: React.ComponentProps<typeof AutocompleteList>) {
