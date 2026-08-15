@@ -768,5 +768,9 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    recordInAppAction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:record-in-app-action",
+      tag: WS_METHODS.serverRecordInAppAction,
+    }),
   };
 }

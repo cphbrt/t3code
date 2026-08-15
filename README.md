@@ -41,6 +41,13 @@ Thread switches preserve your manual reading position. Live work stays pinned to
 
 Long user messages likewise remain fully visible, without controls to collapse or expand them.
 
+CPH Code keeps an append-only local SQLite history of semantic actions performed in its own UI,
+including whether each action came from the keyboard—a handled application shortcut or keyboard
+activation of a control—or a mouse activation. It
+does not record arbitrary keystrokes, operating-system shortcuts, pointer movement, coordinates, or
+typed text. Command-style searchable lists also support the conventional `Control-N` and
+`Control-P` next/previous navigation keys alongside the arrow keys.
+
 When a provider explicitly reports that an account is unavailable until a reset time, CPH Code keeps that state with the affected provider account, shows the same top error bar on every thread using it, and shows a quiet countdown on its sessions and in the model picker. It does not guess reset times from ambiguous usage data.
 
 Provider-reported plan quotas are a separate signal. CPH Code reads Codex allowances through the app-server rate-limit RPC and Claude allowances through the Agent SDK usage control method, then presents five-hour, weekly, and provider-specific windows on the Usage page, in the provider selector, and beside the composer. Missing telemetry remains unknown rather than appearing as unused capacity, and utilization percentages never trigger reset-delayed prompts by themselves.

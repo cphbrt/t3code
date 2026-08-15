@@ -62,6 +62,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
                 size="sm"
                 disabled={!readingFocusAvailable}
                 data-chat-reading-focus-toggle
+                data-app-action="chat.readingFocus.toggle"
               >
                 <BookOpenIcon className="size-3.5" />
               </Toggle>
@@ -88,6 +89,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
                 variant="ghost"
                 size="sm"
                 disabled={!terminalAvailable}
+                data-app-action="terminal.toggle"
               >
                 <PanelBottomIcon className="size-4" />
               </Toggle>
@@ -115,6 +117,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               variant="ghost"
               size="sm"
               disabled={!rightPanelAvailable}
+              data-app-action="rightPanel.toggle"
             >
               <PanelRightIcon className="size-4" />
               {liveAgentCount > 0 ? (
