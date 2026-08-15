@@ -40,7 +40,8 @@ When Claude Code reports that an account has reached its usage limit and include
 CPH Code shows the usage-limit error bar on every thread using that Claude provider, the remaining
 time on those sessions, and the countdown beside the provider in the model picker. The shared state
 survives app and server restarts, disappears at the reset time, and does not automatically resend or
-resume a stopped turn.
+resume a stopped turn. Open an affected thread's **Snooze** menu and choose **Until usage resets** to
+hide it until that explicit reset time.
 
 ## Where Claude Skills Are Loaded
 

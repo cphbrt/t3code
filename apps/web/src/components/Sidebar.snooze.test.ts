@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSnoozePresets, snoozeWakeDescription } from "./Sidebar.snooze";
+import {
+  resolveSnoozePresets,
+  resolveThreadUsageLimitResetAt,
+  snoozeWakeDescription,
+} from "./Sidebar.snooze";
 
 // Local-time constructor so preset math is timezone-stable in tests.
 function localDate(year: number, month: number, day: number, hour: number, minute = 0): Date {
@@ -67,6 +71,65 @@ describe("resolveSnoozePresets", () => {
 
     expect(twelveHour.find((preset) => preset.id === "evening")!.whenLabel).toMatch(/PM/i);
     expect(twentyFourHour.find((preset) => preset.id === "evening")!.whenLabel).toBe("18:00");
+  });
+
+  it("puts an explicit future usage reset first", () => {
+    const now = localDate(2026, 4, 8, 22);
+    const resetsAt = localDate(2026, 4, 9, 2, 42).toISOString();
+    const presets = resolveSnoozePresets(now, "12-hour", { usageLimitResetsAt: resetsAt });
+
+    expect(presets[0]).toMatchObject({
+      id: "usage-limit-reset",
+      label: "Until usage resets",
+      snoozedUntil: resetsAt,
+    });
+    expect(presets[0]!.whenLabel).toMatch(/tomorrow.*2:42.*AM/i);
+  });
+
+  it("omits missing, invalid, and elapsed usage resets", () => {
+    const now = localDate(2026, 4, 8, 22);
+    expect(resolveSnoozePresets(now, "locale")[0]?.id).toBe("hour");
+    for (const usageLimitResetsAt of [null, "not-a-date", now.toISOString()]) {
+      expect(resolveSnoozePresets(now, "locale", { usageLimitResetsAt })[0]?.id).toBe("hour");
+    }
+  });
+});
+
+describe("resolveThreadUsageLimitResetAt", () => {
+  const now = new Date("2026-08-14T20:00:00.000Z");
+  const providers = [
+    { instanceId: "codex", usageLimit: { resetsAt: "2026-08-14T22:00:00.000Z" } },
+    { instanceId: "claude", usageLimit: { resetsAt: "2026-08-15T02:42:00.000Z" } },
+  ];
+
+  it("uses the running session provider before the saved model selection", () => {
+    expect(
+      resolveThreadUsageLimitResetAt(
+        {
+          modelSelection: { instanceId: "codex" },
+          session: { providerInstanceId: "claude" },
+        },
+        providers,
+        now,
+      ),
+    ).toBe("2026-08-15T02:42:00.000Z");
+  });
+
+  it("falls back to the model selection and ignores elapsed resets", () => {
+    expect(
+      resolveThreadUsageLimitResetAt(
+        { modelSelection: { instanceId: "codex" }, session: null },
+        providers,
+        now,
+      ),
+    ).toBe("2026-08-14T22:00:00.000Z");
+    expect(
+      resolveThreadUsageLimitResetAt(
+        { modelSelection: { instanceId: "codex" }, session: null },
+        [{ instanceId: "codex", usageLimit: { resetsAt: now.toISOString() } }],
+        now,
+      ),
+    ).toBeNull();
   });
 });
 

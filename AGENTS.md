@@ -81,6 +81,8 @@ When a provider explicitly reports that an account is unavailable until a reset 
 
 Claude usage-reset handling has been developed and validated against real exhausted-account events. Give Codex the same quality of handling, but treat its adapter normalization as unfinished until an actual Codex exhausted-account payload has been captured and tested; rolling-window telemetry alone does not identify which reset applies.
 
+Offer that explicit provider reset as **Until usage resets** in the affected thread's Snooze menu. Route it through the thread's active provider instance, and omit it when no future reset is known rather than guessing.
+
 When a requested change is complete and confidently verified, commit it to `main` and push it by default rather than leaving finished work uncommitted. Keep commits intentional and exclude unrelated user changes; if Chris later wants completed work undone, prefer an explicit revert or follow-up commit so the repository continues to tell the truth about what happened.
 
 ### Default delivery: ship to /Applications

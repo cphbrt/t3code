@@ -11,6 +11,16 @@ export { snoozeWakeLabel, type SnoozePreset };
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
+interface ThreadProviderUsageTarget {
+  readonly modelSelection: { readonly instanceId: string };
+  readonly session: { readonly providerInstanceId?: string | undefined } | null;
+}
+
+interface ProviderUsageSnapshot {
+  readonly instanceId: string;
+  readonly usageLimit?: { readonly resetsAt: string } | undefined;
+}
+
 function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
   return formatShortTimestamp(date.toISOString(), timestampFormat);
 }
@@ -18,8 +28,9 @@ function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
 export function resolveSnoozePresets(
   now: Date,
   timestampFormat: TimestampFormat,
+  options: { readonly usageLimitResetsAt?: string | null } = {},
 ): ReadonlyArray<SnoozePreset> {
-  return resolveSharedSnoozePresets(now).map((preset) => {
+  const presets = resolveSharedSnoozePresets(now).map((preset) => {
     const wake = parseTimestampDate(preset.snoozedUntil);
     if (wake === null) return preset;
     const time = timeOfDayLabel(wake, timestampFormat);
@@ -31,6 +42,36 @@ export function resolveSnoozePresets(
           : time,
     };
   });
+  const usageLimitReset = parseTimestampDate(options.usageLimitResetsAt ?? "");
+  if (usageLimitReset === null || usageLimitReset.getTime() <= now.getTime()) return presets;
+
+  return [
+    {
+      id: "usage-limit-reset",
+      label: "Until usage resets",
+      whenLabel: snoozeWakeDescription(usageLimitReset.toISOString(), now, timestampFormat),
+      snoozedUntil: usageLimitReset.toISOString(),
+    },
+    ...presets,
+  ];
+}
+
+/**
+ * Resolve the explicit usage reset for the provider instance currently
+ * running a thread. Session routing wins over the saved model selection,
+ * matching the provider countdown shown on the same row.
+ */
+export function resolveThreadUsageLimitResetAt(
+  thread: ThreadProviderUsageTarget,
+  providers: ReadonlyArray<ProviderUsageSnapshot>,
+  now: Date,
+): string | null {
+  const instanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const resetsAt = providers.find((provider) => provider.instanceId === instanceId)?.usageLimit
+    ?.resetsAt;
+  if (resetsAt === undefined) return null;
+  const reset = parseTimestampDate(resetsAt);
+  return reset !== null && reset.getTime() > now.getTime() ? reset.toISOString() : null;
 }
 
 /**

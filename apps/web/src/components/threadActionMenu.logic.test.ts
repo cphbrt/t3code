@@ -53,6 +53,24 @@ describe("buildThreadActionMenuItems", () => {
     expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour"]);
   });
 
+  it("renders an explicit usage-reset snooze choice", () => {
+    const snooze = buildThreadActionMenuItems({
+      ...baseState,
+      snoozePresets: [
+        {
+          id: "usage-limit-reset",
+          label: "Until usage resets",
+          whenLabel: "2:42 AM",
+          snoozedUntil: "2026-08-08T02:42:00Z",
+        },
+      ],
+    }).find((item) => item.id === "snooze");
+
+    expect(snooze?.children).toEqual([
+      { id: "snooze:usage-limit-reset", label: "Until usage resets (2:42 AM)" },
+    ]);
+  });
+
   it("disables title regeneration while one is in flight", () => {
     const item = buildThreadActionMenuItems({ ...baseState, isRegeneratingTitle: true }).find(
       (candidate) => candidate.id === "regenerate-title",

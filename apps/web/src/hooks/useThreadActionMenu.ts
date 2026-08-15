@@ -14,7 +14,11 @@ import {
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useCallback } from "react";
 
-import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
+import {
+  resolveSnoozePresets,
+  resolveThreadUsageLimitResetAt,
+  snoozeWakeDescription,
+} from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
   type ThreadActionMenuId,
@@ -28,6 +32,7 @@ import {
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
+  useServerConfigs,
 } from "../state/entities";
 import { readLocalApi } from "../localApi";
 import { useUiStateStore } from "../uiStateStore";
@@ -85,6 +90,7 @@ export function useThreadActionMenu(input: {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
+  const serverConfigs = useServerConfigs();
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });
@@ -123,7 +129,13 @@ export function useThreadActionMenu(input: {
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const snoozePresets = resolveSnoozePresets(now, timestampFormat, {
+          usageLimitResetsAt: resolveThreadUsageLimitResetAt(
+            thread,
+            serverConfigs.get(threadRef.environmentId)?.providers ?? [],
+            now,
+          ),
+        });
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           isPinned: thread.pinnedAt != null,
@@ -324,6 +336,7 @@ export function useThreadActionMenu(input: {
       onStartRename,
       pinThread,
       projectCwd,
+      serverConfigs,
       settleThread,
       snoozeThread,
       threadRef,
