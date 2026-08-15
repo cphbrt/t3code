@@ -699,6 +699,43 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRows[1]?.showAssistantCopyButton).toBe(true);
   });
 
+  it("labels the terminal assistant message when its turn was interrupted", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-interrupted-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-interrupted" as never,
+            role: "assistant",
+            text: "Partial response.",
+            turnId: "turn-interrupted" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            updatedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+      ],
+      latestTurn: {
+        turnId: "turn-interrupted" as never,
+        state: "interrupted",
+        startedAt: "2026-01-01T00:00:09Z",
+        completedAt: "2026-01-01T00:00:11Z",
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows[0]).toMatchObject({
+      kind: "message",
+      showAssistantMeta: true,
+      assistantCompletionLabel: "Interrupted",
+    });
+  });
+
   it("marks only the active assistant turn as streaming for copy controls", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [

@@ -131,6 +131,34 @@ describe("projectThreadAwareness", () => {
     expect(trulyInterrupted).toBeNull();
   });
 
+  it("removes live awareness for an explicitly interrupted provider session", () => {
+    const state = projectThreadAwareness({
+      environmentId: "env-1" as EnvironmentId,
+      project,
+      thread: thread({
+        session: {
+          threadId: "thread-1" as ThreadId,
+          status: "interrupted",
+          providerName: "Codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: NOW,
+        },
+        latestTurn: {
+          turnId: "turn-1" as TurnId,
+          state: "interrupted",
+          requestedAt: NOW,
+          startedAt: NOW,
+          completedAt: NOW,
+          assistantMessageId: null,
+        },
+      }),
+    });
+
+    expect(state).toBeNull();
+  });
+
   it("projects ready sessions with no materialized turn as completed", () => {
     // Quick threads without code changes never get a checkpoint, so the SQL
     // shell has no latestTurn row and latest_turn_id is cleared when the

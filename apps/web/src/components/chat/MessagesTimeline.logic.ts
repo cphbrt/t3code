@@ -235,7 +235,7 @@ export interface TimelineDurationMessage {
 export type TimelineLatestTurn = Pick<
   OrchestrationLatestTurn,
   "turnId" | "state" | "startedAt" | "completedAt"
->;
+> & { readonly assistantMessageId?: MessageId | null };
 
 export type MessagesTimelineRow =
   | {
@@ -251,6 +251,7 @@ export type MessagesTimelineRow =
       message: ChatMessage;
       durationStart: string;
       showAssistantMeta: boolean;
+      assistantCompletionLabel?: "Interrupted" | undefined;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
@@ -548,6 +549,11 @@ export function deriveMessagesTimelineRows(input: {
       timelineEntry.message.role === "assistant" &&
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
       !assistantTurnStillInProgress;
+    const assistantWasInterrupted =
+      showAssistantMeta &&
+      input.latestTurn?.state === "interrupted" &&
+      (timelineEntry.message.turnId === input.latestTurn.turnId ||
+        timelineEntry.message.id === input.latestTurn.assistantMessageId);
 
     nextRows.push({
       kind: "message",
@@ -556,6 +562,7 @@ export function deriveMessagesTimelineRows(input: {
       message: timelineEntry.message,
       durationStart,
       showAssistantMeta,
+      ...(assistantWasInterrupted ? { assistantCompletionLabel: "Interrupted" as const } : {}),
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantTurnStillInProgress,
       assistantTurnDiffSummary:
@@ -627,6 +634,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.message === bm.message &&
         a.durationStart === bm.durationStart &&
         a.showAssistantMeta === bm.showAssistantMeta &&
+        a.assistantCompletionLabel === bm.assistantCompletionLabel &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&

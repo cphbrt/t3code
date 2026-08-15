@@ -57,6 +57,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import { reconcileInterruptedProviderSessions } from "../reconcileInterruptedSessions.ts";
 
 function makeTestServerSettingsLayer(overrides: Partial<ServerSettings> = {}) {
   return ServerSettingsService.layerTest(overrides);
@@ -141,6 +142,10 @@ function createProviderServiceHarness() {
     runtimeSessions.push(session);
   };
 
+  const clearSessions = (): void => {
+    runtimeSessions.splice(0, runtimeSessions.length);
+  };
+
   const normalizeLegacyEvent = (event: LegacyProviderRuntimeEvent): ProviderRuntimeEvent => {
     if (isLegacyTurnCompletedEvent(event)) {
       const normalized: Extract<ProviderRuntimeEvent, { type: "turn.completed" }> = {
@@ -164,6 +169,7 @@ function createProviderServiceHarness() {
     service,
     emit,
     setSession,
+    clearSessions,
   };
 }
 
@@ -198,7 +204,10 @@ async function waitForThread(
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
+    | OrchestrationEngineService
+    | ProviderRuntimeIngestionService
+    | ProjectionSnapshotQuery
+    | ProviderService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -337,6 +346,9 @@ describe("ProviderRuntimeIngestion", () => {
       readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      clearProviderSessions: provider.clearSessions,
+      reconcileInterruptedProviderSessions: () =>
+        runtime!.runPromise(reconcileInterruptedProviderSessions()),
       drain,
       usageLimitUpdates,
     };
@@ -723,6 +735,154 @@ describe("ProviderRuntimeIngestion", () => {
       expect(thread?.session?.activeTurnId).toBeNull();
     }),
   );
+
+  it("marks a live turn interrupted and closes its transient UI state when the session exits", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-interrupted-on-exit");
+    const startedAt = "2026-01-01T00:00:01.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-before-exit"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      createdAt: startedAt,
+    });
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "running" && thread.session.activeTurnId === turnId,
+    );
+
+    await harness.dispatch({
+      type: "thread.message.assistant.delta",
+      commandId: CommandId.make("cmd-partial-assistant-before-exit"),
+      threadId,
+      messageId: MessageId.make("assistant-partial-before-exit"),
+      delta: "I updated the first file and was about to run tests.",
+      turnId,
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+    await harness.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make("cmd-approval-before-exit"),
+      threadId,
+      activity: {
+        id: asEventId("activity-approval-before-exit"),
+        tone: "approval",
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        payload: { requestId: "approval-before-exit", requestKind: "command" },
+        turnId,
+        createdAt: "2026-01-01T00:00:03.000Z",
+      },
+      createdAt: "2026-01-01T00:00:03.000Z",
+    });
+    await harness.dispatch({
+      type: "thread.activity.append",
+      commandId: CommandId.make("cmd-input-before-exit"),
+      threadId,
+      activity: {
+        id: asEventId("activity-input-before-exit"),
+        tone: "info",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: { requestId: "input-before-exit", questions: [] },
+        turnId,
+        createdAt: "2026-01-01T00:00:04.000Z",
+      },
+      createdAt: "2026-01-01T00:00:04.000Z",
+    });
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-session-exited-mid-turn"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      createdAt: "2026-01-01T00:00:05.000Z",
+    });
+    await harness.drain();
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId)!;
+    expect(thread.session?.status).toBe("interrupted");
+    expect(thread.session?.activeTurnId).toBeNull();
+    expect(thread.latestTurn?.state).toBe("interrupted");
+    expect(
+      thread.messages.find((message) => message.id === "assistant-partial-before-exit")?.streaming,
+    ).toBe(false);
+    expect(thread.activities.some((activity) => activity.kind === "turn.interrupted")).toBe(true);
+    expect(
+      thread.activities.some(
+        (activity) =>
+          activity.kind === "approval.resolved" &&
+          (activity.payload as { requestId?: string }).requestId === "approval-before-exit",
+      ),
+    ).toBe(true);
+    expect(
+      thread.activities.some(
+        (activity) =>
+          activity.kind === "user-input.resolved" &&
+          (activity.payload as { requestId?: string }).requestId === "input-before-exit",
+      ),
+    ).toBe(true);
+  });
+
+  it("reconciles a projected running turn when startup has no provider session", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-before-restart"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId: asTurnId("turn-running-before-restart"),
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.status === "running");
+    harness.clearProviderSessions();
+
+    expect(await harness.reconcileInterruptedProviderSessions()).toBe(1);
+    expect(await harness.reconcileInterruptedProviderSessions()).toBe(0);
+
+    const thread = (await harness.readModel()).threads.find((entry) => entry.id === threadId)!;
+    expect(thread.session?.status).toBe("interrupted");
+    expect(thread.latestTurn?.state).toBe("interrupted");
+    expect(
+      thread.activities.filter((activity) => activity.kind === "turn.interrupted"),
+    ).toHaveLength(1);
+  });
+
+  it("leaves a projected running turn alone when its provider session is live", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-live-after-restart");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-live-after-restart"),
+      provider: ProviderDriverKind.make("codex"),
+      threadId,
+      turnId,
+      createdAt: "2026-01-01T00:00:01.000Z",
+    });
+    await waitForThread(harness.readModel, (thread) => thread.session?.status === "running");
+    harness.setProviderSession({
+      provider: ProviderDriverKind.make("codex"),
+      status: "running",
+      runtimeMode: "approval-required",
+      threadId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      activeTurnId: turnId,
+    });
+
+    expect(await harness.reconcileInterruptedProviderSessions()).toBe(0);
+    expect(
+      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.session?.status,
+    ).toBe("running");
+  });
 
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();

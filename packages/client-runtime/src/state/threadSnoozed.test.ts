@@ -25,7 +25,7 @@ function localDate(year: number, month: number, day: number, hour: number, minut
 function makeShell(input: {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
-  readonly sessionStatus?: "starting" | "running" | "ready" | "error";
+  readonly sessionStatus?: "starting" | "running" | "ready" | "interrupted" | "error";
   readonly pending?: "approval" | "user-input";
   readonly turnCompletedAt?: string | null;
 }): ThreadSnoozeShell {
@@ -100,6 +100,14 @@ describe("effectiveSnoozed", () => {
     ).toBe(false);
   });
 
+  it("wakes early when an in-flight provider session is interrupted", () => {
+    expect(
+      effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "interrupted" }), {
+        now: NOW,
+      }),
+    ).toBe(false);
+  });
+
   it("stays snoozed when the failure predates the snooze — the user saw it", () => {
     expect(
       effectiveSnoozed(
@@ -146,7 +154,7 @@ describe("threadRaisedHandWhileSnoozed", () => {
     expect(threadRaisedHandWhileSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE }))).toBe(false);
   });
 
-  it("is true for approvals, input, and failures", () => {
+  it("is true for approvals, input, failures, and interruptions", () => {
     expect(
       threadRaisedHandWhileSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, pending: "approval" })),
     ).toBe(true);
@@ -156,6 +164,11 @@ describe("threadRaisedHandWhileSnoozed", () => {
     expect(
       threadRaisedHandWhileSnoozed(
         makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "error" }),
+      ),
+    ).toBe(true);
+    expect(
+      threadRaisedHandWhileSnoozed(
+        makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "interrupted" }),
       ),
     ).toBe(true);
   });

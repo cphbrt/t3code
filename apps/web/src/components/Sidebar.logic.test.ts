@@ -289,6 +289,20 @@ describe("hasUnseenCompletion", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not present an interrupted turn as a completed result", () => {
+    expect(
+      hasUnseenCompletion({
+        hasActionableProposedPlan: false,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        interactionMode: "default",
+        latestTurn: { ...makeLatestTurn(), state: "interrupted" },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        session: null,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("createThreadJumpHintVisibilityController", () => {
@@ -744,6 +758,16 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("ready");
   });
 
+  it("reports an interrupted runtime even when a stale approval remains", () => {
+    expect(
+      resolveSidebarThreadStatus({
+        ...idle,
+        hasPendingApprovals: true,
+        session: { ...session, status: "interrupted" as const, activeTurnId: null },
+      }),
+    ).toBe("interrupted");
+  });
+
   it("defaults to ready with no session", () => {
     expect(resolveSidebarThreadStatus({ ...idle, session: null })).toBe("ready");
   });
@@ -1101,6 +1125,22 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Awaiting Input", pulse: false });
+  });
+
+  it("shows interruption instead of a stale provider request", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasPendingApprovals: true,
+          session: {
+            ...baseThread.session,
+            status: "interrupted",
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Interrupted", pulse: false });
   });
 
   it("falls back to working when the thread is actively running without blockers", () => {
