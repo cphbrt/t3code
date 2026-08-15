@@ -165,6 +165,7 @@ import {
 } from "./ThreadStatusIndicators";
 import {
   resolveSnoozePresets,
+  resolveThreadUsageLimitResetAt,
   snoozeWakeDescription,
   snoozeWakeLabel,
   type SnoozePreset,
@@ -416,14 +417,20 @@ function SnoozePopoverButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: SnoozePreset) => void;
+  providerUsageLimitResetsAt: string | null;
   timestampFormat: TimestampFormat;
 }) {
-  const { open, onOpenChange, onSnooze, timestampFormat } = props;
+  const { open, onOpenChange, onSnooze, providerUsageLimitResetsAt, timestampFormat } = props;
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
-    () => (open ? resolveSnoozePresets(new Date(), timestampFormat) : []),
-    [open, timestampFormat],
+    () =>
+      open
+        ? resolveSnoozePresets(new Date(), timestampFormat, {
+            usageLimitResetsAt: providerUsageLimitResetsAt,
+          })
+        : [],
+    [open, providerUsageLimitResetsAt, timestampFormat],
   );
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
@@ -756,6 +763,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Compact wake countdown ("2h") for rows in the snoozed shelf.
   snoozeWakeLabelText: string | null;
   providerUsageLimitLabel: string | null;
+  providerUsageLimitResetsAt: string | null;
   // When a snooze ended (timer or early wake); drives the Woke pill until
   // the user visits the thread.
   wokeAt: string | null;
@@ -1551,6 +1559,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         open={snoozeMenuOpen}
                         onOpenChange={setSnoozeMenuOpen}
                         onSnooze={handleSnoozePreset}
+                        providerUsageLimitResetsAt={props.providerUsageLimitResetsAt}
                         timestampFormat={props.timestampFormat}
                       />
                     ) : null}
@@ -2089,6 +2098,19 @@ export default function Sidebar() {
       }
     }
     return labels;
+  }, [nowMinute, serverConfigs]);
+  const providerUsageLimitResetByScopedInstance = useMemo(() => {
+    const resets = new Map<string, string>();
+    const now = new Date();
+    for (const [environmentId, config] of serverConfigs) {
+      for (const provider of config.providers) {
+        const reset = parseTimestampDate(provider.usageLimit?.resetsAt ?? "");
+        if (reset !== null && reset.getTime() > now.getTime()) {
+          resets.set(`${environmentId}:${provider.instanceId}`, reset.toISOString());
+        }
+      }
+    }
+    return resets;
   }, [nowMinute, serverConfigs]);
   const {
     pinnedThreads,
@@ -2923,7 +2945,21 @@ export default function Sidebar() {
         supportedCount: titleRegenerationThreads.length,
         actionableCount: regeneratableTitleThreads.length,
       });
-      const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+      const commonUsageLimitReset = selectedThreads.reduce<string | null | undefined>(
+        (common, thread, index) => {
+          const reset = resolveThreadUsageLimitResetAt(
+            thread,
+            serverConfigs.get(thread.environmentId)?.providers ?? [],
+            selectionNow,
+          );
+          if (reset === null || (index > 0 && reset !== common)) return null;
+          return reset;
+        },
+        undefined,
+      );
+      const snoozePresets = resolveSnoozePresets(selectionNow, timestampFormat, {
+        usageLimitResetsAt: commonUsageLimitReset ?? null,
+      });
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
@@ -3146,7 +3182,14 @@ export default function Sidebar() {
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
-        const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+        const menuNow = new Date();
+        const snoozePresets = resolveSnoozePresets(menuNow, timestampFormat, {
+          usageLimitResetsAt: resolveThreadUsageLimitResetAt(
+            thread,
+            serverConfigs.get(thread.environmentId)?.providers ?? [],
+            menuNow,
+          ),
+        });
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -3808,6 +3851,11 @@ export default function Sidebar() {
                         }
                         providerUsageLimitLabel={
                           providerUsageLimitLabelByScopedInstance.get(
+                            `${thread.environmentId}:${thread.session?.providerInstanceId ?? thread.modelSelection.instanceId}`,
+                          ) ?? null
+                        }
+                        providerUsageLimitResetsAt={
+                          providerUsageLimitResetByScopedInstance.get(
                             `${thread.environmentId}:${thread.session?.providerInstanceId ?? thread.modelSelection.instanceId}`,
                           ) ?? null
                         }
