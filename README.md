@@ -33,6 +33,8 @@ This exact route has been verified for pairing, reconnection, existing and new t
 
 CPH Code keeps meaningful transcript activity—commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. It may coalesce provider lifecycle noise and collapse large details on request, but it does not automatically hide the semantic record of what an agent did.
 
+Browser automation stays out of that reading surface: CPH Code does not open T3 Code's floating browser mini-player over the transcript. The browser remains available in the right panel when you choose to view it, while agents can keep using its hidden automation host for inspection, screenshots, and recordings.
+
 If a provider runtime disappears during active work, CPH Code marks the thread **Interrupted** and keeps the partial transcript. It does not resume automatically or offer a canned resume button; you continue through the normal composer with the prompt that fits the situation.
 
 Thread switches preserve your manual reading position. Live work stays pinned to the end, while a newly completed response you have not seen opens at the beginning of the agent's final message.
@@ -136,6 +138,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Install and first run](./docs/user/install.md)
 - [Permission modes](./docs/user/permission-modes.md)
 - [Keyboard shortcuts](./docs/user/keybindings.md)
+- [Browser previews](./docs/user/browser-previews.md)
 - [Customize a project icon](./docs/user/project-settings.md)
 - [Remote access from a phone or another machine](./docs/user/remote-access.md)
 - [Keeping app and server in sync](./docs/user/updating.md)
