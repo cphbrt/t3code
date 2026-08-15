@@ -6,6 +6,7 @@ import type {
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
+  ServerProviderQuota,
   ServerProviderState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -221,6 +222,7 @@ export function buildServerProvider(input: {
   models: ReadonlyArray<ServerProviderModel>;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
+  quota?: ServerProviderQuota;
   probe: ProviderProbeResult;
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
@@ -249,6 +251,7 @@ export function buildServerProvider(input: {
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
+    ...(input.quota ? { quota: input.quota } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }

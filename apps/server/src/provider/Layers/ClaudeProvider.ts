@@ -3,6 +3,8 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   type ServerProviderModel,
+  type ServerProviderQuota,
+  type ServerProviderQuotaWindow,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -23,6 +25,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
   type Options as ClaudeQueryOptions,
+  type SDKControlGetUsageResponse,
   type SlashCommand as ClaudeSlashCommand,
   type SDKUserMessage,
   type SettingSource,
@@ -642,7 +645,128 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly usage?: SDKControlGetUsageResponse;
 };
+
+export type ClaudeQuotaUsageResponse = Pick<
+  SDKControlGetUsageResponse,
+  "subscription_type" | "rate_limits_available" | "rate_limits"
+>;
+
+function normalizeClaudePlanLabel(subscriptionType: string | null): string | undefined {
+  const normalized = subscriptionType?.trim();
+  if (!normalized) return undefined;
+  const label = normalized
+    .split(/[_-]+/u)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return label.toLowerCase().startsWith("claude ") ? label : `Claude ${label}`;
+}
+
+export function normalizeClaudeProviderQuota(
+  response: ClaudeQuotaUsageResponse,
+  observedAt: string,
+): ServerProviderQuota | undefined {
+  if (!response.rate_limits_available || !response.rate_limits) return undefined;
+
+  const windows: ServerProviderQuotaWindow[] = [];
+  const appendWindow = (input: {
+    readonly id: string;
+    readonly label: string;
+    readonly durationMinutes: number;
+    readonly scopeLabel?: string;
+    readonly value:
+      | { readonly utilization: number | null; readonly resets_at: string | null }
+      | null
+      | undefined;
+  }) => {
+    const utilization = input.value?.utilization;
+    if (utilization === null || utilization === undefined || !Number.isFinite(utilization)) {
+      return;
+    }
+    const resetsAt = input.value?.resets_at?.trim();
+    windows.push({
+      id: input.id,
+      label: input.label,
+      usedPercent: Math.max(0, Math.min(100, utilization)),
+      durationMinutes: input.durationMinutes,
+      ...(resetsAt ? { resetsAt } : {}),
+      ...(input.scopeLabel ? { scopeLabel: input.scopeLabel } : {}),
+    });
+  };
+
+  appendWindow({
+    id: "five_hour",
+    label: "5-hour",
+    durationMinutes: 300,
+    value: response.rate_limits.five_hour,
+  });
+  appendWindow({
+    id: "seven_day",
+    label: "Weekly",
+    durationMinutes: 10_080,
+    value: response.rate_limits.seven_day_oauth_apps ?? response.rate_limits.seven_day,
+  });
+  appendWindow({
+    id: "seven_day_opus",
+    label: "Weekly",
+    durationMinutes: 10_080,
+    scopeLabel: "Opus",
+    value: response.rate_limits.seven_day_opus,
+  });
+  appendWindow({
+    id: "seven_day_sonnet",
+    label: "Weekly",
+    durationMinutes: 10_080,
+    scopeLabel: "Sonnet",
+    value: response.rate_limits.seven_day_sonnet,
+  });
+
+  // Anthropic reports per-model weekly allowances as an additive, open-ended
+  // list rather than the fixed `seven_day_opus`/`seven_day_sonnet` fields
+  // above, which current accounts report as null. The bucket is identified
+  // only by a server-supplied display name, so scope on that.
+  for (const modelScoped of response.rate_limits.model_scoped ?? []) {
+    const scopeLabel = modelScoped.display_name?.trim();
+    if (!scopeLabel) continue;
+    appendWindow({
+      id: `model_scoped:${scopeLabel}`,
+      label: "Weekly",
+      durationMinutes: 10_080,
+      scopeLabel,
+      value: modelScoped,
+    });
+  }
+
+  const rawExtraUsage = response.rate_limits.extra_usage;
+  const extraUsage = rawExtraUsage
+    ? {
+        enabled: rawExtraUsage.is_enabled,
+        ...(rawExtraUsage.utilization !== null && Number.isFinite(rawExtraUsage.utilization)
+          ? {
+              usedPercent: Math.max(0, Math.min(100, rawExtraUsage.utilization)),
+            }
+          : {}),
+        ...(rawExtraUsage.monthly_limit !== null && Number.isFinite(rawExtraUsage.monthly_limit)
+          ? { monthlyLimit: Math.max(0, rawExtraUsage.monthly_limit) }
+          : {}),
+        ...(rawExtraUsage.used_credits !== null && Number.isFinite(rawExtraUsage.used_credits)
+          ? { usedCredits: Math.max(0, rawExtraUsage.used_credits) }
+          : {}),
+        ...(rawExtraUsage.currency?.trim() ? { currency: rawExtraUsage.currency.trim() } : {}),
+      }
+    : undefined;
+  if (windows.length === 0 && !extraUsage) return undefined;
+
+  const planLabel = normalizeClaudePlanLabel(response.subscription_type);
+  return {
+    observedAt,
+    ...(planLabel ? { planLabel } : {}),
+    windows,
+    ...(extraUsage ? { extraUsage } : {}),
+  };
+}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -716,6 +840,15 @@ function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   });
 }
 
+async function readClaudeUsage(
+  query: ReturnType<typeof claudeQuery>,
+): Promise<SDKControlGetUsageResponse | undefined> {
+  return await Promise.race([
+    query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET().catch(() => undefined),
+    Effect.runPromise(Effect.sleep("1500 millis").pipe(Effect.as(undefined))),
+  ]);
+}
+
 /**
  * Probe account information by spawning a lightweight Claude Agent SDK
  * session and reading the initialization result.
@@ -757,6 +890,7 @@ const probeClaudeCapabilities = (
         }),
       });
       const init = await q.initializationResult();
+      const usage = await readClaudeUsage(q);
       const account = init.account as
         | {
             readonly email?: string;
@@ -771,6 +905,7 @@ const probeClaudeCapabilities = (
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        ...(usage ? { usage } : {}),
       } satisfies ClaudeCapabilitiesProbe;
     });
   }).pipe(
@@ -953,6 +1088,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const quota = capabilities.usage
+    ? normalizeClaudeProviderQuota(capabilities.usage, checkedAt)
+    : undefined;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
@@ -960,6 +1098,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     models,
     slashCommands: dedupedSlashCommands,
     skills,
+    ...(quota ? { quota } : {}),
     probe: {
       installed: true,
       version: parsedVersion,
