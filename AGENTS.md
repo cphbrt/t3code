@@ -81,6 +81,12 @@ When a provider explicitly reports that an account is unavailable until a reset 
 
 Claude usage-reset handling has been developed and validated against real exhausted-account events. Give Codex the same quality of handling, but treat its adapter normalization as unfinished until an actual Codex exhausted-account payload has been captured and tested; rolling-window telemetry alone does not identify which reset applies.
 
+When a requested change is complete and confidently verified, commit it to `main` and push it by default rather than leaving finished work uncommitted. Keep commits intentional and exclude unrelated user changes; if Chris later wants completed work undone, prefer an explicit revert or follow-up commit so the repository continues to tell the truth about what happened.
+
+### Default delivery: ship to /Applications
+
+When Chris requests a change, "done" typically means shipped: commit, push, build the macOS desktop release, and install it to `/Applications`. Do not quit or restart the running CPH Code app as part of the install; Chris relaunches when he feels like it. Skip the build-and-install step whenever Chris indicates in any way that he wants something short of fully shipped—seeing it in dev, a test pass, a review, an experiment—and just do what was asked.
+
 When an upstream T3 Code default conflicts with this smaller scope, prefer the fork's goals unless Chris explicitly asks otherwise.
 
 ## Upstream synchronization
