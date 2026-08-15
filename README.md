@@ -45,7 +45,7 @@ When a provider explicitly reports that an account is unavailable until a reset 
 
 Provider-reported plan quotas are a separate signal. CPH Code reads Codex allowances through the app-server rate-limit RPC and Claude allowances through the Agent SDK usage control method, then presents five-hour, weekly, and provider-specific windows on the Usage page, in the provider selector, and beside the composer. Missing telemetry remains unknown rather than appearing as unused capacity, and utilization percentages never trigger reset-delayed prompts by themselves.
 
-This path is validated against real Claude usage-limit events. Equivalent Codex handling is an intentional target: the shared state and UI are ready, but Codex adapter normalization remains unfinished until a real exhausted-account event can be captured and tested.
+This path is validated against real Claude and Codex usage-limit events. Codex exhaustion is recognized only from its explicit usage-limit turn error, with the countdown refined by the machine-readable window reset from rate-limit telemetry. Because OpenAI enforces the limit at turn start, Codex work already running continues normally while the account is exhausted; only new turns fail, and a finishing in-flight turn does not clear the countdown.
 
 That explicit reset also appears as **Until usage resets** in the affected thread's Snooze menu, so the thread can return with the provider account instead of relying on a guessed duration.
 
