@@ -33,6 +33,8 @@ This exact route has been verified for pairing, reconnection, existing and new t
 
 CPH Code keeps meaningful transcript activity—commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. It may coalesce provider lifecycle noise and collapse large details on request, but it does not automatically hide the semantic record of what an agent did.
 
+Long user messages likewise remain fully visible, without controls to collapse or expand them.
+
 When a provider explicitly reports that an account is unavailable until a reset time, CPH Code keeps that state with the affected provider account, shows the same top error bar on every thread using it, and shows a quiet countdown on its sessions and in the model picker. It does not guess reset times from ambiguous usage data.
 
 This path is validated against real Claude usage-limit events. Equivalent Codex handling is an intentional target: the shared state and UI are ready, but Codex adapter normalization remains unfinished until a real exhausted-account event can be captured and tested.
