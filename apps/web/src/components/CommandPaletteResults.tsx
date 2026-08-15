@@ -171,6 +171,8 @@ function CommandPaletteResultRow(props: {
   return (
     <CommandItem
       value={props.item.value}
+      data-app-action="commandPalette.execute"
+      data-app-action-target={props.item.value}
       className={cn(
         "cursor-pointer gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit data-selected:bg-transparent data-selected:text-inherit [&[data-highlighted][data-selected]]:bg-transparent [&[data-highlighted][data-selected]]:text-inherit",
         props.isActive && "bg-accent! text-accent-foreground!",

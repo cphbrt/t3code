@@ -79,6 +79,8 @@ CPH Code treats the transcript as a durable, inspectable record. Keep meaningful
 
 Keep browser previews out of the transcript reading surface. Do not offer or automatically open the upstream floating mini-player over chat; agent browser automation stays available in the background, and an explicit browser view belongs in the right panel or a separate native window.
 
+Keep a durable, append-only local SQLite history of semantic actions performed inside the CPH Code UI. Every recorded action must identify whether it came from in-app keyboard use—a handled shortcut or keyboard activation of a named control—or a mouse activation; never expand this into raw keystroke, typed-text, pointer-movement, coordinate, operating-system, or out-of-app telemetry. Treat the live history as private user data and never include it in Git or published artifacts.
+
 When a provider runtime disappears during active work, mark the thread interrupted and preserve the partial transcript instead of leaving a false working state. Never resume interrupted work automatically or offer a canned resume action; the user continues through the ordinary composer with a situation-specific prompt.
 
 Preserve each thread's manually chosen transcript reading position across thread switches. Without one, keep following live work at the end, but open an unseen completed turn at the top of its final assistant message so the response can be read from the beginning.

@@ -1306,6 +1306,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 role="button"
                 tabIndex={0}
                 data-testid="sidebar-row-slim"
+                data-app-action="thread.open"
+                data-app-action-target={`${thread.environmentId}/${thread.id}`}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
                 onClick={handleClick}
@@ -1470,6 +1472,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               role="button"
               tabIndex={0}
               data-testid="sidebar-row-card"
+              data-app-action="thread.open"
+              data-app-action-target={`${thread.environmentId}/${thread.id}`}
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
               onClick={handleClick}
@@ -1777,6 +1781,8 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               aria-label={
                 props.projectTitle ? `${thread.title}, ${props.projectTitle}` : thread.title
               }
+              data-app-action="thread.open"
+              data-app-action-target={`${thread.environmentId}/${thread.id}`}
               onMouseMove={props.onHighlight}
               onClick={props.onSelect}
               className={cn(

@@ -9,6 +9,7 @@ import {
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
+import { markInAppShortcut } from "./lib/inAppActionSignals";
 
 export interface ShortcutEventLike {
   type?: string;
@@ -217,6 +218,12 @@ export function resolveShortcutCommand(
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesShortcut(event, binding.shortcut, platform)) continue;
+    if (typeof event === "object" && event !== null) {
+      markInAppShortcut(event, {
+        action: binding.command,
+        shortcut: formatShortcutLabel(binding.shortcut, platform),
+      });
+    }
     return binding.command;
   }
   return null;

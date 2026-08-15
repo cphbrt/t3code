@@ -54,6 +54,7 @@ import Migration0038 from "./Migrations/038_ProjectionThreadsPinOrderKey.ts";
 import Migration0039 from "./Migrations/039_ProjectionProjectsDefaultThreadEnvMode.ts";
 import Migration0040 from "./Migrations/040_ProjectionProjectFaviconPath.ts";
 import Migration0041 from "./Migrations/041_ProjectionThreadsScheduledTurn.ts";
+import Migration0042 from "./Migrations/042_InAppActionHistory.ts";
 import Migration0046 from "./Migrations/046_AuthSessionClientConnection.ts";
 
 /**
@@ -108,6 +109,7 @@ export const migrationEntries = [
   [39, "ProjectionProjectsDefaultThreadEnvMode", Migration0039],
   [40, "ProjectionProjectFaviconPath", Migration0040],
   [41, "ProjectionThreadsScheduledTurn", Migration0041],
+  [42, "InAppActionHistory", Migration0042],
   [46, "AuthSessionClientConnection", Migration0046],
 ] as const;
 
