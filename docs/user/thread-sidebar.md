@@ -1,8 +1,14 @@
 # Organizing threads
 
-Pin a thread from its context menu to keep it in the pinned section above your active work.
+Pin a thread from its context menu to keep it in the **Pinned** section above your active work.
 Pinned threads are shown independently of their project, including when you connect to more than
 one environment.
+
+The thread list is grouped into **Pinned**, **Active**, **Snoozed**, and **Settled**, in that
+order. Every group works the same way: its heading appears only while it holds something, clicking
+the heading collapses the group to a count, and each one remembers whether you left it open.
+**Pinned**, **Active**, and **Settled** start expanded; **Snoozed** starts collapsed. Collapsing a
+group keeps the thread you currently have open visible, so you never lose your place.
 
 Pinned threads still move to **Settled** when they become inactive. They also move when their pull
 request merges if **Auto-settle merged threads** is enabled.
