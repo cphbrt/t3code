@@ -110,6 +110,27 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "activityCommandOutput",
+        Effect.fn("environment.orchestration.activityCommandOutput")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const output = yield* (
+            projectionSnapshotQuery.getActivityCommandOutput?.(
+              args.params.threadId,
+              args.params.activityId,
+            ) ?? Effect.succeed(Option.none())
+          ).pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_activity_command_output_failed", cause),
+            ),
+          );
+          if (Option.isNone(output)) {
+            return yield* failEnvironmentNotFound("activity_not_found");
+          }
+          return { output: output.value };
+        }),
+      )
+      .handle(
         "dispatch",
         Effect.fn("environment.orchestration.dispatch")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

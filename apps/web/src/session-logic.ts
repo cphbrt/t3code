@@ -57,6 +57,11 @@ export interface WorkLogEntry {
   };
   changedFiles?: ReadonlyArray<string>;
   hasFileDiff?: boolean;
+  /**
+   * Set on history rows whose command output the snapshot omitted. The
+   * transcript fetches the full text from the command-output route on expand.
+   */
+  hasCommandOutput?: boolean;
   tone: "thinking" | "tool" | "info" | "error";
   toolTitle?: string;
   toolData?: unknown;
@@ -954,6 +959,9 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (payload?.hasFileDiff === true) {
     entry.hasFileDiff = true;
+  }
+  if (payload?.hasCommandOutput === true) {
+    entry.hasCommandOutput = true;
   }
   if (title) {
     entry.toolTitle = title;

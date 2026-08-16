@@ -725,6 +725,7 @@ export function createEnvironmentThreadStateAtoms<R, E>(
 }
 
 export * from "./archivedThreads.ts";
+export * from "./activityCommandOutput.ts";
 export * from "./activityFileChanges.ts";
 export * from "./checkpointDiff.ts";
 export * from "./threadSnapshotHttp.ts";

@@ -70,6 +70,7 @@ import {
   type ProjectionThreadCheckpointContext,
   type ProjectionSnapshotQueryShape,
 } from "../Services/ProjectionSnapshotQuery.ts";
+import { extractActivityCommandOutput } from "../ActivityCommandOutput.ts";
 import { extractActivityFileChanges } from "../ActivityFileChanges.ts";
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
@@ -2889,6 +2890,19 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const getActivityCommandOutput: NonNullable<
+    ProjectionSnapshotQueryShape["getActivityCommandOutput"]
+  > = (threadId, activityId) =>
+    getThreadActivityRow({ threadId, activityId }).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.getActivityCommandOutput:query",
+          "ProjectionSnapshotQuery.getActivityCommandOutput:decodeRow",
+        ),
+      ),
+      Effect.map(Option.map((row) => extractActivityCommandOutput({ payload: row.payload }) ?? "")),
+    );
+
   // Bounds pathological fan-out: one user turn that spawned hundreds of
   // subagent turns still pages in bounded chunks, at the cost of splitting the
   // fan-out group across pages (the cursor continues the same group). Also
@@ -3047,6 +3061,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadDetailById,
     getActivityFileChanges,
+    getActivityCommandOutput,
     getThreadDetailSnapshot,
   } satisfies ProjectionSnapshotQueryShape;
 });

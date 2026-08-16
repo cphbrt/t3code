@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationThreadActivity } from "@t3tools/contracts";
-import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
+import type {
+  OrchestrationEvent,
+  OrchestrationThreadActivity,
+  OrchestrationThreadDetailSnapshot,
+} from "@t3tools/contracts";
+import {
+  projectActivityEvent,
+  projectActivityPayload,
+  projectThreadDetailSnapshot,
+} from "./ActivityPayloadProjection.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
   return {
@@ -304,5 +312,130 @@ describe("projectActivityPayload", () => {
     });
     const projected = projectActivityPayload(source);
     expect(projected.payload).toEqual(source.payload);
+  });
+});
+
+function commandActivity(options: {
+  readonly id: string;
+  readonly turnId: string | null;
+  readonly status?: string;
+  readonly output?: string;
+}): OrchestrationThreadActivity {
+  return {
+    id: options.id,
+    tone: "tool",
+    kind: "tool.completed",
+    summary: "Command",
+    payload: {
+      itemType: "command_execution",
+      ...(options.status ? { status: options.status } : {}),
+      data: {
+        item: {
+          type: "commandExecution",
+          command: "pnpm test",
+          aggregatedOutput: options.output ?? "the command output",
+        },
+      },
+    },
+    turnId: options.turnId,
+    createdAt: "2026-08-01T10:00:00.000Z",
+  } as unknown as OrchestrationThreadActivity;
+}
+
+function snapshotOf(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  latestTurnId: string | null,
+): OrchestrationThreadDetailSnapshot {
+  return {
+    snapshotSequence: 1,
+    thread: {
+      id: "thread-1",
+      activities,
+      latestTurn: latestTurnId === null ? null : { turnId: latestTurnId, state: "completed" },
+    },
+  } as unknown as OrchestrationThreadDetailSnapshot;
+}
+
+function payloadOf(activity: OrchestrationThreadActivity): Record<string, unknown> {
+  return activity.payload as Record<string, unknown>;
+}
+
+function dataOf(activity: OrchestrationThreadActivity): Record<string, unknown> {
+  return payloadOf(activity).data as Record<string, unknown>;
+}
+
+/**
+ * Inlining every historical command's output dominated thread-open transfer,
+ * so snapshots carry it only for the latest turn and advertise the rest.
+ */
+describe("projectThreadDetailSnapshot command output recency", () => {
+  it("inlines the latest turn's output and only advertises older turns'", () => {
+    const projected = projectThreadDetailSnapshot(
+      snapshotOf(
+        [
+          commandActivity({ id: "old", turnId: "turn-1" }),
+          commandActivity({ id: "recent", turnId: "turn-2" }),
+        ],
+        "turn-2",
+      ),
+    );
+
+    const [old, recent] = projected.thread.activities;
+    expect(dataOf(old!).output).toBeUndefined();
+    expect(payloadOf(old!).hasCommandOutput).toBe(true);
+    expect(dataOf(recent!).output).toBe("the command output");
+    expect(payloadOf(recent!).hasCommandOutput).toBeUndefined();
+  });
+
+  it("keeps a still-running command inline even in an older turn", () => {
+    const projected = projectThreadDetailSnapshot(
+      snapshotOf(
+        [commandActivity({ id: "running", turnId: "turn-1", status: "inProgress" })],
+        "turn-2",
+      ),
+    );
+
+    const [running] = projected.thread.activities;
+    expect(dataOf(running!).output).toBe("the command output");
+    expect(payloadOf(running!).hasCommandOutput).toBeUndefined();
+  });
+
+  it("advertises nothing when a history command produced no output", () => {
+    const projected = projectThreadDetailSnapshot(
+      snapshotOf([commandActivity({ id: "quiet", turnId: "turn-1", output: "   " })], "turn-2"),
+    );
+
+    const [quiet] = projected.thread.activities;
+    expect(dataOf(quiet!).output).toBeUndefined();
+    expect(payloadOf(quiet!).hasCommandOutput).toBeUndefined();
+  });
+
+  it("advertises history output on a windowed page with no latest turn present", () => {
+    const projected = projectThreadDetailSnapshot(
+      snapshotOf([commandActivity({ id: "old", turnId: "turn-1" })], null),
+    );
+
+    const [old] = projected.thread.activities;
+    expect(dataOf(old!).output).toBeUndefined();
+    expect(payloadOf(old!).hasCommandOutput).toBe(true);
+  });
+});
+
+/**
+ * The live stream is what keeps an in-flight command current, so it must keep
+ * inlining output exactly as before this deferral existed.
+ */
+describe("projectActivityEvent command output", () => {
+  it("leaves live appended activities inline", () => {
+    const projected = projectActivityEvent({
+      type: "thread.activity-appended",
+      payload: { activity: commandActivity({ id: "live", turnId: "turn-9" }) },
+    } as unknown as OrchestrationEvent) as unknown as {
+      payload: { activity: OrchestrationThreadActivity };
+    };
+
+    const activity = projected.payload.activity;
+    expect(dataOf(activity).output).toBe("the command output");
+    expect(payloadOf(activity).hasCommandOutput).toBeUndefined();
   });
 });

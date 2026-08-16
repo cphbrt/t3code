@@ -125,7 +125,7 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
-import { activityFileChangesEnvironment } from "~/state/threads";
+import { activityCommandOutputEnvironment, activityFileChangesEnvironment } from "~/state/threads";
 
 import {
   buildInlineTerminalContextText,
@@ -2403,6 +2403,69 @@ const ToolFileChangesBody = memo(function ToolFileChangesBody(props: {
   });
 });
 
+const ToolCommandOutputBody = memo(function ToolCommandOutputBody(props: {
+  environmentId: EnvironmentId;
+  threadId: ScopedThreadRef["threadId"];
+  activityId: string;
+}) {
+  const result = useAtomValue(
+    activityCommandOutputEnvironment.detail({
+      environmentId: props.environmentId,
+      input: {
+        threadId: props.threadId,
+        activityId: EventId.make(props.activityId),
+      },
+    }),
+  );
+  const response = Option.getOrNull(AsyncResult.value(result));
+  if (response === null) {
+    return (
+      <p className="py-1 font-mono text-secondary-label text-[11px]">
+        {result._tag === "Failure" ? "Output unavailable." : "Loading output…"}
+      </p>
+    );
+  }
+  if (response.output.trim().length === 0) {
+    return <p className="py-1 text-secondary-label text-[11px]">No output recorded.</p>;
+  }
+  return (
+    <pre className="cursor-text whitespace-pre-wrap break-words font-mono text-secondary-label text-[11px] leading-relaxed select-text">
+      {response.output}
+    </pre>
+  );
+});
+
+/**
+ * Command rows expand by default, so history output loads on an explicit click
+ * rather than on mount: a thread open would otherwise fire one request per
+ * historical command row, which is the cost this deferral exists to avoid.
+ */
+const DeferredCommandOutput = memo(function DeferredCommandOutput(props: {
+  environmentId: EnvironmentId;
+  threadId: ScopedThreadRef["threadId"];
+  activityId: string;
+}) {
+  const [requested, setRequested] = useState(false);
+  if (!requested) {
+    return (
+      <button
+        type="button"
+        className="cursor-pointer rounded-sm px-1 py-0.5 font-sans text-[10px] text-muted-foreground underline decoration-dotted underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+        onClick={() => setRequested(true)}
+      >
+        Show output
+      </button>
+    );
+  }
+  return (
+    <ToolCommandOutputBody
+      environmentId={props.environmentId}
+      threadId={props.threadId}
+      activityId={props.activityId}
+    />
+  );
+});
+
 const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
@@ -2433,7 +2496,10 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       : rawPreview;
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const expandedBody = buildToolCallExpandedBody(workEntry, workspaceRoot);
-  const canExpand = expandedBody !== null || workEntry.hasFileDiff === true;
+  // Output the snapshot omitted for this history row; fetched on request.
+  const deferredOutput =
+    workEntry.hasCommandOutput === true && !expandedBody?.output && ctx.threadRef !== null;
+  const canExpand = expandedBody !== null || workEntry.hasFileDiff === true || deferredOutput;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -2561,7 +2627,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           </div>
         </div>
       </div>
-      {expanded && canExpand && expandedBody ? (
+      {expanded && canExpand && (expandedBody || deferredOutput) ? (
         <div
           className="mt-1 ms-7 max-h-64 cursor-default overflow-auto border-s border-border/45 ps-3 pt-0.5"
           onClick={stopRowToggle}
@@ -2579,13 +2645,15 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
                 wordWrap={wordWrap}
               />
             </>
-          ) : expandedBody.content ? (
+          ) : expandedBody?.content ? (
             <pre className={toolCallExpandedBodyClassName}>{expandedBody.content}</pre>
           ) : null}
-          {!workEntry.hasFileDiff && expandedBody.content && expandedBody.output ? (
+          {!workEntry.hasFileDiff &&
+          expandedBody?.content &&
+          (expandedBody.output || deferredOutput) ? (
             <hr className="my-2 border-0 border-t border-border/45" />
           ) : null}
-          {expandedBody.output ? (
+          {expandedBody?.output ? (
             <>
               <pre className={toolCallExpandedBodyClassName}>{expandedBody.output.text}</pre>
               {expandedBody.output.omittedBytes !== undefined ? (
@@ -2598,6 +2666,12 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
                 </div>
               ) : null}
             </>
+          ) : deferredOutput && ctx.threadRef ? (
+            <DeferredCommandOutput
+              environmentId={ctx.activeThreadEnvironmentId}
+              threadId={ctx.threadRef.threadId}
+              activityId={workEntry.id}
+            />
           ) : null}
         </div>
       ) : null}
