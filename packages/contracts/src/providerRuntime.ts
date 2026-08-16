@@ -196,6 +196,7 @@ const ProviderRuntimeEventType = Schema.Literals([
   "files.persisted",
   "runtime.warning",
   "runtime.error",
+  "peer.message",
 ]);
 export type ProviderRuntimeEventType = typeof ProviderRuntimeEventType.Type;
 
@@ -247,6 +248,7 @@ const DeprecationNoticeType = Schema.Literal("deprecation.notice");
 const FilesPersistedType = Schema.Literal("files.persisted");
 const ToolDeniedType = Schema.Literal("tool.denied");
 const RuntimeWarningType = Schema.Literal("runtime.warning");
+const PeerMessageType = Schema.Literal("peer.message");
 const RuntimeErrorType = Schema.Literal("runtime.error");
 
 const ProviderRuntimeEventBase = Schema.Struct({
@@ -831,6 +833,38 @@ const RuntimeWarningPayload = Schema.Struct({
 });
 export type RuntimeWarningPayload = typeof RuntimeWarningPayload.Type;
 
+/**
+ * An inbound message delivered to this session by another agent session
+ * (Claude Code's cross-session messaging). Every field is optional because the
+ * provider marks them all optional: a sender running an older harness, or a
+ * turn that is not exactly one harness-formed envelope, omits `body` and
+ * `senderName`. `senderPid` is the kernel-verified identity; `senderName` is
+ * sender-asserted display text and must be rendered as reported speech.
+ */
+const PeerMessagePayload = Schema.Struct({
+  direction: Schema.Literals(["incoming", "outgoing"]),
+  deliveryKind: TrimmedNonEmptyStringSchema,
+  body: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** Sender for an incoming message, recipient for an outgoing one. */
+  peerName: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** The agent's own one-line description of an outgoing message. */
+  summary: Schema.optional(TrimmedNonEmptyStringSchema),
+  senderSessionId: Schema.optional(TrimmedNonEmptyStringSchema),
+  senderPid: Schema.optional(Schema.Number),
+  /**
+   * Owning subagent, when the correspondent is one of this session's own
+   * subagents rather than another session. Set only on the receiving row, so
+   * the message lands in that subagent's transcript instead of the parent
+   * timeline (attributed payloads are re-homed to the Agents surface).
+   *
+   * Such a row records a send, not a delivery: the harness reports no outcome
+   * for an injected message and drops one silently if the agent finishes
+   * first, so consumers must not present it as received.
+   */
+  agentId: Schema.optional(TrimmedNonEmptyStringSchema),
+});
+export type PeerMessagePayload = typeof PeerMessagePayload.Type;
+
 const RuntimeErrorPayload = Schema.Struct({
   message: TrimmedNonEmptyStringSchema,
   class: Schema.optional(RuntimeErrorClass),
@@ -1198,6 +1232,13 @@ const ProviderRuntimeErrorEvent = Schema.Struct({
 });
 export type ProviderRuntimeErrorEvent = typeof ProviderRuntimeErrorEvent.Type;
 
+const ProviderRuntimePeerMessageEvent = Schema.Struct({
+  ...ProviderRuntimeEventBase.fields,
+  type: PeerMessageType,
+  payload: PeerMessagePayload,
+});
+export type ProviderRuntimePeerMessageEvent = typeof ProviderRuntimePeerMessageEvent.Type;
+
 export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeSessionStartedEvent,
   ProviderRuntimeSessionConfiguredEvent,
@@ -1248,6 +1289,7 @@ export const ProviderRuntimeEventV2 = Schema.Union([
   ProviderRuntimeToolDeniedEvent,
   ProviderRuntimeWarningEvent,
   ProviderRuntimeErrorEvent,
+  ProviderRuntimePeerMessageEvent,
 ]);
 export type ProviderRuntimeEventV2 = typeof ProviderRuntimeEventV2.Type;
 

@@ -3507,6 +3507,471 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("surfaces a peer-delivered message and stays quiet on its lifecycle frames", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // The frames that bracket the queued command carry no content and must
+      // stay invisible; the content rides the terminal result's origin.
+      harness.query.emit({
+        type: "command_lifecycle",
+        command_uuid: "3f2307ce-8ec7-4efc-8e0c-5e9388a2866c",
+        state: "started",
+        session_id: "session",
+        uuid: "cl-start",
+      } as unknown as SDKMessage);
+
+      // The delivery wakes a turn, which then does its work and replies.
+      harness.query.emit({
+        type: "assistant",
+        session_id: "session",
+        uuid: "assistant-peer",
+        parent_tool_use_id: null,
+        message: { id: "msg-peer", content: [{ type: "text", text: "acknowledged" }] },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "session",
+        uuid: "result-peer",
+        origin: {
+          kind: "peer",
+          from: "uds:/tmp/example-peer.sock",
+          verifiedPeerPid: 12345,
+          name: "t3code-9c",
+          fromMode: "bypass",
+          body: "Reply briefly with the word acknowledged.",
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "command_lifecycle",
+        command_uuid: "3f2307ce-8ec7-4efc-8e0c-5e9388a2866c",
+        state: "completed",
+        session_id: "session",
+        uuid: "cl-done",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const peerEvents = runtimeEvents.filter((event) => event.type === "peer.message");
+      assert.equal(peerEvents.length, 1);
+      assert.deepEqual(peerEvents[0]?.payload, {
+        direction: "incoming",
+        deliveryKind: "peer",
+        body: "Reply briefly with the word acknowledged.",
+        peerName: "t3code-9c",
+        senderPid: 12345,
+      });
+
+      // Discovered on the terminal result, but stamped with the turn's start:
+      // clients sort by createdAt, so the message that woke the turn reads at
+      // its head rather than after the reply to it.
+      const turnStarted = runtimeEvents.find((event) => event.type === "turn.started");
+      assert.equal(peerEvents[0]?.createdAt, turnStarted?.createdAt);
+
+      // No red rows: the lifecycle frames produce nothing at all.
+      assert.deepEqual(
+        runtimeEvents.filter((event) => event.type === "runtime.warning"),
+        [],
+      );
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("surfaces the agent's own SendMessage as an outgoing message", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "tool-send-1", name: "SendMessage", input: {} },
+        },
+      } as unknown as SDKMessage);
+
+      // The harness echoes `recipient` alongside `to` and a fixed 50-char
+      // `content` preview alongside the full `message`; the full values win.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-input",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: {
+            type: "input_json_delta",
+            partial_json:
+              '{"to":"t3code-9c","recipient":"t3code-9c","summary":"Status update",' +
+              '"message":"Rebase is done and the suite is green.",' +
+              '"content":"Rebase is done and the suite is gr…","type":"message"}',
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "user",
+        session_id: "session",
+        uuid: "send-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tool-send-1", content: "delivered" }],
+        },
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const sent = runtimeEvents.filter(
+        (event) => event.type === "peer.message" && event.payload.direction === "outgoing",
+      );
+      assert.equal(sent.length, 1);
+      assert.deepEqual(sent[0]?.payload, {
+        direction: "outgoing",
+        deliveryKind: "peer",
+        body: "Rebase is done and the suite is green.",
+        peerName: "t3code-9c",
+        summary: "Status update",
+      });
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("files a message sent into this session's own subagent under that agent", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // A subagent's id IS its task id, which is what `to` carries.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "agent-junior-1",
+        tool_use_id: "toolu-task-1",
+        description: "Example subagent",
+        subagent_type: "junior",
+        task_type: "local_agent",
+        uuid: "task-started-uuid",
+        session_id: "session",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "tool-send-2", name: "SendMessage", input: {} },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-input",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: {
+            type: "input_json_delta",
+            partial_json:
+              '{"to":"agent-junior-1","summary":"Change of plan",' +
+              '"message":"Do not commit to main.","type":"message"}',
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "user",
+        session_id: "session",
+        uuid: "send-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tool-send-2", content: "queued" }],
+        },
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const peerEvents = runtimeEvents.filter((event) => event.type === "peer.message");
+      // Two rows, not one: the attributed row is re-homed out of the parent
+      // timeline, so the sender's own row has to stay behind.
+      assert.equal(peerEvents.length, 2);
+      assert.deepEqual(peerEvents[0]?.payload, {
+        direction: "outgoing",
+        deliveryKind: "peer",
+        body: "Do not commit to main.",
+        peerName: "agent-junior-1",
+        summary: "Change of plan",
+      });
+      assert.deepEqual(peerEvents[1]?.payload, {
+        direction: "incoming",
+        deliveryKind: "subagent-injection",
+        agentId: "agent-junior-1",
+        body: "Do not commit to main.",
+        summary: "Change of plan",
+      });
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("stays silent when the message restarts a settled subagent", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "agent-junior-1",
+        tool_use_id: "toolu-task-1",
+        description: "Example subagent",
+        subagent_type: "junior",
+        task_type: "local_agent",
+        uuid: "task-started-uuid",
+        session_id: "session",
+      } as unknown as SDKMessage);
+
+      // Once it settles, a message to it restarts it and the harness re-emits
+      // task_started carrying the message as the agent's new prompt, which the
+      // roster already shows. A row here would print the same text twice.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "agent-junior-1",
+        patch: { status: "completed" },
+        uuid: "task-updated-uuid",
+        session_id: "session",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "tool-send-4", name: "SendMessage", input: {} },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-input",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: {
+            type: "input_json_delta",
+            partial_json: '{"to":"agent-junior-1","message":"Another round, please."}',
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "user",
+        session_id: "session",
+        uuid: "send-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tool-send-4", content: "restarted" }],
+        },
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const peerEvents = runtimeEvents.filter((event) => event.type === "peer.message");
+      assert.equal(peerEvents.length, 1);
+      assert.equal(peerEvents[0]?.payload.direction, "outgoing");
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("leaves a message to another session unattributed", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "tool-send-3", name: "SendMessage", input: {} },
+        },
+      } as unknown as SDKMessage);
+
+      // A peer session, and a unix socket path — neither owns a transcript here.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "session",
+        uuid: "send-input",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: {
+            type: "input_json_delta",
+            partial_json: '{"to":"uds:/tmp/example-peer.sock","message":"Status?"}',
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "user",
+        session_id: "session",
+        uuid: "send-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: "tool-send-3", content: "delivered" }],
+        },
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const peerEvents = runtimeEvents.filter((event) => event.type === "peer.message");
+      assert.equal(peerEvents.length, 1);
+      assert.equal(peerEvents[0]?.payload.direction, "outgoing");
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("ignores result origins that are not inter-session deliveries", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      // A human turn and a plain background notification are not someone
+      // talking to this session.
+      for (const origin of [{ kind: "human" }, { kind: "task-notification" }]) {
+        harness.query.emit({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          errors: [],
+          session_id: "session",
+          uuid: `result-${origin.kind}`,
+          origin,
+        } as unknown as SDKMessage);
+      }
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      assert.deepEqual(
+        runtimeEvents.filter((event) => event.type === "peer.message"),
+        [],
+      );
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("emits thread token usage updates from Claude task progress", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
