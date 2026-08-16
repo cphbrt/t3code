@@ -1,0 +1,53 @@
+# Backlog
+
+Cross-session queue of undecided items, known defects, and deferred maintenance
+for CPH Code. Sessions end; this file does not. Any Manager picking up work
+here should check this list first, and every session that resolves, supersedes,
+or discovers an item must update this file in the same commit series as the
+work itself. Keep entries publishable: technical facts only, no private data.
+
+## Decisions needed from Chris
+
+- **WebSocket transfer-budget regression (unowned).** The measured-turn
+  budgets in `TransferBudgetReport.integration.ts` fail on clean main:
+  roughly 11k wire bytes against the 8k cap and 71,446 decoded bytes against
+  the 68k cap. Pre-existing and unattributed; decoded bytes are byte-identical
+  across runs, and both 2026-08-16 feature lanes were excluded as causes.
+  `totalWireBytes` derives from snapshot plus measured-turn, so it is one
+  investigation. The subagent-transcripts team volunteered (they know the
+  live-streaming payload path best). Needs prioritization and assignment.
+  Do not weaken the caps to make the test pass.
+- **"Plan updated" surface is dead in production.** Claude CLI 2.1.233
+  removed `TodoWrite`/`Task*` from the default toolset on modern models, so
+  `turn.plan.updated` never fires anymore. Decide: remove the surface, or
+  restore the tools via explicit `allowedTools` in the adapter.
+- **Batched peer-message deliveries have no marker.** When several
+  inter-session messages arrive during one turn, the provider reports a
+  single batched terminal `origin` (sometimes with no body), so individual
+  rows cannot be placed. Current shipped behavior shows nothing extra for
+  the batched case. Decide whether a contentless "a message arrived" row is
+  wanted; it was deliberately not built because it reads close to the noise
+  the peer-message work removed. Evidence: "What the provider will not tell
+  us" in the command-lifecycle review doc (session artifact, /private/tmp).
+- **`runtime.warning` rows always render destructive-red.** The payload
+  carries `tone: "info"` but the web renderer ignores it. Small visual fix;
+  needs a call on the intended tone mapping.
+- **NUL/0x1F bytes in `ActivityPayloadProjection.ts` break grep.** The file
+  contains literal control bytes inside string literals, so BSD grep
+  classifies it as binary and silently returns zero matches — humans and
+  agents searching the codebase miss the file entirely. One character-class
+  fix; deserves its own commit.
+
+## Housekeeping (safe once Chris has relaunched happily)
+
+- Delete the `backup/pre-command-output` ref (pre-rewrite main tip safety
+  net).
+- `git worktree prune` — the `design/claude-limit-countdown` worktree
+  directory was tmp-reaped; then delete that branch (all content landed).
+- Delete the dead remote-tracking branch `codex/output-truncation-metadata`
+  (upstream ref is gone).
+- The `review/*` worktrees under `/private/tmp` are pinned at pre-rewrite
+  SHAs; their content all landed under new SHAs. Disposable, but anyone
+  resuming one must rebase first — a stale tip can silently remove newer
+  main work (this exact trap was confirmed and cleaned up once already on
+  2026-08-16).

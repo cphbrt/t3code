@@ -105,6 +105,8 @@ Show that estimate without consuming thread-title space: sidebar rows drift from
 
 As Chris's workflow and product preferences become clear through use, proactively record durable choices in this CPH Code prefix and the corresponding `README.md` introduction. Keep those additions concise and specific so future work preserves intentional fork behavior instead of repeatedly rediscovering it.
 
+Cross-session todos live in `BACKLOG.md` at the repo root: open decisions awaiting Chris, known-but-unfixed defects, deferred curation, and housekeeping. Check it when starting work in this repo, and update it in the same change whenever a session resolves an entry or leaves a new loose end behind. Backlog entries are published with the repo, so they carry technical facts only.
+
 For routine product checks that require a live agent, use economical models such as Luna for Codex and Sonnet for Claude unless the behavior under test specifically depends on a frontier model.
 
 For a substantial or uncertain change that is too large to develop directly on `main`, use a temporary worktree and branch. Implement and commit the candidate there, verify it with an isolated dev server, and prepare a temporary Markdown review document with inline screenshots plus a clear explanation of the behavior and design choices. Open the actual Markdown file in Chris's Google Chrome with `open -a 'google chrome' '/absolute/path/to/review.md'`; do not substitute the in-app browser, a browser-automation preview, an HTML companion, or another Chrome development surface. Wait for Chris's yay or nay before bringing the reviewed commits to `main`, then ship normally after approval.
