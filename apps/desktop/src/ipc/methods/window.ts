@@ -85,6 +85,26 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
+/**
+ * Bring the app forward from the renderer. A renderer-side `window.focus()`
+ * cannot steal activation from another macOS application, so clicking a
+ * notification banner has to route through the main process, where `reveal`
+ * un-minimizes, shows, and calls `app.focus({ steal: true })`.
+ */
+export const revealWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REVEAL_WINDOW_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.revealWindow")(function* () {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.currentMainOrFirst;
+    if (Option.isNone(window)) {
+      return;
+    }
+    yield* electronWindow.reveal(window.value);
+  }),
+});
+
 export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),

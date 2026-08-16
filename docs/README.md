@@ -9,6 +9,7 @@
 - [Dictation (macOS)](./user/dictation.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Background work after a turn settles](./user/background-tasks.md)
+- [Notifications when a thread needs you](./user/waiting-notifications.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
 - [Mobile appearance](./user/mobile-appearance.md)

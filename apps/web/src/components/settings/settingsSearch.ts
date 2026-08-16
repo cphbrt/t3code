@@ -122,6 +122,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "waiting-notifications",
+    title: "Notify when a thread needs you",
+    to: "/settings/general",
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",

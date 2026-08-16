@@ -1104,6 +1104,11 @@ export interface DesktopBridge {
    * builds lack it; callers fall back to VS Code only.
    */
   probeRemoteEditors?: () => Promise<readonly EditorId[]>;
+  /**
+   * Bring the desktop window forward. Optional: older desktop builds lack it,
+   * and web callers fall back to `window.focus()` alone.
+   */
+  revealWindow?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   /**
    * Hold-to-quit hint pushes: "down" when the quit shortcut is first pressed,
