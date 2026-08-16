@@ -3506,15 +3506,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // Undeclared-but-real subtypes (absent from the SDK's union, so they can't
     // be switch cases): consumed intentionally without emitting, otherwise
     // they fall through to the unknown-subtype warning and surface as spurious
-    // error rows in client work logs. `background_tasks_changed` is a roster
-    // snapshot ({tasks: [...]}) — the task_* lifecycle events carry the
-    // authoritative per-agent data and the typed background_tasks control
-    // request is the reconciliation source. `vcs_state_changed`
+    // error rows in client work logs. `vcs_state_changed`
     // ({kind: commit|push|rebase}) and `code_change_published`
     // ({provider, url, repo}) are informational CLI notices; the work log
     // already shows the underlying git/gh tool calls.
     switch (message.subtype as string) {
-      case "background_tasks_changed":
       case "vcs_state_changed":
       case "code_change_published":
         return;
@@ -3834,6 +3830,31 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       case "memory_recall":
       case "elicitation_complete":
         return;
+      // Typed in 0.3.233. Each is consumed deliberately for a stated reason;
+      // none gets a product surface here.
+      // `background_tasks_changed` graduated from the undeclared-subtype list
+      // above and keeps its rationale: a roster snapshot whose authoritative
+      // data already arrives via task_* events and the background_tasks
+      // control request.
+      // `control_request_progress` is control-plane retry telemetry
+      // ({request_id, status: started|api_retry}); the turn-level `api_retry`
+      // heartbeat above already keeps the session visibly alive, and the
+      // terminal result reports real failures.
+      // `model_refusal_no_fallback` mirrors `model_refusal_fallback`, which
+      // this adapter has always consumed silently.
+      // `worker_shutting_down` carries a graceful-exit reason and is the right
+      // future input for the interrupted-thread rule; wiring it to that rule
+      // is a deliberate follow-up, not a drive-by.
+      // `informational` carries CLI text with a render level. Routing it to a
+      // work-log row is a product decision entangled with the runtime.warning
+      // red-rendering question, so it waits for that decision rather than
+      // adding more red rows.
+      case "background_tasks_changed":
+      case "control_request_progress":
+      case "informational":
+      case "model_refusal_no_fallback":
+      case "worker_shutting_down":
+        return;
       case "permission_denied":
         yield* offerRuntimeEvent({
           ...base,
@@ -3987,6 +4008,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       // Composer prompt suggestions have no T3 surface; consumed deliberately.
       case "prompt_suggestion":
+        return;
+      // Typed in 0.3.233. The CLI started a fresh conversation id behind the
+      // same session. T3 keys its thread on the session id, which is
+      // unchanged, and `ensureThreadId` above already reconciles ids from
+      // every message, so there is nothing to reconcile here. Consumed
+      // deliberately rather than surfaced.
+      case "conversation_reset":
         return;
       default: {
         // Exhaustiveness guard (see handleSystemMessage): new SDK top-level
