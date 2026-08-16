@@ -424,6 +424,16 @@ export const ToolFileChangesResult = Schema.Struct({
 });
 export type ToolFileChangesResult = typeof ToolFileChangesResult.Type;
 
+/**
+ * One command activity's captured output, served on demand for history rows
+ * whose payload advertises `hasCommandOutput` instead of inlining the text.
+ * Empty when the activity kept no output.
+ */
+export const ToolCommandOutputResult = Schema.Struct({
+  output: Schema.String,
+});
+export type ToolCommandOutputResult = typeof ToolCommandOutputResult.Type;
+
 export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),

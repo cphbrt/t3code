@@ -179,6 +179,16 @@ export interface ProjectionSnapshotQueryShape {
   ) => Effect.Effect<Option.Option<ReadonlyArray<ToolFileChange>>, ProjectionRepositoryError>;
 
   /**
+   * Read the full captured output for one persisted command activity. Snapshots
+   * only inline the latest turn's output, so history rows resolve their text
+   * through here.
+   */
+  readonly getActivityCommandOutput?: (
+    threadId: ThreadId,
+    activityId: EventId,
+  ) => Effect.Effect<Option.Option<string>, ProjectionRepositoryError>;
+
+  /**
    * Read a single active thread detail together with the projection snapshot
    * sequence in one consistent transaction, so the returned `snapshotSequence`
    * exactly matches the state reflected in `thread` (no interleaving projector
