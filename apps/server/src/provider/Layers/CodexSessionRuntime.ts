@@ -1229,18 +1229,32 @@ export const makeCodexSessionRuntime = (
             });
             return true;
           case "item/started":
-          case "item/completed":
+          case "item/completed": {
+            // The child's item is forwarded VERBATIM, plus the three things
+            // the adapter needs to rebuild a parent-fidelity item lifecycle
+            // event: which half of the lifecycle this is (both methods share
+            // one synthetic method), the child's item id (correlates the
+            // started/completed pair, and is what the parent path stamps as
+            // providerItemId), and the child's own turn id (the event's
+            // turnId is the PARENT's spawn turn, kept for fleet batching).
+            const childItem = notification.params.item;
+            const childItemId = childItem.id.length > 0 ? childItem.id : undefined;
+            const childTurnId = notification.params.turnId;
             yield* emitEvent({
               kind: "notification",
               threadId: options.threadId,
               ...(child.spawnTurnId ? { turnId: child.spawnTurnId } : {}),
+              ...(childItemId ? { itemId: ProviderItemId.make(childItemId) } : {}),
               method: "collabAgent/item",
               payload: {
                 ...childIdentity,
-                item: notification.params.item,
+                lifecycle: notification.method === "item/started" ? "started" : "completed",
+                ...(childTurnId ? { agentTurnId: childTurnId } : {}),
+                item: childItem,
               },
             });
             return true;
+          }
           case "thread/closed":
             // The child is gone: drop its live-turn entry so a later Stop
             // doesn't waste a turn/interrupt RPC on a closed thread before

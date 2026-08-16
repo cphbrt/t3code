@@ -405,6 +405,64 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("tracks one transcript surface per subagent and reactivates an open one", () => {
+    useRightPanelStore.getState().openAgentTranscript(refA, "a1", "Explore adapter");
+    useRightPanelStore.getState().openAgentTranscript(refA, "a2", "Audit wire");
+    useRightPanelStore.getState().openAgentTranscript(refA, "a1", "Explore adapter");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "agent-transcript:a1",
+      "agent-transcript:a2",
+    ]);
+    expect(state.activeSurfaceId).toBe("agent-transcript:a1");
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      id: "agent-transcript:a1",
+      kind: "agent-transcript",
+      agentId: "a1",
+      title: "Explore adapter",
+    });
+  });
+
+  it("refreshes a transcript tab's label when the agent is reopened", () => {
+    useRightPanelStore.getState().openAgentTranscript(refA, "a1");
+    useRightPanelStore.getState().openAgentTranscript(refA, "a1", "Now titled");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toHaveLength(1);
+    expect(state.surfaces[0]).toEqual({
+      id: "agent-transcript:a1",
+      kind: "agent-transcript",
+      agentId: "a1",
+      title: "Now titled",
+    });
+  });
+
+  it("drops a persisted transcript surface whose id and agent id disagree", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "agent-transcript:a1",
+            surfaces: [
+              {
+                id: "agent-transcript:a1",
+                kind: "agent-transcript",
+                agentId: "a1",
+                title: "Explore adapter",
+              },
+              // A surface persisted before titles existed still restores.
+              { id: "agent-transcript:a0", kind: "agent-transcript", agentId: "a0" },
+              { id: "agent-transcript:a2", kind: "agent-transcript", agentId: "tampered" },
+              { id: "agent-transcript:a3", kind: "agent-transcript" },
+            ],
+          },
+        },
+      }).byThreadKey["env-1:thread-A"]?.surfaces.map((surface) => surface.id),
+    ).toEqual(["agent-transcript:a1", "agent-transcript:a0"]);
+  });
+
   it("tracks one surface per pull request", () => {
     const first = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
     const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };

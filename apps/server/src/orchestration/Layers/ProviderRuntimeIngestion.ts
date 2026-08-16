@@ -352,6 +352,7 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
     "model",
     "effort",
     "toolUseId",
+    "prompt",
     "parentAgentId",
     "workflowName",
     "agentIndex",
@@ -372,6 +373,38 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
     }
   }
   return fields;
+}
+
+/**
+ * A subagent's own text or thinking, which arrives as an item.completed
+ * carrying the owning agentId. Main-thread narration is a thread MESSAGE, not
+ * an activity; a subagent's cannot be, because messages have no owner, so it
+ * is persisted as an attributed activity that clients keep out of the main
+ * timeline and render inside the agent's transcript. Detail is stored whole:
+ * the truncation applied to tool rows exists for one-line summaries, and this
+ * IS the transcript.
+ */
+function agentNarrationActivity(
+  event: Extract<ProviderRuntimeEvent, { type: "item.completed" }>,
+): Omit<OrchestrationThreadActivity, "turnId"> | undefined {
+  const { agentId, parentToolUseId, itemType, detail } = event.payload;
+  if (!agentId || (itemType !== "assistant_message" && itemType !== "reasoning")) {
+    return undefined;
+  }
+  const isReasoning = itemType === "reasoning";
+  return {
+    id: event.eventId,
+    createdAt: event.createdAt,
+    tone: "info",
+    kind: isReasoning ? "agent.reasoning" : "agent.message",
+    summary: event.payload.title ?? (isReasoning ? "Agent thinking" : "Agent message"),
+    payload: {
+      itemType,
+      ...(detail ? { detail } : {}),
+      agentId,
+      ...(parentToolUseId ? { parentToolUseId } : {}),
+    },
+  };
 }
 
 export function runtimeEventToActivities(
@@ -837,6 +870,10 @@ export function runtimeEventToActivities(
     }
 
     case "item.completed": {
+      const narration = agentNarrationActivity(event);
+      if (narration) {
+        return [{ ...narration, turnId: toTurnId(event.turnId) ?? null, ...maybeSequence }];
+      }
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
@@ -1796,7 +1833,11 @@ const make = Effect.gen(function* () {
       }
 
       const assistantCompletion =
-        event.type === "item.completed" && event.payload.itemType === "assistant_message"
+        event.type === "item.completed" &&
+        event.payload.itemType === "assistant_message" &&
+        // Agent-owned narration is an attributed activity, never the parent
+        // thread's assistant message.
+        !event.payload.agentId
           ? {
               messageId: MessageId.make(
                 `assistant:${event.itemId ?? event.turnId ?? event.eventId}`,

@@ -742,6 +742,24 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("asks the SDK to forward subagent narration", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.forwardSubagentText, true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("forwards Claude thinking toggle into SDK settings for Haiku 4.5", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -759,6 +777,7 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
+        cleanupPeriodDays: 36_500,
         alwaysThinkingEnabled: false,
       });
     }).pipe(
@@ -783,7 +802,8 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      // Transcript retention rides on every session; the toggle does not.
+      assert.deepEqual(createInput?.options.settings, { cleanupPeriodDays: 36_500 });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -807,6 +827,7 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
+        cleanupPeriodDays: 36_500,
         fastMode: true,
       });
     }).pipe(
@@ -831,7 +852,8 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      // Transcript retention rides on every session; the toggle does not.
+      assert.deepEqual(createInput?.options.settings, { cleanupPeriodDays: 36_500 });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -2035,6 +2057,561 @@ describe("ClaudeAdapterLive", () => {
       if (progress?.type === "task.progress") {
         assert.equal(progress.payload.model, "claude-sonnet-5[1m]");
         assert.equal(progress.payload.effort, "max");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("subagent snapshots become attributed narration items", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const itemsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "item.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-narration",
+        description: "Agent N",
+        task_type: "subagent",
+        tool_use_id: "toolu_agent_n",
+        uuid: "task-narration-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // Narration whose parent id matches no task we saw start cannot be
+      // re-homed, so it must not reach the stream at all. Emitting it first
+      // means any leak would be taken ahead of the attributed rows below.
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_unknown_agent",
+        message: {
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "orphaned narration" }],
+        },
+        uuid: "orphan-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_n",
+        message: {
+          model: "claude-sonnet-4-6",
+          content: [
+            { type: "thinking", thinking: "  weighing options  " },
+            { type: "text", text: "found it" },
+          ],
+        },
+        uuid: "narration-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const items = Array.from(yield* Fiber.join(itemsFiber));
+      const reasoning = items[0];
+      assert.equal(reasoning?.type, "item.completed");
+      if (reasoning?.type === "item.completed") {
+        assert.equal(reasoning.payload.itemType, "reasoning");
+        assert.equal(reasoning.payload.detail, "weighing options");
+        assert.equal(reasoning.payload.agentId, "task-narration");
+        assert.equal(reasoning.payload.parentToolUseId, "toolu_agent_n");
+        assert.equal(String(reasoning.itemId), "narration-snapshot-uuid:0");
+      }
+      const text = items[1];
+      assert.equal(text?.type, "item.completed");
+      if (text?.type === "item.completed") {
+        assert.equal(text.payload.itemType, "assistant_message");
+        assert.equal(text.payload.detail, "found it");
+        assert.equal(text.payload.agentId, "task-narration");
+        assert.equal(String(text.itemId), "narration-snapshot-uuid:1");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("subagent snapshot tool calls complete as attributed rows", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const itemsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "item.started" || event.type === "item.completed"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-tools",
+        description: "Agent T",
+        task_type: "subagent",
+        tool_use_id: "toolu_agent_t",
+        uuid: "task-tools-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // A snapshot whose parent id matches no started task cannot be
+      // attributed, so its tools must not go in flight at all. Emitted first:
+      // any leak would be taken ahead of the attributed rows below.
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_unknown_agent",
+        message: {
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_orphan_bash",
+              name: "Bash",
+              input: { command: "echo orphan" },
+            },
+          ],
+        },
+        uuid: "orphan-tool-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // Subagent tool calls arrive only inside a parented snapshot; the
+      // stream never carries them (SDK 0.3.170 live probe).
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_t",
+        message: {
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_sub_bash",
+              name: "Bash",
+              input: { command: "echo hello-from-subagent" },
+            },
+          ],
+        },
+        uuid: "subagent-tool-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "user",
+        parent_tool_use_id: "toolu_agent_t",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_sub_bash",
+              content: "hello-from-subagent",
+            },
+          ],
+        },
+        uuid: "subagent-tool-result-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const items = Array.from(yield* Fiber.join(itemsFiber));
+      const started = items[0];
+      assert.equal(started?.type, "item.started");
+      if (started?.type === "item.started") {
+        assert.equal(started.payload.itemType, "command_execution");
+        assert.equal(started.payload.agentId, "task-tools");
+        assert.equal(started.payload.parentToolUseId, "toolu_agent_t");
+        assert.equal(String(started.itemId), "toolu_sub_bash");
+      }
+      // The ordinary tool_result path completes it: same data shape as a
+      // main-thread row, plus the attribution.
+      const completed = items.find((event) => event.type === "item.completed");
+      assert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        assert.equal(completed.payload.status, "completed");
+        assert.equal(completed.payload.agentId, "task-tools");
+        assert.equal(completed.payload.parentToolUseId, "toolu_agent_t");
+        assert.deepEqual(completed.payload.data, {
+          toolName: "Bash",
+          input: { command: "echo hello-from-subagent" },
+          result: {
+            type: "tool_result",
+            tool_use_id: "toolu_sub_bash",
+            content: "hello-from-subagent",
+          },
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("a snapshot-registered subagent Edit carries fileChanges", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "item.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent that edits",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-edit",
+        description: "Agent E",
+        task_type: "subagent",
+        tool_use_id: "toolu_agent_e",
+        uuid: "task-edit-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_e",
+        message: {
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_sub_edit",
+              name: "Edit",
+              input: { file_path: "src/app.ts", old_string: "old", new_string: "new" },
+            },
+          ],
+        },
+        uuid: "subagent-edit-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      // Live probe (SDK 0.3.170): PostToolUse fires for a SUBAGENT's Edit with
+      // the same tool_use_id, so the structured patch reaches the adapter by
+      // the same side channel main-thread rows use. The parented tool_result
+      // message itself carries no tool_use_result, so this is the only source.
+      const postToolUseHook =
+        harness.getLastCreateQueryInput()?.options.hooks?.PostToolUse?.[0]?.hooks[0];
+      assert.isDefined(postToolUseHook);
+      yield* Effect.promise(() =>
+        postToolUseHook!(
+          {
+            hook_event_name: "PostToolUse",
+            tool_name: "Edit",
+            tool_input: { file_path: "src/app.ts" },
+            tool_response: {
+              filePath: "src/app.ts",
+              oldString: "old",
+              newString: "new",
+              originalFile: "old\n",
+              structuredPatch: [
+                { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-old", "+new"] },
+              ],
+              userModified: false,
+              replaceAll: false,
+            },
+            tool_use_id: "toolu_sub_edit",
+          } as Parameters<NonNullable<typeof postToolUseHook>>[0],
+          "toolu_sub_edit",
+          { signal: new AbortController().signal },
+        ),
+      );
+
+      harness.query.emit({
+        type: "user",
+        parent_tool_use_id: "toolu_agent_e",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "toolu_sub_edit",
+              content: "The file src/app.ts has been updated.",
+            },
+          ],
+        },
+        uuid: "subagent-edit-result-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const completed = yield* Fiber.join(completedFiber);
+      assert.equal(completed._tag, "Some");
+      if (completed._tag !== "Some" || completed.value.type !== "item.completed") {
+        return;
+      }
+      assert.equal(completed.value.payload.itemType, "file_change");
+      assert.equal(completed.value.payload.agentId, "task-edit");
+      assert.deepEqual(completed.value.payload.fileChanges, [
+        { path: "src/app.ts", kind: "update", diff: "@@ -1,1 +1,1 @@\n-old\n+new" },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("main-thread snapshots do not re-register their stream tools", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "item.started"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run a command",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: "stream-main-bash",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_main_bash",
+            name: "Bash",
+            input: { command: "ls" },
+          },
+        },
+      } as unknown as SDKMessage);
+      // The parent's own snapshot repeats that tool_use block. Registering
+      // from snapshots is a subagent-only path, so this must be inert.
+      harness.query.emit({
+        type: "assistant",
+        message: {
+          model: "claude-sonnet-4-6",
+          content: [
+            { type: "tool_use", id: "toolu_main_bash", name: "Bash", input: { command: "ls" } },
+          ],
+        },
+        uuid: "main-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // Sentinel: whatever lands second must be this, not a duplicate.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: "stream-main-bash-2",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_main_bash_2",
+            name: "Bash",
+            input: { command: "pwd" },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const started = Array.from(yield* Fiber.join(startedFiber));
+      assert.equal(String(started[0]?.itemId), "toolu_main_bash");
+      assert.equal(String(started[1]?.itemId), "toolu_main_bash_2");
+      for (const event of started) {
+        if (event.type === "item.started") {
+          assert.equal(event.payload.agentId, undefined);
+        }
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("a nested Task launched inside a subagent keeps its owning agent", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-outer",
+        description: "Outer agent",
+        task_type: "subagent",
+        tool_use_id: "toolu_agent_outer",
+        uuid: "task-outer-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // One snapshot carrying a plain tool AND a nested agent launch.
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_agent_outer",
+        message: {
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_inner_bash",
+              name: "Bash",
+              input: { command: "ls" },
+            },
+            {
+              type: "tool_use",
+              id: "toolu_agent_inner",
+              name: "Task",
+              input: { subagent_type: "general-purpose" },
+            },
+          ],
+        },
+        uuid: "nested-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // The nested agent's own task_started resolves its launching tool from
+      // the in-flight registration above.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-inner",
+        description: "Inner agent",
+        task_type: "subagent",
+        tool_use_id: "toolu_agent_inner",
+        uuid: "task-inner-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const outer = taskEvents[0];
+      assert.equal(outer?.type, "task.started");
+      if (outer?.type === "task.started") {
+        assert.equal(outer.payload.taskId, "task-outer");
+        assert.equal(outer.payload.agentId, undefined);
+      }
+      const inner = taskEvents[1];
+      assert.equal(inner?.type, "task.started");
+      if (inner?.type === "task.started") {
+        assert.equal(inner.payload.taskId, "task-inner");
+        // Launched from inside the outer subagent, so it is agent-internal.
+        assert.equal(inner.payload.agentId, "task-outer");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("agent task.started carries the launch prompt, capped", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "task.started"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn agents",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-prompt",
+        description: "Agent P",
+        task_type: "subagent",
+        tool_use_id: "toolu_agent_p",
+        prompt: "Reply with the single word: hello",
+        uuid: "task-prompt-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-prompt-long",
+        description: "Agent L",
+        task_type: "subagent",
+        tool_use_id: "toolu_agent_l",
+        prompt: "x".repeat(1500),
+        uuid: "task-prompt-long-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const started = taskEvents[0];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.prompt, "Reply with the single word: hello");
+      }
+      const longStarted = taskEvents[1];
+      assert.equal(longStarted?.type, "task.started");
+      if (longStarted?.type === "task.started") {
+        assert.equal(longStarted.payload.prompt, `${"x".repeat(1000)}…`);
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

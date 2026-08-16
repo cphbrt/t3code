@@ -137,8 +137,17 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
   );
 }
 
-/** Flat, non-interactive agent status line. No unfold. */
-function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+/**
+ * Flat agent status line. No unfold: activating it opens that agent's full
+ * transcript as its own surface, so the roster keeps its fixed row height.
+ */
+function AgentRow({
+  agent,
+  onOpenTranscript,
+}: {
+  agent: RuntimeSubagent;
+  onOpenTranscript?: ((agentId: string, title: string) => void) | undefined;
+}) {
   const visuals = STATUS_VISUALS[agent.status];
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
@@ -153,8 +162,10 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
 
-  return (
-    <div className="grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1">
+  // One shared subtree for both the plain and the activatable row: the panel's
+  // three-line grid must keep the same height either way.
+  const content = (
+    <>
       <span className="col-start-1 row-start-1 flex items-center">
         <StatusDot status={agent.status} />
       </span>
@@ -186,7 +197,24 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
         {metadata.join(" · ")}
       </span>
       <span className="sr-only">{visuals.label}</span>
-    </div>
+    </>
+  );
+
+  const rowClass =
+    "grid h-[3.875rem] grid-cols-[0.375rem_minmax(0,1fr)_auto] grid-rows-[1.25rem_1.125rem_1rem] items-center gap-x-2 rounded-md px-1.5 py-1";
+
+  if (!onOpenTranscript) {
+    return <div className={rowClass}>{content}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenTranscript(agent.id, agent.title)}
+      aria-label={`Open transcript for ${agent.title}`}
+      className={cn(rowClass, "w-full cursor-pointer text-left hover:bg-accent/40")}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -317,9 +345,11 @@ function WorkflowScriptView({
 function PhaseSection({
   phase,
   defaultOpen = false,
+  onOpenTranscript,
 }: {
   phase: AgentPanelWorkflowGroup["phases"][number];
   defaultOpen?: boolean;
+  onOpenTranscript?: ((agentId: string, title: string) => void) | undefined;
 }) {
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
   const previousState = useRef(phase.state);
@@ -368,7 +398,11 @@ function PhaseSection({
           </span>
         ) : null}
       </button>
-      {open ? phase.members.map((member) => <AgentRow key={member.id} agent={member} />) : null}
+      {open
+        ? phase.members.map((member) => (
+            <AgentRow key={member.id} agent={member} onOpenTranscript={onOpenTranscript} />
+          ))
+        : null}
     </div>
   );
 }
@@ -379,11 +413,13 @@ function ExpandedWorkflowSection({
   environmentId,
   threadId,
   onCollapse,
+  onOpenTranscript,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
   onCollapse: () => void;
+  onOpenTranscript?: ((agentId: string, title: string) => void) | undefined;
 }) {
   const [scriptOpen, setScriptOpen] = useState(false);
   const members = workflowMembers(group);
@@ -438,12 +474,18 @@ function ExpandedWorkflowSection({
         />
       ) : null}
       {group.phases.map((phase) => (
-        <PhaseSection key={phase.index} phase={phase} defaultOpen={!workflowIsLive(group)} />
+        <PhaseSection
+          key={phase.index}
+          phase={phase}
+          defaultOpen={!workflowIsLive(group)}
+          onOpenTranscript={onOpenTranscript}
+        />
       ))}
       {group.unphasedMembers.map((member) => (
-        <AgentRow key={member.id} agent={member} />
+        <AgentRow key={member.id} agent={member} onOpenTranscript={onOpenTranscript} />
       ))}
       {group.phases.length === 0 && group.unphasedMembers.length === 0 ? (
+        // The coordinator is the run itself, not a subagent with a transcript.
         <AgentRow agent={group.workflow} />
       ) : null}
     </section>
@@ -502,10 +544,12 @@ function WorkflowSection({
   group,
   environmentId,
   threadId,
+  onOpenTranscript,
 }: {
   group: AgentPanelWorkflowGroup;
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
+  onOpenTranscript?: ((agentId: string, title: string) => void) | undefined;
 }) {
   const [open, setOpen] = useState(() => workflowIsLive(group));
   return open ? (
@@ -514,6 +558,7 @@ function WorkflowSection({
       environmentId={environmentId}
       threadId={threadId}
       onCollapse={() => setOpen(false)}
+      onOpenTranscript={onOpenTranscript}
     />
   ) : (
     <CollapsedWorkflowSection group={group} onExpand={() => setOpen(true)} />
@@ -524,10 +569,16 @@ export function AgentsPanel({
   model,
   environmentId = null,
   threadId = null,
+  onOpenTranscript,
 }: {
   model: AgentPanelModel;
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
+  /**
+   * Opens one agent's full transcript as its own right-panel surface. The
+   * title rides along so the surface tab can label itself.
+   */
+  onOpenTranscript?: ((agentId: string, title: string) => void) | undefined;
 }) {
   if (!model.hasAgents) {
     return (
@@ -552,6 +603,7 @@ export function AgentsPanel({
               group={group}
               environmentId={environmentId}
               threadId={threadId}
+              onOpenTranscript={onOpenTranscript}
             />
           ))}
           {model.directAgents.length > 0 ? (
@@ -560,7 +612,7 @@ export function AgentsPanel({
                 Direct spawns
               </div>
               {model.directAgents.map((agent) => (
-                <AgentRow key={agent.id} agent={agent} />
+                <AgentRow key={agent.id} agent={agent} onOpenTranscript={onOpenTranscript} />
               ))}
             </section>
           ) : null}

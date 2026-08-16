@@ -287,6 +287,12 @@ interface ClaudeSessionContext {
     items: Array<unknown>;
   }>;
   readonly inFlightTools: Map<number, ToolInFlight>;
+  /**
+   * Key generator for tools registered from an assistant snapshot rather than
+   * a stream block. Counts down from -1 so it can never collide with a
+   * stream's own non-negative `content_block` index.
+   */
+  nextSnapshotToolIndex: number;
   /** Structured post-tool results keyed by tool-use id for parallel edit calls. */
   readonly toolResults: Map<string, Record<string, unknown>>;
   readonly claudeTasks: Map<string, ClaudeTaskState>;
@@ -1165,6 +1171,19 @@ function agentIdForParentToolUse(
   return undefined;
 }
 
+/** Chars kept from a task's launching command or prompt (SDK's own cap). */
+const TASK_LAUNCH_STRING_CAP = 1000;
+
+/** Bounds a launch string so task payloads stay wire-cheap. */
+function capLaunchString(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value.length > TASK_LAUNCH_STRING_CAP
+    ? `${value.slice(0, TASK_LAUNCH_STRING_CAP)}…`
+    : value;
+}
+
 /**
  * Linkage bundle repeated on every task.* payload for `taskId`. Reads the
  * remembered identity (from task_started) so progress/terminal rows are
@@ -1360,6 +1379,15 @@ const CLAUDE_SETTING_SOURCES = [
   "local",
 ] as const satisfies ReadonlyArray<SettingSource>;
 
+/**
+ * Session-scoped override for the CLI's `cleanupPeriodDays` setting, which
+ * otherwise deletes local chat transcripts after 30 days. CPH Code treats the
+ * transcript as a durable record, so sessions it launches keep theirs
+ * effectively forever. Delivered through the query's inline `settings`
+ * (the `--settings` source), never by writing the user's settings.json.
+ */
+const CLAUDE_TRANSCRIPT_RETENTION_DAYS = 36_500;
+
 function buildPromptText(
   input: ProviderSendTurnInput,
   boundInstanceId: ProviderInstanceId,
@@ -1528,6 +1556,100 @@ function extractAssistantTextBlocks(message: SDKMessage): Array<string> {
   }
 
   return fragments;
+}
+
+/**
+ * Text and thinking blocks of an assistant snapshot, in wire order, tagged
+ * with the canonical item type each becomes. Used for subagent-owned
+ * snapshots, which the SDK only ever delivers whole (see handleAssistantMessage).
+ */
+function extractNarrationBlocks(
+  message: SDKMessage,
+): Array<{ readonly itemType: "assistant_message" | "reasoning"; readonly text: string }> {
+  if (message.type !== "assistant") {
+    return [];
+  }
+
+  const content = (message.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const blocks: Array<{
+    readonly itemType: "assistant_message" | "reasoning";
+    readonly text: string;
+  }> = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const candidate = block as { type?: unknown; text?: unknown; thinking?: unknown };
+    const text =
+      candidate.type === "text"
+        ? trimmedString(candidate.text)
+        : candidate.type === "thinking"
+          ? trimmedString(candidate.thinking)
+          : undefined;
+    if (text === undefined) {
+      continue;
+    }
+    blocks.push({
+      itemType: candidate.type === "thinking" ? "reasoning" : "assistant_message",
+      text,
+    });
+  }
+
+  return blocks;
+}
+
+/**
+ * Tool-use blocks of an assistant snapshot, in wire order. Subagent tool calls
+ * only ever reach us this way: the SDK forwards no parented stream events, so
+ * the `content_block_start` path never sees them.
+ */
+function extractToolUseBlocks(
+  message: SDKMessage,
+): Array<{ readonly id: string; readonly name: string; readonly input: Record<string, unknown> }> {
+  if (message.type !== "assistant") {
+    return [];
+  }
+
+  const content = (message.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const blocks: Array<{
+    readonly id: string;
+    readonly name: string;
+    readonly input: Record<string, unknown>;
+  }> = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") {
+      continue;
+    }
+    const candidate = block as { type?: unknown; id?: unknown; name?: unknown; input?: unknown };
+    if (
+      candidate.type !== "tool_use" &&
+      candidate.type !== "server_tool_use" &&
+      candidate.type !== "mcp_tool_use"
+    ) {
+      continue;
+    }
+    if (typeof candidate.id !== "string" || typeof candidate.name !== "string") {
+      continue;
+    }
+    blocks.push({
+      id: candidate.id,
+      name: candidate.name,
+      input:
+        typeof candidate.input === "object" && candidate.input !== null
+          ? (candidate.input as Record<string, unknown>)
+          : {},
+    });
+  }
+
+  return blocks;
 }
 
 function extractContentBlockText(block: unknown): string {
@@ -2473,6 +2595,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: status === "completed" ? "completed" : "failed",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          // Attribution must survive this sweep too: a subagent tool still in
+          // flight when the turn ends would otherwise land in the parent's
+          // timeline as an unowned row.
+          ...(tool.agentId ? { agentId: tool.agentId } : {}),
+          ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
           data: {
             toolName: tool.toolName,
             input: tool.input,
@@ -2554,12 +2681,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     const { event } = message;
 
     // Subagent-owned stream traffic (parent_tool_use_id set) must not write
-    // into the parent transcript: with forwardSubagentText off the SDK still
-    // forwards subagent tool_use/tool_result blocks and their wrapping
-    // text/thinking deltas, and emitting them interleaved N subagents'
-    // narration into the chat (live-test finding). Their results reach the
-    // UI via the task.* lifecycle; their tool blocks are attributed and
-    // re-homed by the quiet-timeline filter.
+    // into the parent transcript. A live probe against SDK 0.3.170 found no
+    // parented stream events arrive in either forwardSubagentText mode —
+    // subagent traffic comes only as whole assistant/user messages — so this
+    // guard is belt-and-braces against an SDK that starts forwarding them.
+    // Subagent narration is recorded from its snapshots instead (see
+    // handleAssistantMessage).
     const streamParentToolUseId = (message as { parent_tool_use_id?: string | null })
       .parent_tool_use_id;
     if (streamParentToolUseId !== null && streamParentToolUseId !== undefined) {
@@ -3020,6 +3147,121 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  /**
+   * Records a subagent's own text and thinking as attributed items, one per
+   * content block. Snapshot-only by necessity: with forwardSubagentText the
+   * SDK delivers subagent narration as whole `assistant` messages and emits
+   * no parented stream events at all, so there is nothing to stream.
+   */
+  const emitSubagentNarration = Effect.fn("emitSubagentNarration")(function* (
+    context: ClaudeSessionContext,
+    message: SDKMessage,
+    attribution: { readonly agentId: string; readonly parentToolUseId: string },
+  ) {
+    const blocks = extractNarrationBlocks(message);
+    for (const [index, block] of blocks.entries()) {
+      // Stable per-block id: the SDK's message uuid plus the block position.
+      const itemId = `${message.uuid}:${index}`;
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "item.completed",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        itemId: asRuntimeItemId(itemId),
+        payload: {
+          itemType: block.itemType,
+          status: "completed",
+          title: block.itemType === "reasoning" ? "Thinking" : "Assistant message",
+          detail: block.text,
+          agentId: attribution.agentId,
+          parentToolUseId: attribution.parentToolUseId,
+        },
+        providerRefs: nativeProviderRefs(context, { providerItemId: itemId }),
+        raw: {
+          source: "claude.sdk.message",
+          method: "claude/assistant/subagent",
+          payload: message,
+        },
+      });
+    }
+  });
+
+  /**
+   * Puts a subagent's tool calls in flight from its assistant snapshot, so the
+   * ordinary tool_result path in handleUserMessage completes them at the same
+   * fidelity as main-thread rows. A tool registered here is what later lets a
+   * nested task_started resolve its owningAgentId: task launches from inside a
+   * subagent are found by scanning inFlightTools for the launching tool_use id.
+   */
+  const registerSnapshotTools = Effect.fn("registerSnapshotTools")(function* (
+    context: ClaudeSessionContext,
+    message: SDKMessage,
+    attribution: { readonly agentId: string; readonly parentToolUseId: string },
+  ) {
+    for (const block of extractToolUseBlocks(message)) {
+      // A snapshot can repeat a tool_use block we already track (resume
+      // replays); re-registering would emit the lifecycle twice.
+      const alreadyInFlight = Array.from(context.inFlightTools.values()).some(
+        (candidate) => candidate.itemId === block.id,
+      );
+      if (alreadyInFlight) {
+        continue;
+      }
+
+      const itemType = classifyToolItemType(block.name);
+      const detail = summarizeToolRequest(block.name, block.input);
+      const inputFingerprint =
+        Object.keys(block.input).length > 0 ? toolInputFingerprint(block.input) : undefined;
+      const tool: ToolInFlight = {
+        itemId: block.id,
+        itemType,
+        toolName: block.name,
+        title: titleForTool(itemType),
+        ...(detail ? { detail } : {}),
+        input: block.input,
+        partialInputJson: "",
+        ...(inputFingerprint ? { lastEmittedInputFingerprint: inputFingerprint } : {}),
+        agentId: attribution.agentId,
+        parentToolUseId: attribution.parentToolUseId,
+      };
+      const index = context.nextSnapshotToolIndex;
+      context.nextSnapshotToolIndex -= 1;
+      context.inFlightTools.set(index, tool);
+
+      const stamp = yield* makeEventStamp();
+      yield* offerRuntimeEvent({
+        type: "item.started",
+        eventId: stamp.eventId,
+        provider: PROVIDER,
+        createdAt: stamp.createdAt,
+        threadId: context.session.threadId,
+        ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+        itemId: asRuntimeItemId(tool.itemId),
+        payload: {
+          itemType: tool.itemType,
+          status: "inProgress",
+          title: tool.title,
+          ...(tool.detail ? { detail: tool.detail } : {}),
+          agentId: attribution.agentId,
+          parentToolUseId: attribution.parentToolUseId,
+          data: {
+            toolName: tool.toolName,
+            input: tool.input,
+          },
+        },
+        providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
+        raw: {
+          source: "claude.sdk.message",
+          method: "claude/assistant/subagent",
+          payload: message,
+        },
+      });
+    }
+  });
+
   const handleAssistantMessage = Effect.fn("handleAssistantMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
@@ -3029,9 +3271,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     // Subagent-owned assistant snapshots (parent_tool_use_id set) are the
-    // subagent's own conversation, not the parent's. Emitting them created
-    // interleaved "Agent N done"-adjacent leak messages and spawned synthetic
-    // turns per subagent completion (which also reset the Working timer).
+    // subagent's own conversation, not the parent's. They must never become
+    // parent assistant messages: that produced interleaved leak messages and
+    // spawned a synthetic turn per subagent completion (which also reset the
+    // Working timer). Their narration is instead recorded as attributed
+    // items, which clients re-home into the owning agent's transcript.
     const assistantParentToolUseId = (message as { parent_tool_use_id?: string | null })
       .parent_tool_use_id;
     if (assistantParentToolUseId !== null && assistantParentToolUseId !== undefined) {
@@ -3042,6 +3286,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const owningAgent = owningTaskId ? context.taskAgents.get(owningTaskId) : undefined;
       if (owningAgent && snapshotModel) {
         owningAgent.model = snapshotModel;
+      }
+      // Unattributable narration (a parent id that matches no task we saw
+      // start) has nowhere to be re-homed to, so it stays dropped rather than
+      // leaking into the parent timeline.
+      if (owningTaskId !== undefined) {
+        const attribution = {
+          agentId: owningTaskId,
+          parentToolUseId: assistantParentToolUseId,
+        };
+        yield* emitSubagentNarration(context, message, attribution);
+        yield* registerSnapshotTools(context, message, attribution);
       }
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
@@ -3373,13 +3628,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // command (Bash `command`, Monitor `command`). The SDK caps its own
         // BackgroundTaskSummary command at 1000 chars; mirror that so roster
         // payloads stay bounded.
-        const rawLaunchCommand = trimmedString(launchInput?.command);
-        const command =
-          rawLaunchCommand === undefined
-            ? undefined
-            : rawLaunchCommand.length > 1000
-              ? `${rawLaunchCommand.slice(0, 1000)}…`
-              : rawLaunchCommand;
+        const command = capLaunchString(trimmedString(launchInput?.command));
+        // Agent tasks: task_started carries the prompt the subagent was
+        // launched with, which opens its nested transcript. Same bound as
+        // command — a launch prompt can be arbitrarily long.
+        const prompt = capLaunchString(trimmedString(message.prompt));
         // Remember the agent identity so every later task.* payload for this
         // taskId is self-describing (identity must survive activity retention).
         context.taskAgents.set(message.task_id, {
@@ -3411,6 +3664,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(effort ? { effort } : {}),
             ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
             ...(command ? { command } : {}),
+            // Start row only: taskLinkageFor deliberately omits the prompt so
+            // it does not repeat on every progress tick.
+            ...(prompt ? { prompt } : {}),
             ...(message.workflow_name ? { workflowName: message.workflow_name } : {}),
           },
         });
@@ -4318,6 +4574,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
       const permissionMode = runtimeModeToPermission[input.runtimeMode];
       const settings = {
+        cleanupPeriodDays: CLAUDE_TRANSCRIPT_RETENTION_DAYS,
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
         ...(ultracode ? { ultracode: true } : {}),
@@ -4348,10 +4605,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
-        ...(Object.keys(settings).length > 0 ? { settings } : {}),
+        settings,
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
+        // Without this the SDK forwards only a subagent's tool_use/tool_result
+        // blocks; its own text and thinking never reach us, so a nested
+        // transcript would be tool calls with no narration between them.
+        forwardSubagentText: true,
         hooks: {
           PostToolUse: [
             {
@@ -4407,6 +4668,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.resume": existingResumeSessionId ?? "",
         "claude.query.session_id": newSessionId ?? "",
         "claude.query.include_partial_messages": true,
+        "claude.query.forward_subagent_text": true,
         "claude.query.additional_directories": additionalDirectories,
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
@@ -4462,6 +4724,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         pendingUserInputs,
         turns: [],
         inFlightTools,
+        nextSnapshotToolIndex: -1,
         toolResults,
         claudeTasks,
         taskAgents,

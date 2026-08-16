@@ -325,6 +325,72 @@ describe("foldSubagentActivities", () => {
     expect(member.status).toBe("running");
   });
 
+  it("carries the launch prompt from task.started", () => {
+    const agents = fold([
+      activity("task.started", {
+        taskId: "task-1",
+        taskType: "subagent",
+        title: "Explore adapter",
+        prompt: "Read the Claude adapter end to end and report the task id flow.",
+      }),
+      // Later rows deliberately omit the prompt; it must not be cleared.
+      activity("task.progress", { taskId: "task-1", summary: "reading" }),
+      activity("task.completed", { taskId: "task-1", status: "completed" }),
+    ]);
+    expect(agents).toHaveLength(1);
+    expect(agents[0]!.prompt).toBe(
+      "Read the Claude adapter end to end and report the task id flow.",
+    );
+  });
+
+  it("leaves the prompt null when no start row carried one", () => {
+    const agents = fold([
+      activity("task.completed", { taskId: "task-1", taskType: "subagent", status: "completed" }),
+    ]);
+    expect(agents[0]!.prompt).toBeNull();
+  });
+
+  it("recovers the prompt from a start row that arrives after completion", () => {
+    const agents = fold([
+      activity("task.completed", { taskId: "task-1", taskType: "subagent", status: "completed" }),
+      activity("task.started", { taskId: "task-1", taskType: "subagent", prompt: "late prompt" }),
+    ]);
+    expect(agents[0]!.prompt).toBe("late prompt");
+    // A late start only fills metadata; it must not reopen a settled run.
+    expect(agents[0]!.status).toBe("completed");
+  });
+
+  it("attributed narration and tool rows never create or disturb agents", () => {
+    const settled = fold([
+      activity("task.started", { taskId: "task-1", taskType: "subagent" }),
+      activity("task.completed", { taskId: "task-1", status: "completed" }),
+    ]);
+    const withAttributedRows = fold([
+      activity("task.started", { taskId: "task-1", taskType: "subagent" }),
+      activity("task.completed", { taskId: "task-1", status: "completed" }),
+      // Rows the transcript surface consumes; the roster fold must ignore them.
+      activity("agent.message", {
+        itemType: "assistant_message",
+        detail: "done",
+        agentId: "task-1",
+      }),
+      activity("agent.reasoning", { itemType: "reasoning", detail: "hmm", agentId: "task-1" }),
+      activity("tool.started", { itemType: "command_execution", agentId: "task-1" }),
+      activity("tool.updated", {
+        itemType: "command_execution",
+        agentId: "task-1",
+        status: "failed",
+      }),
+      activity("tool.completed", { itemType: "command_execution", agentId: "task-1" }),
+      // An unknown agent id in an attributed row must not conjure a roster entry.
+      activity("agent.message", { itemType: "assistant_message", detail: "x", agentId: "ghost" }),
+    ]);
+    expect(withAttributedRows.map((agent) => agent.id)).toEqual(["task-1"]);
+    expect(withAttributedRows[0]!.status).toBe(settled[0]!.status);
+    expect(withAttributedRows[0]!.activationCount).toBe(settled[0]!.activationCount);
+    expect(withAttributedRows[0]!.error).toBeNull();
+  });
+
   it("drops non-http(s) session urls at the fold boundary", () => {
     const agents = fold([
       activity("task.started", {
@@ -565,6 +631,14 @@ describe("timeline predicates", () => {
     expect(isAgentAttributedToolActivity(activity("tool.completed", {}))).toBe(false);
     expect(isAgentAttributedToolActivity(activity("tool.completed", { agentId: "  " }))).toBe(
       false,
+    );
+    // The predicate keys on attribution, not on kind, so the narration rows
+    // added for the transcript surface are covered without a per-kind list.
+    expect(isAgentAttributedToolActivity(activity("agent.message", { agentId: "task-1" }))).toBe(
+      true,
+    );
+    expect(isAgentAttributedToolActivity(activity("agent.reasoning", { agentId: "task-1" }))).toBe(
+      true,
     );
   });
 
