@@ -125,6 +125,8 @@ When Chris requests a change, "done" typically means shipped: commit, push, buil
 
 When an upstream T3 Code default conflicts with this smaller scope, prefer the fork's goals unless Chris explicitly asks otherwise.
 
+Clean up your own background tasks when done working.
+
 ## Upstream synchronization
 
 Sync CPH Code by rebasing its fork-specific commits onto the latest `upstream/main`. Do not merge `upstream/main` into `main` or introduce merge commits. Keep upstream's history as an unchanged prefix followed by the contiguous CPH Code commit series, rather than intermingling fork commits with upstream commits.
