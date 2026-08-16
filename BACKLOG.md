@@ -71,11 +71,6 @@ subject, never as the entry's identifier.
   object without `scheduledTurn`, but the query now returns
   `scheduledTurn: null`. One-line expectation fix; unattributed, and unrelated
   to any in-flight lane that found it.
-- **NUL/0x1F bytes in `ActivityPayloadProjection.ts` break grep.** The file
-  contains literal control bytes inside string literals, so BSD grep
-  classifies it as binary and silently returns zero matches — humans and
-  agents searching the codebase miss the file entirely. One character-class
-  fix; deserves its own commit.
 - **Tool result previews are event-derived, so history stays bare.**
   `ItemLifecyclePayload.resultPreview` is computed in `ClaudeAdapter` when a
   call completes, so only turns taken after it shipped carry one; every
