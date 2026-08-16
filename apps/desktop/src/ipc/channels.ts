@@ -75,5 +75,7 @@ export const PREVIEW_RECORDING_START_CHANNEL = "desktop:preview-recording-start"
 export const PREVIEW_RECORDING_STOP_CHANNEL = "desktop:preview-recording-stop";
 export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";
 export const PREVIEW_RECORDING_FRAME_CHANNEL = "desktop:preview-recording-frame";
+export const DICTATION_TRANSCRIBE_CHANNEL = "desktop:dictation-transcribe";
+export const DICTATION_CHECK_AVAILABILITY_CHANNEL = "desktop:dictation-check-availability";
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";

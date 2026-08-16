@@ -140,6 +140,28 @@ export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
 
+/**
+ * An absolute path to a dictation asset (the whisper.cpp CLI, or a ggml
+ * model). Empty means unconfigured. Existence is not checked here — the
+ * desktop main process re-validates on every availability check, so a model
+ * that is still downloading reports a live status instead of failing to save.
+ */
+export const DictationPathPreference = Schema.String.check(Schema.isMaxLength(1024));
+export type DictationPathPreference = typeof DictationPathPreference.Type;
+
+/**
+ * A whisper language code, or "auto" to let whisper detect the language.
+ * Kept as a free-form short string rather than an enum: whisper.cpp accepts
+ * ~100 codes and pinning a list here would date badly.
+ */
+export const DictationLanguage = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isNonEmpty(),
+  Schema.isMaxLength(16),
+);
+export type DictationLanguage = typeof DictationLanguage.Type;
+export const DEFAULT_DICTATION_LANGUAGE = "en";
+
 export const ClientSettingsSchema = Schema.Struct({
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
@@ -171,6 +193,17 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Local dictation (macOS desktop only). Both paths default to empty, which
+  // reads as "not configured" and keeps the composer's mic button hidden;
+  // there is no sensible default install location to guess for either, and
+  // guessing wrong would look like a broken feature rather than an unset one.
+  dictationWhisperCliPath: DictationPathPreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  dictationModelPath: DictationPathPreference.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  dictationLanguage: DictationLanguage.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DICTATION_LANGUAGE)),
+  ),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
@@ -881,6 +914,9 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  dictationWhisperCliPath: Schema.optionalKey(DictationPathPreference),
+  dictationModelPath: Schema.optionalKey(DictationPathPreference),
+  dictationLanguage: Schema.optionalKey(DictationLanguage),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),

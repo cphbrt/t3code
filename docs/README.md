@@ -6,6 +6,7 @@
 - [Permission modes](./user/permission-modes.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Browser previews](./user/browser-previews.md)
+- [Dictation (macOS)](./user/dictation.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Background work after a turn settles](./user/background-tasks.md)
 - [Review usage](./user/usage.md)

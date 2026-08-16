@@ -184,6 +184,26 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "dictation-whisper-cli",
+    title: "Dictation binary",
+    to: "/settings/general",
+    // The dictation rows only render on the macOS desktop app; anchor search
+    // hits to the section so a web result still lands somewhere real.
+    targetId: "dictation",
+  },
+  {
+    id: "dictation-model",
+    title: "Dictation model",
+    to: "/settings/general",
+    targetId: "dictation",
+  },
+  {
+    id: "dictation-language",
+    title: "Dictation language",
+    to: "/settings/general",
+    targetId: "dictation",
+  },
+  {
     id: "legacy-plan-mode",
     title: "Plan mode (legacy)",
     to: "/settings/general",
