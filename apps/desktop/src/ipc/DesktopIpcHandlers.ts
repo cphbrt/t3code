@@ -37,6 +37,7 @@ import {
   showContextMenu,
 } from "./methods/window.ts";
 import * as PreviewIpc from "./methods/preview.ts";
+import * as DictationIpc from "./methods/dictation.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
@@ -82,5 +83,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(probeRemoteEditors);
   for (const previewMethod of PreviewIpc.methods) {
     yield* ipc.handle(previewMethod);
+  }
+  for (const dictationMethod of DictationIpc.methods) {
+    yield* ipc.handle(dictationMethod);
   }
 });

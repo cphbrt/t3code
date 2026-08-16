@@ -132,6 +132,8 @@ import {
 } from "./settingsLayout";
 import { isElectron } from "../../env";
 import { searchableSetting } from "./settingsSearch";
+import { DictationSettings } from "./DictationSettings";
+import { dictationBridge } from "~/hooks/useDictation";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
@@ -1580,6 +1582,9 @@ export function GeneralSettingsPanel() {
     settings.backgroundActivity,
     DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
   );
+  // Dictation needs the desktop bridge and a macOS host; hiding the whole
+  // section elsewhere beats showing paths that could never be used.
+  const showDictationSettings = dictationBridge() !== null;
 
   return (
     <SettingsPageContainer>
@@ -2119,6 +2124,15 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      {showDictationSettings ? (
+        <DictationSettings
+          whisperCliPath={settings.dictationWhisperCliPath}
+          modelPath={settings.dictationModelPath}
+          language={settings.dictationLanguage}
+          onUpdate={updateSettings}
+        />
+      ) : null}
 
       <SettingsSection title="About">
         <AboutVersionSection />

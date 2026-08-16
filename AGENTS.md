@@ -87,6 +87,8 @@ Preserve each thread's manually chosen transcript reading position across thread
 
 Always show long user messages in full. Do not offer controls to collapse or expand them.
 
+Dictation is desktop-local: the composer microphone transcribes through a user-configured whisper.cpp binary and ggml model on this machine, and audio never leaves the device. Ship no bundled binary or model—both paths are explicit user settings—and never add a network transcription path.
+
 When a provider explicitly reports that an account is unavailable until a reset time, preserve that state per provider instance, show the top error bar on every thread using that instance, and show a quiet countdown on affected sessions and in the model picker. Keep the state and UI provider-neutral; do not infer a reset from ambiguous rolling-window data.
 
 Keep proactive provider-reported plan quotas separate from that hard-exhaustion state. Prefer provider-owned integration surfaces—the Codex app-server rate-limit RPC and Claude Agent SDK usage control method—and show their five-hour, weekly, and model-scoped windows on the Usage page, in the provider selector, and near the composer. Missing or stale telemetry means unknown, never zero, and quota percentages alone must not schedule prompts or declare a provider unavailable. Treat high quota plus a large uncached context as a future combined send-risk signal rather than conflating either input on its own.

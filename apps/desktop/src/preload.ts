@@ -253,4 +253,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.removeListener(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, wrappedListener);
     },
   },
+  dictation: {
+    transcribe: (input) => ipcRenderer.invoke(IpcChannels.DICTATION_TRANSCRIBE_CHANNEL, input),
+    checkAvailability: (input) =>
+      ipcRenderer.invoke(IpcChannels.DICTATION_CHECK_AVAILABILITY_CHANNEL, input ?? {}),
+  },
 } satisfies DesktopBridge);
