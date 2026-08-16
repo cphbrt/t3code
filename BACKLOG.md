@@ -57,6 +57,20 @@ subject, never as the entry's identifier.
   block as a restart, or leave it. Related: the inbound-message row is
   deliberately suppressed for this case (it would duplicate the prompt), so
   the restart path relies entirely on that block.
+- **Agent self-settle has no session-stop follow-up.** A user-initiated
+  settle stops an idle provider session (`ws.ts` dispatches
+  `thread.session.stop` with `onlyIfSettled: true` after `thread.settle`), so
+  no background work outlives "I'm done with this thread". The agent's own
+  self-settle emits `thread.settled` from inside the decider's
+  `thread.session.set` case, where there is no transport-layer follow-up hook,
+  so a self-settled thread keeps its idle provider session until the reaper or
+  a quit takes it. Deliberately left out rather than adding a reactor for it;
+  decide whether the asymmetry is worth closing.
+- **`ProjectionSnapshotQuery.test.ts` fails on clean main.** "hydrates read
+  model from projection tables and computes snapshot sequence" expects a thread
+  object without `scheduledTurn`, but the query now returns
+  `scheduledTurn: null`. One-line expectation fix; unattributed, and unrelated
+  to any in-flight lane that found it.
 - **NUL/0x1F bytes in `ActivityPayloadProjection.ts` break grep.** The file
   contains literal control bytes inside string literals, so BSD grep
   classifies it as binary and silently returns zero matches — humans and

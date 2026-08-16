@@ -55,6 +55,7 @@ function getOptionValue(
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
+const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
@@ -440,6 +441,59 @@ it.effect("decodes thread settle and unsettle commands", () =>
       reason: "activity",
     }).pipe(Effect.flip);
     assert.ok(forged);
+  }),
+);
+
+it.effect("keeps the agent self-settle request off the client command surface", () =>
+  Effect.gen(function* () {
+    const request = {
+      type: "thread.self-settle.request",
+      commandId: "cmd-self-settle-1",
+      threadId: "thread-1",
+    };
+    const internal = yield* decodeOrchestrationCommand(request);
+    assert.strictEqual(internal.type, "thread.self-settle.request");
+
+    // It arrives over the thread's own MCP credential, never from a client, so
+    // no client may dispatch it and name a thread.
+    const forged = yield* decodeClientOrchestrationCommand(request).pipe(Effect.flip);
+    assert.ok(forged);
+  }),
+);
+
+it.effect("decodes agent self-settle lifecycle events", () =>
+  Effect.gen(function* () {
+    const base = {
+      sequence: 1,
+      eventId: "event-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-1",
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+    };
+    const requested = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.self-settle-requested",
+      payload: { threadId: "thread-1", requestedAt: "2026-01-01T00:00:00.000Z" },
+    });
+    assert.strictEqual(requested.type, "thread.self-settle-requested");
+
+    const cleared = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.self-settle-cleared",
+      payload: { threadId: "thread-1", reason: "unclean-turn-end" },
+    });
+    assert.strictEqual(cleared.type, "thread.self-settle-cleared");
+
+    const unknownReason = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.self-settle-cleared",
+      payload: { threadId: "thread-1", reason: "user" },
+    }).pipe(Effect.flip);
+    assert.ok(unknownReason);
   }),
 );
 

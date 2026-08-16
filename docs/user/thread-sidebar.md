@@ -21,6 +21,18 @@ If reordering is unavailable for one environment, update the T3 Code server runn
 environment. Older servers can still pin and unpin threads, but do not understand synced ordering;
 their pinned threads keep the default newest-first order below the ones you have arranged.
 
+## Letting the agent settle its own thread
+
+You can ask the agent working in a thread to settle that thread when it finishes: "Do this, and
+settle your thread if it all goes well." The agent calls a T3 Code tool as its last step, and the
+thread moves to **Settled** once the turn completes. The tool call appears in the transcript like
+any other, so you can always see that it happened.
+
+Settling this way is deliberately conditional. The thread stays active if the turn ends with an
+error or you interrupt it, if you send another message before the turn finishes, or if the agent
+left an approval or question waiting for you. Nothing is deleted or archived, and you can un-settle
+the thread from its menu exactly as if you had settled it yourself.
+
 ## Working directory context
 
 The top bar and active or pinned sidebar cards show each thread's working directory instead of only
