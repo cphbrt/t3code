@@ -2162,7 +2162,10 @@ const toolCallExpandedBodyClassName =
 function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconName {
   if (
     workEntry.sourceActivityKind === "user-input.requested" ||
-    workEntry.sourceActivityKind === "user-input.resolved"
+    workEntry.sourceActivityKind === "user-input.resolved" ||
+    // An inbound message from another agent session: conversational, not a
+    // tool or a fault. Shares the message glyph with the user-input rows.
+    workEntry.sourceActivityKind === "peer.message"
   ) {
     return "message-circle";
   }

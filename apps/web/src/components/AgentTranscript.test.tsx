@@ -353,6 +353,90 @@ describe("agentPersistedTranscript", () => {
     );
     expect(rows[0]!.failed).toBe(true);
   });
+
+  it("shows a message the parent sent into this agent, in send order", () => {
+    const { rows } = agentPersistedTranscript(
+      [
+        activity("tool.completed", {
+          itemType: "command_execution",
+          agentId: "a1",
+          data: { toolName: "Bash", input: { command: "git status" } },
+        }),
+        activity(
+          "peer.message",
+          {
+            direction: "incoming",
+            deliveryKind: "subagent-injection",
+            agentId: "a1",
+            detail: "Do not commit to main.",
+          },
+          "Message sent from the main thread: Do not commit to main.",
+        ),
+        activity("agent.message", {
+          itemType: "assistant_message",
+          detail: "Understood — switching to the worktree workflow.",
+          agentId: "a1",
+        }),
+      ],
+      "a1",
+    );
+
+    // The row sits between the work before it and the reply that answers it,
+    // which is the whole point: the agent no longer answers nothing.
+    expect(rows.map((row) => row.kind)).toEqual(["tool", "user_message", "assistant_message"]);
+    expect(rows[1]!.text).toBe("Do not commit to main.");
+    expect(rows[1]!.summary).toBe("Message sent from the main thread: Do not commit to main.");
+    // Without its own heading it renders as "Prompt" and reads as the launch
+    // prompt. "Sent", not "received": the delivery is never reported.
+    expect(rows[1]!.label).toBe("Sent from main thread");
+    expect(rows[0]!.label).toBeUndefined();
+    // Nothing on the row may imply the agent received it; only the send is known.
+    expect(rows[1]!.status).toBeUndefined();
+  });
+
+  it("does not treat an injected message as the agent's own narration", () => {
+    // Narration is what decides persisted-vs-disk. A subagent that predates
+    // narration persistence has only this row, and must still read from disk.
+    const { rows, hasNarration } = agentPersistedTranscript(
+      [
+        activity("peer.message", {
+          direction: "incoming",
+          deliveryKind: "subagent-injection",
+          agentId: "a1",
+          detail: "Do not commit to main.",
+        }),
+      ],
+      "a1",
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(hasNarration).toBe(false);
+    expect(resolveAgentTranscriptSource({ rows, hasNarration })).toBe("disk");
+  });
+
+  it("keeps another agent's injected message out of this agent's transcript", () => {
+    const { rows } = agentPersistedTranscript(
+      [
+        activity("peer.message", {
+          direction: "incoming",
+          deliveryKind: "subagent-injection",
+          agentId: "a2",
+          detail: "For someone else.",
+        }),
+        // The parent's own outgoing row carries no agentId and belongs to the
+        // main timeline, never to an agent transcript.
+        activity("peer.message", {
+          direction: "outgoing",
+          deliveryKind: "peer",
+          peerName: "a1",
+          detail: "For someone else.",
+        }),
+      ],
+      "a1",
+    );
+
+    expect(rows).toEqual([]);
+  });
 });
 
 describe("deriveToolRowIdentity", () => {

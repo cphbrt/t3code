@@ -3,10 +3,15 @@
  *
  * Two sources produce the same row shape on purpose. Persisted rows are the
  * attributed thread activities the main timeline hides (`agent.message`,
- * `agent.reasoning`, and `tool.*` carrying `payload.agentId`); recovered rows
- * come from the `orchestration.getSubagentTranscript` RPC, whose entries the
- * server already shapes like activity payloads. Everything here is pure so the
- * merge policy can be tested without rendering or a websocket.
+ * `agent.reasoning`, `peer.message`, and `tool.*` carrying `payload.agentId`);
+ * recovered rows come from the `orchestration.getSubagentTranscript` RPC,
+ * whose entries the server already shapes like activity payloads. Everything
+ * here is pure so the merge policy can be tested without rendering or a
+ * websocket.
+ *
+ * The disk source has no equivalent of the `peer.message` row: the harness
+ * writes nothing to a subagent's JSONL when a message is injected into it, so
+ * a recovered transcript simply cannot show one.
  */
 import type {
   OrchestrationSubagentTranscriptEntry,
@@ -22,6 +27,11 @@ export interface AgentTranscriptRow {
   readonly kind: AgentTranscriptRowKind;
   /** One-line heading; the tool name for tool rows. */
   readonly summary: string;
+  /**
+   * Overrides a message row's heading. Absent means the launch prompt's
+   * default, so a row that is NOT the launch prompt has to say what it is.
+   */
+  readonly label?: string;
   /** Message/thinking body, rendered whole. */
   readonly text?: string;
   readonly toolName?: string;
@@ -336,6 +346,31 @@ export function agentPersistedTranscript(
         createdAt: activity.createdAt,
         kind: activity.kind === "agent.reasoning" ? "reasoning" : "assistant_message",
         summary: activity.summary,
+        ...(text !== undefined ? { text } : {}),
+      });
+      continue;
+    }
+
+    // A message the parent agent sent into this subagent's lane mid-run.
+    // Rendered as a prompt because that is what it is — an instruction from
+    // outside that the agent's next reply answers. The row carries no status:
+    // the send is all the harness reports, so there is nothing here that could
+    // honestly claim the agent received it (the server label says "sent").
+    //
+    // Deliberately not counted as narration: this row comes from the send, not
+    // from the agent, so a subagent that predates narration persistence must
+    // still fall through to the disk read for its own conversation.
+    if (activity.kind === "peer.message") {
+      const text = asText(payload.detail);
+      rows.push({
+        id: activity.id,
+        createdAt: activity.createdAt,
+        kind: "user_message",
+        summary: activity.summary,
+        // Without this the row heads with the launch prompt's "Prompt" and is
+        // indistinguishable from it. "Sent" over "received" for the same
+        // reason the server label says sent: the delivery is never reported.
+        label: "Sent from main thread",
         ...(text !== undefined ? { text } : {}),
       });
       continue;
