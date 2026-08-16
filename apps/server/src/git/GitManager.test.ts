@@ -16,6 +16,7 @@ import * as References from "effect/References";
 import * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vite-plus/test";
+import { withoutInheritedGitRepositoryLocation } from "@t3tools/shared/git";
 import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
@@ -147,6 +148,9 @@ function normalizeFakePullRequestSummary(raw: unknown): GitHubCli.GitHubPullRequ
 function runGitSyncForFakeGh(cwd: string, args: readonly string[]): void {
   const result = NodeChildProcess.spawnSync("git", args, {
     cwd,
+    // Without this, a GIT_DIR inherited from `git bisect run`, a hook, or
+    // `rebase --exec` would aim this fixture checkout at a real repository.
+    env: withoutInheritedGitRepositoryLocation(process.env),
     encoding: "utf8",
   });
   if (result.status === 0) {

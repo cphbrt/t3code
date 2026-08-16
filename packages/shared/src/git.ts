@@ -259,6 +259,46 @@ function toLocalStatusPart(status: VcsStatusResult): VcsStatusLocalResult {
   };
 }
 
+/**
+ * Environment variables that tell Git which repository to operate on,
+ * overriding discovery from the working directory.
+ *
+ * `git bisect run`, hooks, `rebase --exec`, and `filter-branch` export these
+ * into every process they spawn — for a linked worktree `GIT_DIR` is an
+ * absolute path to `<repo>/.git/worktrees/<name>`. A server (or its test
+ * suite) started from inside such a process inherits them, and an inherited
+ * `GIT_DIR` silently redirects every spawned Git command at that repository
+ * no matter which working directory it was given.
+ *
+ * `GIT_CONFIG_*` and `GIT_CEILING_DIRECTORIES` are deliberately not listed:
+ * they adjust configuration and discovery limits rather than relocating the
+ * repository, and callers legitimately wrap Git with them.
+ */
+const GIT_REPOSITORY_LOCATION_ENV_KEYS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+] as const;
+
+/**
+ * Copy `env` without the repository-location variables. Use it to build the
+ * inherited environment of any spawned Git command, so the command's explicit
+ * working directory is what selects the repository. A caller that deliberately
+ * sets one of these — checkpoint capture points `GIT_INDEX_FILE` at a scratch
+ * index — layers its own value back on top of the result.
+ */
+export function withoutInheritedGitRepositoryLocation(
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const sanitized = { ...env };
+  for (const key of GIT_REPOSITORY_LOCATION_ENV_KEYS) {
+    delete sanitized[key];
+  }
+  return sanitized;
+}
+
 export function applyGitStatusStreamEvent(
   current: VcsStatusResult | null,
   event: VcsStatusStreamEvent,

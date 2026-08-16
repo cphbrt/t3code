@@ -26,7 +26,11 @@ import {
   type ReviewDiffPreviewSource,
   type VcsRef,
 } from "@t3tools/contracts";
-import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import {
+  dedupeRemoteBranchesWithLocalMatches,
+  normalizeGitRemoteUrl,
+  withoutInheritedGitRepositoryLocation,
+} from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
@@ -734,8 +738,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           .spawn(
             ChildProcess.make("git", commandInput.args, {
               cwd: commandInput.cwd,
+              // Every command here targets a repository by explicit `cwd`, so the
+              // inherited repository-location variables are dropped before the
+              // caller's own env is layered on top.
               env: {
-                ...process.env,
+                ...withoutInheritedGitRepositoryLocation(process.env),
                 ...input.env,
                 ...trace2Monitor.env,
               },
