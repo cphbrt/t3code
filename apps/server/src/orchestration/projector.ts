@@ -23,6 +23,8 @@ import {
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
   ThreadSettledPayload,
+  ThreadSelfSettleRequestedPayload,
+  ThreadSelfSettleClearedPayload,
   ThreadPinnedPayload,
   ThreadPinReorderedPayload,
   ThreadSnoozedPayload,
@@ -305,6 +307,7 @@ export function projectEvent(
             archivedAt: null,
             settledOverride: null,
             settledAt: null,
+            selfSettleRequestedAt: null,
             snoozedUntil: null,
             snoozedAt: null,
             scheduledTurn: null,
@@ -367,7 +370,42 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             settledOverride: "settled",
             settledAt: payload.settledAt,
+            // A settled thread has nothing left to defer, whether it got here
+            // from the user's settle or from the agent's own request.
+            selfSettleRequestedAt: null,
             updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.self-settle-requested":
+      return decodeForEvent(
+        ThreadSelfSettleRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          // No updatedAt: a pending request is not thread activity, and
+          // bumping it would reorder the sidebar mid-turn for nothing.
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            selfSettleRequestedAt: payload.requestedAt,
+          }),
+        })),
+      );
+
+    case "thread.self-settle-cleared":
+      return decodeForEvent(
+        ThreadSelfSettleClearedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            selfSettleRequestedAt: null,
           }),
         })),
       );

@@ -78,6 +78,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { T3_CODE_SETTLE_TOOL_INSTRUCTIONS } from "../../mcp/toolkits/thread/tools.ts";
 import { isShutdownRequested } from "../../processShutdown.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -4923,7 +4924,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        // Claude has no developer-instructions channel the way Codex does, so
+        // the `t3-code` tool guidance rides on the preset system prompt — and
+        // only when the MCP session that offers those tools actually exists.
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          ...(mcpSession ? { append: T3_CODE_SETTLE_TOOL_INSTRUCTIONS } : {}),
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
         // normalized to `xhigh` above and paired with `settings.ultracode`.

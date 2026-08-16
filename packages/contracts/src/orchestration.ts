@@ -448,6 +448,13 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  // Set while the thread's own agent has asked, mid-turn, for the thread to
+  // settle as soon as that turn completes cleanly. Deliberately confined to
+  // the decider's read model: it is never written to the SQL projection or
+  // the thread shell, so a server restart drops it — which is the correct
+  // outcome, because a restart interrupts the turn and an interrupted turn
+  // must not settle.
+  selfSettleRequestedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Snooze is an overlay on the active lifecycle, not a fourth destination:
   // a snoozed thread stays "active" in the model and is only suppressed from
   // the inbox until snoozedUntil passes (or the thread raises its hand).
@@ -1167,6 +1174,18 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+/**
+ * The thread's own agent asking for the thread to settle once the current turn
+ * finishes cleanly. Internal on purpose: it arrives over the per-thread
+ * `t3-code` MCP credential, which already pins the thread, so no client may
+ * dispatch it and no caller may name a thread other than its own.
+ */
+const ThreadSelfSettleRequestCommand = Schema.Struct({
+  type: Schema.Literal("thread.self-settle.request"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1185,6 +1204,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
   ThreadTurnRescheduleCommand,
+  ThreadSelfSettleRequestCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1204,6 +1224,8 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.unarchived",
   "thread.settled",
   "thread.unsettled",
+  "thread.self-settle-requested",
+  "thread.self-settle-cleared",
   "thread.snoozed",
   "thread.unsnoozed",
   "thread.pinned",
@@ -1304,6 +1326,25 @@ export const ThreadUnsettledPayload = Schema.Struct({
   threadId: ThreadId,
   reason: Schema.Literals(["user", "activity"]),
   updatedAt: IsoDateTime,
+});
+
+/**
+ * The agent asked to settle its own thread while the turn was still running.
+ * No `updatedAt`: the request is invisible bookkeeping until it resolves, and
+ * bumping the thread would churn sidebar ordering mid-turn.
+ */
+export const ThreadSelfSettleRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  requestedAt: IsoDateTime,
+});
+
+export const ThreadSelfSettleClearedPayload = Schema.Struct({
+  threadId: ThreadId,
+  // unclean-turn-end: the session left "running" as errored, interrupted or
+  // stopped, so "if all goes well" did not hold and the thread stays visible.
+  // activity: the user re-engaged first, and their new instruction supersedes
+  // the agent's request — mirrors thread.unsettled(reason: "activity").
+  reason: Schema.Literals(["unclean-turn-end", "activity"]),
 });
 
 export const ThreadSnoozedPayload = Schema.Struct({
@@ -1539,6 +1580,16 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.unsettled"),
     payload: ThreadUnsettledPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.self-settle-requested"),
+    payload: ThreadSelfSettleRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.self-settle-cleared"),
+    payload: ThreadSelfSettleClearedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

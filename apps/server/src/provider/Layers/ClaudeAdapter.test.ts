@@ -5423,6 +5423,7 @@ describe("ClaudeAdapterLive", () => {
           signal: new AbortController().signal,
           suggestions: [],
           toolUseID: "tool-use-mcp-1",
+          requestId: "req-mcp-1",
         },
       );
       yield* respondToNextRequest;
@@ -5456,6 +5457,7 @@ describe("ClaudeAdapterLive", () => {
             },
           ],
           toolUseID: "tool-use-bash-1",
+          requestId: "req-bash-1",
         },
       );
       yield* respondToNextRequest;
@@ -6493,7 +6495,11 @@ describe("ClaudeAdapterLive", () => {
             },
           ],
         },
-        { signal: new AbortController().signal, toolUseID: "tool-ask-stop" },
+        {
+          signal: new AbortController().signal,
+          toolUseID: "tool-ask-stop",
+          requestId: "req-ask-stop",
+        },
       );
 
       const requestedEvent = yield* Stream.runHead(adapter.streamEvents);
