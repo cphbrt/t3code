@@ -86,3 +86,74 @@ it.effect("projects settled lifecycle events", () =>
     expect(activityUnsettled.threads[0]?.settledAt).toBeNull();
   }),
 );
+
+it.effect("projects the agent self-settle request lifecycle", () =>
+  Effect.gen(function* () {
+    const now = "2026-01-01T00:00:00.000Z";
+    const later = "2026-01-01T00:05:00.000Z";
+    const created = yield* projectEvent(
+      createEmptyReadModel(now),
+      makeEvent({
+        sequence: 1,
+        type: "thread.created",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          projectId: ProjectId.make("project-1"),
+          title: "Thread",
+          modelSelection: { provider: "claude", model: "sonnet" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+    expect(created.threads[0]?.selfSettleRequestedAt).toBeNull();
+
+    const requested = yield* projectEvent(
+      created,
+      makeEvent({
+        sequence: 2,
+        type: "thread.self-settle-requested",
+        payload: { threadId: ThreadId.make("thread-1"), requestedAt: now },
+      }),
+    );
+    expect(requested.threads[0]?.selfSettleRequestedAt).toBe(now);
+    // A pending request is invisible bookkeeping: it must not reorder the
+    // sidebar by bumping the thread mid-turn.
+    expect(requested.threads[0]?.updatedAt).toBe(now);
+
+    const cleared = yield* projectEvent(
+      requested,
+      makeEvent({
+        sequence: 3,
+        type: "thread.self-settle-cleared",
+        payload: { threadId: ThreadId.make("thread-1"), reason: "unclean-turn-end" },
+      }),
+    );
+    expect(cleared.threads[0]?.selfSettleRequestedAt).toBeNull();
+    expect(cleared.threads[0]?.settledOverride).toBeNull();
+
+    // Settling consumes the request without a separate cleared event.
+    const reRequested = yield* projectEvent(
+      cleared,
+      makeEvent({
+        sequence: 4,
+        type: "thread.self-settle-requested",
+        payload: { threadId: ThreadId.make("thread-1"), requestedAt: now },
+      }),
+    );
+    const settled = yield* projectEvent(
+      reRequested,
+      makeEvent({
+        sequence: 5,
+        type: "thread.settled",
+        payload: { threadId: ThreadId.make("thread-1"), settledAt: later, updatedAt: later },
+      }),
+    );
+    expect(settled.threads[0]?.settledOverride).toBe("settled");
+    expect(settled.threads[0]?.selfSettleRequestedAt).toBeNull();
+  }),
+);

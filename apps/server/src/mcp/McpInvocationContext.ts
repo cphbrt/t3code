@@ -7,7 +7,12 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 
-export type McpCapability = "preview";
+/**
+ * What a `t3-code` credential is allowed to do. "preview" drives the
+ * collaborative browser; "settle" lets the thread's own agent park its thread
+ * once the turn lands cleanly.
+ */
+export type McpCapability = "preview" | "settle";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
@@ -23,8 +28,14 @@ export class McpInvocationContext extends Context.Service<
   McpInvocationScope
 >()("t3/mcp/McpInvocationContext") {}
 
+/**
+ * Guards the preview capability specifically: its refusal is
+ * `PreviewAutomationUnavailableError`, so the argument stays narrowed to the
+ * capability that error can describe. Other capabilities check
+ * `invocation.capabilities` directly and fail with their own tool's error.
+ */
 export const requireMcpCapability = Effect.fn("mcp.requireCapability")(function* (
-  capability: McpCapability,
+  capability: Extract<McpCapability, "preview">,
 ) {
   const invocation = yield* McpInvocationContext;
   if (!invocation.capabilities.has(capability)) {

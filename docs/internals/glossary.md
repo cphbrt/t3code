@@ -38,6 +38,10 @@ The main durable unit of conversation and workspace history. In [the orchestrati
 
 A single user-to-assistant work cycle inside a thread. It starts with user input and ends when the session leaves `running` status, which [projector.ts][4] treats as the authoritative completion signal (`settledTurnStateForSessionStatus`). Checkpoint and diff work may settle afterward without changing when the turn ended. See [the contracts][1] and [ProviderRuntimeIngestion.ts][5].
 
+#### Self-settle
+
+A thread's own agent asking, mid-turn, for the thread to settle once that turn completes cleanly. It arrives as `thread.self-settle.request` over the thread's `t3-code` MCP credential, is recorded as `thread.self-settle-requested`, and resolves at the next `thread.session.set` that takes the session out of `running`: a clean end (`idle`/`ready`) emits `thread.settled`, anything else emits `thread.self-settle-cleared`. The pending request lives only in the decider's read model, so a server restart drops it — correctly, because a restart interrupts the turn. See [decider.ts][8] and [projector.ts][4].
+
 #### Activity
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
