@@ -111,13 +111,14 @@ vi.mock("@legendapp/list/react", async () => {
 
 function MockFileDiff(props: {
   fileDiff: { name?: string | null; prevName?: string | null };
+  options?: { overflow?: "wrap" | "scroll" };
   renderCustomHeader?: (fileDiff: {
     name?: string | null;
     prevName?: string | null;
   }) => React.ReactNode;
 }) {
   return (
-    <div data-testid="file-diff">
+    <div data-testid="file-diff" data-overflow={props.options?.overflow}>
       {props.renderCustomHeader?.(props.fileDiff)}
       {props.fileDiff.name ?? props.fileDiff.prevName ?? "diff"}
     </div>
@@ -209,6 +210,23 @@ function buildLongUserMessageText(tail = "final detail in the full message") {
   return Array.from({ length: 9 }, (_, index) =>
     index === 8 ? tail : `Line ${index + 1}: ${"verbose prompt content ".repeat(8).trim()}`,
   ).join("\n");
+}
+
+function buildFileChangeEntry(id: string, entryId: string, path: string) {
+  return {
+    id,
+    kind: "work" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    entry: {
+      id: entryId,
+      createdAt: MESSAGE_CREATED_AT,
+      label: "File change",
+      changedFiles: [path],
+      hasFileDiff: true,
+      itemType: "file_change" as const,
+      tone: "tool" as const,
+    },
+  };
 }
 
 function buildUserTimelineEntry(text: string) {
@@ -600,6 +618,64 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Diff unavailable.");
     expect(markup).not.toContain(">src/app.ts</pre>");
+  });
+
+  it("offers a wrap control on a file change, starting unwrapped", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildFileChangeEntry("file-entry", "file-change", "src/app.ts")]}
+      />,
+    );
+
+    // Wrapping starts off, and the control is the shared lucide wrap-text glyph rather than text.
+    expect(markup).toContain("lucide-text-wrap");
+    expect(markup).toContain('aria-label="Wrap long lines"');
+    expect(markup).toContain('aria-pressed="false"');
+    expect(markup).not.toContain(":set ");
+  });
+
+  it("gives every file change its own independent wrap control", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          buildFileChangeEntry("file-entry-1", "file-change-1", "docs/plan.md"),
+          buildFileChangeEntry("file-entry-2", "file-change-2", "src/app.ts"),
+        ]}
+      />,
+    );
+
+    // Wrap state is scoped per cell, so each diff renders its own control rather than
+    // sharing one. Independent toggling is covered by the live-client pass.
+    expect(markup.match(/lucide-text-wrap/g)).toHaveLength(2);
+    expect(markup.match(/aria-pressed="false"/g)).toHaveLength(2);
+  });
+
+  it("keeps the wrap command off tool rows that carry no diff", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "command-entry",
+            kind: "work",
+            createdAt: MESSAGE_CREATED_AT,
+            entry: {
+              id: "command",
+              createdAt: MESSAGE_CREATED_AT,
+              label: "Ran command",
+              command: "ls -la",
+              itemType: "command_execution",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("ls -la");
+    expect(markup).not.toContain("lucide-text-wrap");
   });
 
   it("derives the live edge from strict browser scroll geometry", async () => {
@@ -1292,6 +1368,10 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("contextWindow.test.ts");
     expect(markup).toContain("Wadduo");
     expect(markup).toContain('data-testid="file-diff"');
+    // A quoted review comment is a snippet the user chose, not a file change to read through;
+    // it keeps the renderer's default overflow and offers no wrap control.
+    expect(markup).not.toContain("data-overflow");
+    expect(markup).not.toContain("lucide-text-wrap");
     expect(markup).not.toContain(">Review comment<");
     expect(markup).not.toContain("&lt;review_comment");
     expect(markup).not.toContain("&lt;/review_comment&gt;");

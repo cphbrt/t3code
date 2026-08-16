@@ -78,6 +78,7 @@ import { Button } from "../ui/button";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesCard } from "./ChangedFilesTree";
+import { DiffWordWrapToggle, diffOverflowMode } from "../diffs/DiffWordWrapToggle";
 import { shouldAutoExpandChangedFiles } from "./changedFilesPresentation";
 import { MessageCopyButton } from "./MessageCopyButton";
 import {
@@ -2371,6 +2372,7 @@ const ToolFileChangesBody = memo(function ToolFileChangesBody(props: {
   activityId: string;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
+  wordWrap: boolean;
 }) {
   const result = useAtomValue(
     activityFileChangesEnvironment.detail({
@@ -2381,6 +2383,7 @@ const ToolFileChangesBody = memo(function ToolFileChangesBody(props: {
       },
     }),
   );
+  const overflow = diffOverflowMode(props.wordWrap);
   const response = Option.getOrNull(AsyncResult.value(result));
   if (response === null) {
     return (
@@ -2407,6 +2410,7 @@ const ToolFileChangesBody = memo(function ToolFileChangesBody(props: {
           options={{
             collapsed: false,
             diffStyle: "unified",
+            overflow,
             theme: resolveDiffThemeName(props.resolvedTheme),
           }}
         />
@@ -2431,6 +2435,8 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
   const ctx = use(TimelineRowCtx);
   const activity = use(TimelineRowActivityCtx);
   const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null);
+  // Window-local, like vim's own `wrap`: this cell only, reset when the row unmounts.
+  const [wordWrap, setWordWrap] = useState(false);
   const expanded =
     expandedOverride ?? (workLogEntryIsCommand(workEntry) || workEntry.itemType === "file_change");
   const iconConfig = workToneIcon(workEntry.tone);
@@ -2586,13 +2592,17 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
           onPointerDown={stopRowToggle}
         >
           {workEntry.hasFileDiff && ctx.threadRef ? (
-            <ToolFileChangesBody
-              environmentId={ctx.activeThreadEnvironmentId}
-              threadId={ctx.threadRef.threadId}
-              activityId={workEntry.id}
-              resolvedTheme={ctx.resolvedTheme}
-              workspaceRoot={ctx.workspaceRoot}
-            />
+            <>
+              <DiffWordWrapToggle wordWrap={wordWrap} onToggle={setWordWrap} />
+              <ToolFileChangesBody
+                environmentId={ctx.activeThreadEnvironmentId}
+                threadId={ctx.threadRef.threadId}
+                activityId={workEntry.id}
+                resolvedTheme={ctx.resolvedTheme}
+                workspaceRoot={ctx.workspaceRoot}
+                wordWrap={wordWrap}
+              />
+            </>
           ) : expandedBody.content ? (
             <pre className={toolCallExpandedBodyClassName}>{expandedBody.content}</pre>
           ) : null}
