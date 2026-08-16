@@ -47,6 +47,25 @@ work itself. Keep entries publishable: technical facts only, no private data.
   classifies it as binary and silently returns zero matches — humans and
   agents searching the codebase miss the file entirely. One character-class
   fix; deserves its own commit.
+- **Tool result previews are event-derived, so history stays bare.**
+  `ItemLifecyclePayload.resultPreview` is computed in `ClaudeAdapter` when a
+  call completes, so only turns taken after it shipped carry one; every
+  pre-existing `ListAgents: {}` row still reads as the request alone. The
+  full result was already persisted for those rows — `data.result` survives
+  into `projection_thread_activities.payload_json` and is only dropped on
+  the way out by `projectActivityPayload`'s allowlist — so deriving the
+  preview at projection time instead would light up all history, add no
+  persisted bytes, and cover both providers at once, sitting beside the
+  existing `summarizeMcpResult`. Deferred because it is a distinct product
+  call: it changes how already-read threads look. Decide whether to switch
+  to the derived variant or keep previews forward-only.
+- **Codex has the same request-only tool rows, with no preview.**
+  `CodexAdapter.itemDetail` summarizes from request-side fields only
+  (`query`, `command`, `title`, `summary`, `text`, `path`, `prompt`), the
+  same gap the Claude preview closed. The contract field and both client
+  surfaces are provider-neutral, so parity is additive, but it needs a real
+  Codex payload to confirm where result text lands per item type; the two
+  adapters' completion paths are not similar enough to share code cheaply.
 
 ## Housekeeping (safe once Chris has relaunched happily)
 
