@@ -135,6 +135,7 @@ import { searchableSetting } from "./settingsSearch";
 import { DictationSettings } from "./DictationSettings";
 import { dictationBridge } from "~/hooks/useDictation";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { requestWaitingNotificationPermission } from "../WaitingNotifications";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -1692,6 +1693,39 @@ export function GeneralSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("waiting-notifications")}
+          description="Show a brief system notification when a thread needs you — an approval, a question, a finished turn, or an interrupted run — while this app is in the background."
+          resetAction={
+            settings.waitingNotificationsEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.waitingNotificationsEnabled ? (
+              <SettingResetButton
+                label="waiting notifications"
+                onClick={() =>
+                  updateSettings({
+                    waitingNotificationsEnabled:
+                      DEFAULT_UNIFIED_SETTINGS.waitingNotificationsEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.waitingNotificationsEnabled}
+              onCheckedChange={(checked) => {
+                // Browsers only grant notification permission from a user
+                // gesture; this toggle is the one we reliably have.
+                if (checked) {
+                  requestWaitingNotificationPermission();
+                }
+                updateSettings({ waitingNotificationsEnabled: Boolean(checked) });
+              }}
+              aria-label="Notify when a thread needs you"
+            />
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("time-format")}

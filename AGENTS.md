@@ -87,6 +87,8 @@ Preserve each thread's manually chosen transcript reading position across thread
 
 Always show long user messages in full. Do not offer controls to collapse or expand them.
 
+When a thread enters a state that waits on the user—pending approval, awaiting input, an unseen completed turn, or an interrupted or failed run—and the app is not focused, show one ephemeral OS notification for that transition. Derive the state from the sidebar's own status resolver so the banner and the sidebar can never disagree, seed newly seen threads silently so a load or reconnect never bursts, respect snooze except when the thread already raised its hand, auto-close the banner so nothing collects in Notification Center, and let a click bring the app forward on that thread. Keep it one client-side implementation on the standard web `Notification` API rather than a provider- or platform-specific path.
+
 Dictation is desktop-local: the composer microphone transcribes through a user-configured whisper.cpp binary and ggml model on this machine, and audio never leaves the device. Ship no bundled binary or model—both paths are explicit user settings—and never add a network transcription path.
 
 When a provider explicitly reports that an account is unavailable until a reset time, preserve that state per provider instance, show the top error bar on every thread using that instance, and show a quiet countdown on affected sessions and in the model picker. Keep the state and UI provider-neutral; do not infer a reset from ambiguous rolling-window data.

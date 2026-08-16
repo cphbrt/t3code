@@ -50,6 +50,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
+  waitingNotificationsEnabled: true,
   wordWrap: true,
 };
 
