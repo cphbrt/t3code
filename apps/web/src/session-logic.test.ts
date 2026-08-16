@@ -956,6 +956,53 @@ describe("deriveWorkLogEntries", () => {
     expect(entries.map((entry) => entry.id)).toEqual(["tool-complete"]);
   });
 
+  it("collapses a tool's lifecycle into one row carrying the result preview", () => {
+    // The mid-stream update predates the result; the closing pair carries it.
+    // All three must stay one row: `detail` is the collapse identity, so it has
+    // to be identical across every stage for that to hold.
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-updated-inflight",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.updated",
+        summary: "Subagent task",
+        tone: "tool",
+        payload: { itemType: "collab_agent_tool_call", detail: "ListAgents: {}" },
+      }),
+      makeActivity({
+        id: "tool-updated-resolving",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "tool.updated",
+        summary: "Subagent task",
+        tone: "tool",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "ListAgents: {}",
+          resultPreview: "git-operations Junior running",
+        },
+      }),
+      makeActivity({
+        id: "tool-completed",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "tool.completed",
+        summary: "Subagent task",
+        tone: "tool",
+        payload: {
+          itemType: "collab_agent_tool_call",
+          detail: "ListAgents: {}",
+          resultPreview: "git-operations Junior running",
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      detail: "ListAgents: {}",
+      resultPreview: "git-operations Junior running",
+    });
+  });
+
   it("omits task.started but shows task.progress and task.completed", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

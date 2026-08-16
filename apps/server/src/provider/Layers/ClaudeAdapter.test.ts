@@ -1616,6 +1616,218 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("previews the result of a tool row summarized only by its input", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 9).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "who is running?",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-preview",
+        uuid: "stream-preview-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-listagents-1",
+            name: "ListAgents",
+            input: {},
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-preview",
+        uuid: "user-preview-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-listagents-1",
+              content: "Agents:\n  git-operations Junior   running\n\n  docs Intern   completed",
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-preview",
+        uuid: "result-preview",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+
+      const started = runtimeEvents.find((event) => event.type === "item.started");
+      assert.equal(started?.type, "item.started");
+      if (started?.type === "item.started") {
+        assert.equal(started.payload.detail, "ListAgents: {}");
+        // Nothing to preview until the result lands.
+        assert.equal(started.payload.resultPreview, undefined);
+      }
+
+      const completed = runtimeEvents.find((event) => event.type === "item.completed");
+      assert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        // The request summary is the row's collapse identity and must survive
+        // the completion byte-for-byte.
+        assert.equal(completed.payload.detail, "ListAgents: {}");
+        assert.equal(
+          completed.payload.resultPreview,
+          "Agents: git-operations Junior running docs Intern completed",
+        );
+      }
+
+      // Both closing stages agree, so folding them cannot lose the preview.
+      const updated = runtimeEvents.find(
+        (event) => event.type === "item.updated" && event.payload.resultPreview !== undefined,
+      );
+      assert.equal(updated?.type, "item.updated");
+      if (updated?.type === "item.updated") {
+        assert.equal(updated.payload.detail, "ListAgents: {}");
+        assert.equal(
+          updated.payload.resultPreview,
+          "Agents: git-operations Junior running docs Intern completed",
+        );
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("caps a tool result preview and leaves labelled agent rows alone", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 12).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "delegate and read",
+        attachments: [],
+      });
+
+      // A Task row already reads as prose, so its result must not crowd it.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-preview-cap",
+        uuid: "stream-cap-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-task-cap",
+            name: "Task",
+            input: { description: "Review the database layer", prompt: "Audit the SQL changes" },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-preview-cap",
+        uuid: "stream-cap-2",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "tool-dynamic-cap",
+            name: "ListAgents",
+            input: {},
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "user",
+        session_id: "sdk-session-preview-cap",
+        uuid: "user-cap-result",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-task-cap",
+              content: "The database layer looks fine.",
+            },
+            {
+              type: "tool_result",
+              tool_use_id: "tool-dynamic-cap",
+              content: "x".repeat(5_000),
+            },
+          ],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-preview-cap",
+        uuid: "result-cap",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const completions = runtimeEvents.filter((event) => event.type === "item.completed");
+
+      const labelled = completions.find(
+        (event) => event.payload.detail === "Review the database layer",
+      );
+      assert.equal(labelled?.type, "item.completed");
+      assert.equal(labelled?.payload.resultPreview, undefined);
+
+      const generic = completions.find((event) => event.payload.detail === "ListAgents: {}");
+      assert.equal(generic?.type, "item.completed");
+      assert.equal(generic?.payload.resultPreview?.length, 200);
+      assert.equal(generic?.payload.resultPreview?.endsWith("…"), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("treats user-aborted Claude results as interrupted without a runtime error", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

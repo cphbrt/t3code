@@ -49,6 +49,7 @@ import {
   type TaskRunHandles,
   ThreadId,
   type ToolFileChange,
+  TOOL_RESULT_PREVIEW_LIMIT,
   TurnId,
   type UserInputQuestion,
 } from "@t3tools/contracts";
@@ -1402,11 +1403,56 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
     }
   }
 
+  return serializedInputDetail(toolName, input);
+}
+
+/**
+ * The `<ToolName>: <serialized input>` fallback summary, used when nothing
+ * about the request reads better. Split out so the completion path can
+ * recognize the rows whose detail says nothing about what the call returned.
+ */
+function serializedInputDetail(toolName: string, input: Record<string, unknown>): string {
   const serialized = encodeJsonStringForDiagnostics(input) ?? "[unserializable input]";
   if (serialized.length <= 400) {
     return `${toolName}: ${serialized}`;
   }
   return `${toolName}: ${serialized.slice(0, 397)}...`;
+}
+
+/**
+ * Item types whose row is only ever a tool name plus its arguments: no output
+ * pane, no diff, no human-authored label. Command runs and file changes stream
+ * their result into a real output surface, and a labelled agent task already
+ * reads as prose, so none of them need — or want — a result preview crowding
+ * the summary line.
+ */
+const RESULT_PREVIEW_ITEM_TYPES = new Set<CanonicalItemType>([
+  "collab_agent_tool_call",
+  "dynamic_tool_call",
+]);
+
+/**
+ * Short preview of a tool's textual result for rows that would otherwise read
+ * `ListAgents: {}` — the request with no hint of the answer. Returns undefined
+ * whenever the row already explains itself, so this only ever adds signal to
+ * the summaries that had none.
+ */
+function toolResultPreview(tool: ToolInFlight, resultText: string): string | undefined {
+  if (!RESULT_PREVIEW_ITEM_TYPES.has(tool.itemType)) {
+    return undefined;
+  }
+  // A description/prompt label (or a command summary) is already readable, and
+  // recomputing the fallback is the only honest test of which branch ran.
+  if (tool.detail !== serializedInputDetail(tool.toolName, tool.input)) {
+    return undefined;
+  }
+  const collapsed = resultText.replace(/\s+/gu, " ").trim();
+  if (collapsed.length === 0) {
+    return undefined;
+  }
+  return collapsed.length <= TOOL_RESULT_PREVIEW_LIMIT
+    ? collapsed
+    : `${collapsed.slice(0, TOOL_RESULT_PREVIEW_LIMIT - 1).trimEnd()}…`;
 }
 
 function titleForTool(itemType: CanonicalItemType): string {
@@ -3083,6 +3129,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         input: tool.input,
         result: toolResult.block,
       };
+      // Set on both closing stages so a client that folds them sees the same
+      // value whichever one it keeps.
+      const resultPreview = toolResultPreview(tool, toolResult.text);
 
       const updatedStamp = yield* makeEventStamp();
       yield* offerRuntimeEvent({
@@ -3098,6 +3147,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: toolResult.isError ? "failed" : "inProgress",
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          ...(resultPreview ? { resultPreview } : {}),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
           data: toolData,
@@ -3152,6 +3202,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           status: itemStatus,
           title: tool.title,
           ...(tool.detail ? { detail: tool.detail } : {}),
+          ...(resultPreview ? { resultPreview } : {}),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
           ...(fileChanges ? { fileChanges } : {}),

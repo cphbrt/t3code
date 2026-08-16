@@ -2123,11 +2123,18 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
 }
 
 function workEntryPreview(
-  workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workEntry: Pick<TimelineWorkEntry, "detail" | "resultPreview" | "command" | "changedFiles">,
   workspaceRoot: string | undefined,
 ) {
   if (workEntry.command) return workEntry.command;
-  if (workEntry.detail) return workEntry.detail;
+  // A tool row summarized as `<ToolName>: <arguments>` says what was asked and
+  // nothing about the answer; the arrow reads the request into its result.
+  if (workEntry.detail) {
+    return workEntry.resultPreview
+      ? `${workEntry.detail} → ${workEntry.resultPreview}`
+      : workEntry.detail;
+  }
+  if (workEntry.resultPreview) return workEntry.resultPreview;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
@@ -2164,6 +2171,10 @@ function buildToolCallExpandedBody(
   const detail = workEntry.detail?.trim();
   if (detail && !blocks.includes(detail)) {
     blocks.push(detail);
+  }
+  const resultPreview = workEntry.resultPreview?.trim();
+  if (resultPreview && !blocks.includes(resultPreview)) {
+    blocks.push(resultPreview);
   }
   const changedFiles = workEntry.changedFiles ?? [];
   if (changedFiles.length > 0) {

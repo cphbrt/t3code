@@ -54,6 +54,12 @@ export interface WorkLogEntry {
   toolCallId?: string;
   label: string;
   detail?: string;
+  /**
+   * Short preview of what a tool call returned, for rows whose `detail` is
+   * only the tool name and its arguments. Kept apart from `detail` because
+   * `detail` is this row's collapse identity across lifecycle stages.
+   */
+  resultPreview?: string;
   command?: string;
   rawCommand?: string;
   output?: {
@@ -971,6 +977,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (detail) {
     entry.detail = detail;
   }
+  const resultPreview = isTaskActivity ? null : asTrimmedString(payload?.resultPreview);
+  if (resultPreview) {
+    entry.resultPreview = resultPreview;
+  }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
   }
@@ -1218,6 +1228,9 @@ function mergeDerivedWorkLogEntries(
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
   const detail = next.detail ?? previous.detail;
+  // Only the closing stages carry one, so the later stage wins and an earlier
+  // in-flight row never blanks it back out.
+  const resultPreview = next.resultPreview ?? previous.resultPreview;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
   const output = next.output ?? previous.output;
@@ -1232,6 +1245,7 @@ function mergeDerivedWorkLogEntries(
     ...previous,
     ...next,
     ...(detail ? { detail } : {}),
+    ...(resultPreview ? { resultPreview } : {}),
     ...(command ? { command } : {}),
     ...(rawCommand ? { rawCommand } : {}),
     ...(output ? { output } : {}),

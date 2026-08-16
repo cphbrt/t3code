@@ -11,6 +11,7 @@ import {
   EventId,
   isToolLifecycleItemType,
   ThreadId,
+  TOOL_RESULT_PREVIEW_LIMIT,
   type ThreadTokenUsageSnapshot,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -946,6 +947,14 @@ export function runtimeEventToActivities(
             ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.resultPreview
+              ? {
+                  resultPreview: truncateDetail(
+                    event.payload.resultPreview,
+                    TOOL_RESULT_PREVIEW_LIMIT,
+                  ),
+                }
+              : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
             ...(event.payload.fileChanges !== undefined
               ? { fileChanges: event.payload.fileChanges }
@@ -984,6 +993,14 @@ export function runtimeEventToActivities(
             ...(event.itemId !== undefined ? { toolCallId: event.itemId } : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
+            ...(event.payload.resultPreview
+              ? {
+                  resultPreview: truncateDetail(
+                    event.payload.resultPreview,
+                    TOOL_RESULT_PREVIEW_LIMIT,
+                  ),
+                }
+              : {}),
             ...(event.payload.data !== undefined ? { data: event.payload.data } : {}),
             ...(event.payload.fileChanges !== undefined
               ? { fileChanges: event.payload.fileChanges }
