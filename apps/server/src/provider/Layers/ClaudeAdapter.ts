@@ -265,7 +265,20 @@ interface ClaudeTaskState {
  */
 interface ClaudeTaskAgentState {
   readonly taskId: string;
+  /**
+   * The tool_use id this task was FIRST seen with — its spawn call. Messaging
+   * a settled subagent restarts it under the same task id with a new
+   * tool_use id, but the SDK keeps stamping the sidechain with the spawn id,
+   * so the spawn id is the stable public identity for task.* payloads.
+   */
   toolUseId: string | undefined;
+  /**
+   * Every tool_use id this task has been announced with (spawn plus each
+   * restart). Attribution matches on ANY of them: a restart's own id appears
+   * on nothing else, while the spawn id keeps arriving as the
+   * parent_tool_use_id of the subagent's traffic for the rest of the session.
+   */
+  readonly toolUseIds: Set<string>;
   description: string | undefined;
   subagentType: string | undefined;
   taskType: string | undefined;
@@ -274,9 +287,13 @@ interface ClaudeTaskAgentState {
   runHandles: TaskRunHandles | undefined;
   /** Set when this task was launched from inside a subagent. */
   owningAgentId: string | undefined;
-  /** Seeded from the launching tool's input; refined by the subagent's own
-   * assistant snapshots (authoritative API model). */
+  /** Seeded ONCE from the launching tool's input; refined by the subagent's
+   * own assistant snapshots (authoritative API model). A restart's re-seed
+   * never overwrites it — see the task_started handler. */
   model: string | undefined;
+  /** An explicit launch override only. No payload the SDK sends reports a
+   * subagent's resolved effort, so anything else would be a guess wearing the
+   * subagent's name; absent means unknown and nothing is displayed. */
   effort: string | undefined;
   /** Launching command for shell/monitor tasks (Bash/Monitor tool input). */
   command: string | undefined;
@@ -290,9 +307,6 @@ interface ClaudeSessionContext {
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
   currentApiModelId: string | undefined;
-  /** Effective effort for the session's turns; subagents without an explicit
-   * effort override inherit this. */
-  currentEffort: string | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -1168,9 +1182,11 @@ const CLAUDE_TASK_PATCH_STATUS: Record<string, RuntimeTaskStatus> = {
 
 /**
  * Resolves a stream message's parent_tool_use_id to the owning agent's
- * taskId. The Task tool's tool_use_id is remembered on task_started; any
- * subagent-forwarded block carries that id as its parent. Returns undefined
- * for parent-conversation traffic.
+ * taskId. Every tool_use id a task has been announced with is remembered from
+ * task_started; any subagent-forwarded block carries one of them as its
+ * parent. Matching the whole set (not just the latest id) is what keeps a
+ * restarted subagent attributable: its traffic goes on carrying the spawn id.
+ * Returns undefined for parent-conversation traffic.
  */
 function agentIdForParentToolUse(
   agents: Map<string, ClaudeTaskAgentState>,
@@ -1180,7 +1196,7 @@ function agentIdForParentToolUse(
     return undefined;
   }
   for (const agent of agents.values()) {
-    if (agent.toolUseId === parentToolUseId) {
+    if (agent.toolUseIds.has(parentToolUseId)) {
       return agent.taskId;
     }
   }
@@ -1220,6 +1236,8 @@ function taskLinkageFor(
     ...(agent.subagentType ? { role: agent.subagentType } : {}),
     ...(agent.model ? { model: agent.model } : {}),
     ...(agent.effort ? { effort: agent.effort } : {}),
+    // Spawn id: stable for the agent's whole life, and the id its own
+    // sidechain traffic keeps carrying even after a restart.
     ...(agent.toolUseId ? { toolUseId: agent.toolUseId } : {}),
     ...(agent.command ? { command: agent.command } : {}),
     ...(agent.workflowName ? { workflowName: agent.workflowName } : {}),
@@ -3141,9 +3159,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               : {}),
           };
           const existing = context.taskAgents.get(workflowTaskId);
+          const toolUseIds = existing?.toolUseIds ?? new Set<string>();
+          toolUseIds.add(tool.itemId);
           context.taskAgents.set(workflowTaskId, {
             taskId: workflowTaskId,
             toolUseId: existing?.toolUseId ?? tool.itemId,
+            toolUseIds,
             description: existing?.description,
             subagentType: existing?.subagentType,
             taskType: existing?.taskType ?? "local_workflow",
@@ -3783,41 +3804,70 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               (tool) => tool.itemId === message.tool_use_id,
             )
           : undefined;
-        const owningAgentId = launchingTool?.agentId;
-        // Model/effort: the Agent tool's input carries explicit overrides;
-        // absent ones inherit the session's selection (SDK behavior).
-        // Subagent assistant snapshots later refine model with the
-        // authoritative API id. AgentInput.effort may be a named level or an
+        // Messaging a settled subagent restarts it, and the harness re-emits
+        // task_started for the SAME task id with the restarting call's
+        // tool_use id. Everything the restart cannot legitimately restate —
+        // who owns the task, what it runs on — is carried over from the
+        // existing record.
+        const existingAgent = context.taskAgents.get(message.task_id);
+        const owningAgentId = existingAgent?.owningAgentId ?? launchingTool?.agentId;
+        // Model: the Agent tool's input may override it; absent an override
+        // the session's selection is the best guess, and the subagent's own
+        // assistant snapshots refine it to the authoritative API id within
+        // seconds.
+        //
+        // Effort: an EXPLICIT launch override only, never the session's.
+        // Nothing the SDK sends reports a subagent's resolved effort — an
+        // agent definition's pin is invisible at task_started and no snapshot
+        // carries it — so the session fallback published the PARENT's effort
+        // as if it were the subagent's, with no later correction. Unknown is
+        // left absent instead. AgentInput.effort may be a named level or an
         // integer.
+        //
+        // Both are seeded ONCE. A restart's launching tool is a SendMessage
+        // call, which carries neither, so re-seeding would clobber the launch
+        // override and every snapshot refinement made while the agent ran.
         const launchInput = launchingTool?.input;
-        const model =
-          trimmedString(launchInput?.model) ?? trimmedString(context.session.model ?? undefined);
         const rawLaunchEffort = launchInput?.effort;
+        const model =
+          existingAgent?.model ??
+          trimmedString(launchInput?.model) ??
+          trimmedString(context.session.model ?? undefined);
         const effort =
+          existingAgent?.effort ??
           trimmedString(rawLaunchEffort) ??
           (typeof rawLaunchEffort === "number" && Number.isFinite(rawLaunchEffort)
             ? String(rawLaunchEffort)
-            : context.currentEffort);
+            : undefined);
         // Shell/monitor tasks: the launching tool's input carries the actual
         // command (Bash `command`, Monitor `command`). The SDK caps its own
         // BackgroundTaskSummary command at 1000 chars; mirror that so roster
         // payloads stay bounded.
-        const command = capLaunchString(trimmedString(launchInput?.command));
+        const command =
+          capLaunchString(trimmedString(launchInput?.command)) ?? existingAgent?.command;
         // Agent tasks: task_started carries the prompt the subagent was
         // launched with, which opens its nested transcript. Same bound as
         // command — a launch prompt can be arbitrarily long.
         const prompt = capLaunchString(trimmedString(message.prompt));
         // Remember the agent identity so every later task.* payload for this
         // taskId is self-describing (identity must survive activity retention).
+        // The spawn tool_use id stays the record's public one; the restart's
+        // id joins the attribution set beside it.
+        const toolUseIds = existingAgent?.toolUseIds ?? new Set<string>();
+        if (message.tool_use_id) {
+          toolUseIds.add(message.tool_use_id);
+        }
+        const toolUseId = existingAgent?.toolUseId ?? message.tool_use_id;
         context.taskAgents.set(message.task_id, {
           taskId: message.task_id,
-          toolUseId: message.tool_use_id,
+          toolUseId,
+          toolUseIds,
           description: message.description,
           subagentType: message.subagent_type,
           taskType: message.task_type,
           workflowName: message.workflow_name,
           skipTranscript: message.skip_transcript === true,
-          runHandles: context.taskAgents.get(message.task_id)?.runHandles,
+          runHandles: existingAgent?.runHandles,
           owningAgentId,
           model,
           effort,
@@ -3836,7 +3886,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             ...(message.subagent_type ? { role: message.subagent_type } : {}),
             ...(model ? { model } : {}),
             ...(effort ? { effort } : {}),
-            ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
+            // The spawn id, not this call's: a restart row must not hand
+            // clients a second identity for the same agent (taskLinkageFor
+            // repeats the spawn id on every later row for the same reason).
+            ...(toolUseId ? { toolUseId } : {}),
             ...(command ? { command } : {}),
             // Start row only: taskLinkageFor deliberately omits the prompt so
             // it does not repeat on every progress tick.
@@ -4945,7 +4998,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         startedAt,
         basePermissionMode: permissionMode,
         currentApiModelId: apiModelId,
-        currentEffort: effectiveEffort ?? undefined,
         resumeSessionId: sessionId,
         pendingApprovals,
         pendingUserInputs,
@@ -5073,13 +5125,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...context.session,
         model: modelSelection.model,
       };
-      const turnCaps = getClaudeModelCapabilities(modelSelection.model);
-      const turnEffort = resolveClaudeEffort(
-        turnCaps,
-        getModelSelectionStringOptionValue(modelSelection, "effort"),
-      );
-      context.currentEffort =
-        getEffectiveClaudeAgentEffort(turnEffort ?? null, modelSelection.model) ?? undefined;
     }
 
     // Apply interaction mode by switching the SDK's permission mode.
