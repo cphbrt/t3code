@@ -277,8 +277,26 @@ function itemTitle(itemType: CanonicalItemType, item?: CodexLifecycleItem): stri
   }
 }
 
+function joinTextParts(value: unknown): string | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const parts = value.filter((part) => typeof part === "string").map((part) => part.trim());
+  return trimText(parts.filter((part) => part.length > 0).join("\n\n"));
+}
+
 function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
   const itemRecord = item as Record<string, unknown>;
+  if (itemType === "reasoning") {
+    // Reasoning text arrives as string arrays (`content`, or `summary` when
+    // only summaries are exposed), so the string candidates below never match
+    // it. Collab children never get the reasoning delta stream — their items
+    // are the only carrier of their thinking.
+    const reasoningText = joinTextParts(itemRecord.content) ?? joinTextParts(itemRecord.summary);
+    if (reasoningText) {
+      return reasoningText;
+    }
+  }
   const action = itemRecord.action as Record<string, unknown> | undefined;
   const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
   const candidates = [
@@ -465,6 +483,44 @@ function runtimeEventBase(
   };
 }
 
+/**
+ * Payload half of an item lifecycle runtime event. Shared by the parent
+ * thread's `item/*` notifications and by collab children, so a child agent's
+ * items persist at the same fidelity (canonical type, title, detail, and the
+ * verbatim notification payload as `data`) instead of a one-line summary.
+ * `agentId` is the owning child agent when the item ran inside one; clients
+ * re-home attributed rows out of the parent timeline.
+ */
+function itemLifecyclePayload(
+  item: CodexLifecycleItem,
+  lifecycle: "item.started" | "item.updated" | "item.completed",
+  data: ProviderEvent["payload"],
+  agentId?: string,
+) {
+  const itemType = toCanonicalItemType(item.type);
+  if (itemType === "unknown" && lifecycle !== "item.updated") {
+    return undefined;
+  }
+
+  const detail = itemDetail(itemType, item);
+  const title = itemTitle(itemType, item);
+  const status =
+    lifecycle === "item.started"
+      ? ("inProgress" as const)
+      : lifecycle === "item.completed"
+        ? ("completed" as const)
+        : undefined;
+
+  return {
+    itemType,
+    ...(status ? { status } : {}),
+    ...(title ? { title } : {}),
+    ...(detail ? { detail } : {}),
+    ...(data !== undefined ? { data } : {}),
+    ...(agentId ? { agentId } : {}),
+  };
+}
+
 function mapItemLifecycle(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
@@ -477,29 +533,15 @@ function mapItemLifecycle(
   if (!item) {
     return undefined;
   }
-  const itemType = toCanonicalItemType(item.type);
-  if (itemType === "unknown" && lifecycle !== "item.updated") {
+  const itemPayload = itemLifecyclePayload(item, lifecycle, event.payload);
+  if (!itemPayload) {
     return undefined;
   }
-
-  const detail = itemDetail(itemType, item);
-  const status =
-    lifecycle === "item.started"
-      ? "inProgress"
-      : lifecycle === "item.completed"
-        ? "completed"
-        : undefined;
 
   return {
     ...runtimeEventBase(event, canonicalThreadId),
     type: lifecycle,
-    payload: {
-      itemType,
-      ...(status ? { status } : {}),
-      ...(itemTitle(itemType, item) ? { title: itemTitle(itemType, item) } : {}),
-      ...(detail ? { detail } : {}),
-      ...(event.payload !== undefined ? { data: event.payload } : {}),
-    },
+    payload: itemPayload,
   };
 }
 
@@ -739,19 +781,46 @@ function mapCollabAgentEvent(
         (typeof item?.query === "string" ? item.query : undefined);
       const canonical = toCanonicalItemType(itemTypeRaw);
       const summary = looseSummary ?? canonical.replaceAll("_", " ");
-      return [
-        {
-          ...base,
-          type: "task.progress",
-          payload: {
-            taskId,
-            description: title,
-            ...(knownName ? { title: knownName } : {}),
-            summary,
-            timelineBypass: true,
-          },
+      // Heartbeat: the Agents surface reads its "what is this agent doing now"
+      // line and recent-activity list from task.progress summaries, and those
+      // rows are latest-state (one stable activity id per task). The item
+      // lifecycle events below are durable history and feed no panel state, so
+      // the two are complements, not duplicates — dropping this would blank
+      // the panel's activity line.
+      const heartbeat = {
+        ...base,
+        type: "task.progress",
+        payload: {
+          taskId,
+          description: title,
+          ...(knownName ? { title: knownName } : {}),
+          summary,
+          timelineBypass: true,
         },
-      ];
+      } as const;
+      // Full-fidelity attributed lifecycle: the same mapping the parent thread
+      // gets, with the child stamped as agentId. `data` is the whole synthetic
+      // payload, which carries the verbatim `item` the clients read
+      // (payload.data.item.*), so command/output/diff rendering matches the
+      // parent exactly. A wire item type this build cannot decode degrades to
+      // the heartbeat alone rather than vanishing.
+      const lifecycle =
+        payload.lifecycle === "started"
+          ? ("item.started" as const)
+          : payload.lifecycle === "completed"
+            ? ("item.completed" as const)
+            : undefined;
+      const typedItem =
+        readPayload(EffectCodexSchema.V2ItemCompletedNotification__ThreadItem, payload.item) ??
+        readPayload(EffectCodexSchema.V2ItemStartedNotification__ThreadItem, payload.item);
+      const itemPayload =
+        lifecycle && typedItem
+          ? itemLifecyclePayload(typedItem, lifecycle, event.payload, agentThreadId)
+          : undefined;
+      if (!lifecycle || !itemPayload) {
+        return [heartbeat];
+      }
+      return [{ ...base, type: lifecycle, payload: itemPayload }, heartbeat];
     }
     case "collabAgent/closed":
       return [
@@ -766,7 +835,12 @@ function mapCollabAgentEvent(
   }
 }
 
-function mapToRuntimeEvents(
+/**
+ * Native Codex event → shared runtime event mapping. Exported and pure so the
+ * collab child mapping can be asserted against the synthetic events the
+ * session runtime actually emits (see CodexCollabWire.test.ts).
+ */
+export function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {

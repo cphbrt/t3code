@@ -1,7 +1,8 @@
-import type {
-  OrchestrationEvent,
-  OrchestrationThreadActivity,
-  OrchestrationThreadDetailSnapshot,
+import {
+  isToolLifecycleItemType,
+  type OrchestrationEvent,
+  type OrchestrationThreadActivity,
+  type OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
 import * as NodeBuffer from "node:buffer";
 import { extractMcpResultText, readCommandOutputText } from "./ActivityCommandOutput.ts";
@@ -346,6 +347,52 @@ interface ProjectActivityPayloadOptions {
 }
 
 /**
+ * `data` fields an agent-attributed tool row must keep. Main-thread rows can
+ * drop these because the work log only renders a one-line summary and the
+ * expanded view re-reads elsewhere; an agent row has no such fallback. The
+ * nested transcript IS the only surface that renders these calls, so a row
+ * without its tool name, input and result renders as an empty shell.
+ */
+const AGENT_TRANSCRIPT_KEPT_DATA_FIELDS = ["toolName", "input", "result"] as const;
+
+/**
+ * True for tool lifecycle rows owned by a subagent. Attribution is the signal:
+ * `agentId` is set only by the adapters' subagent paths, so main-thread rows
+ * keep their existing slimming untouched.
+ */
+function isAgentTranscriptToolRow(payload: Record<string, unknown>): boolean {
+  return (
+    typeof payload.agentId === "string" &&
+    payload.agentId.trim().length > 0 &&
+    typeof payload.itemType === "string" &&
+    isToolLifecycleItemType(payload.itemType)
+  );
+}
+
+/**
+ * Re-adds the transcript-critical `data` fields after slimming. Deliberately a
+ * short allowlist rather than passing `data` through whole: everything the
+ * client never reads still gets dropped, so the wire-survival tripwire's
+ * "slimming still applies to data" contract holds for agent rows too.
+ */
+function restoreAgentTranscriptData(
+  projectedData: Record<string, unknown>,
+  data: Record<string, unknown>,
+  isAgentRow: boolean,
+): Record<string, unknown> {
+  if (!isAgentRow) {
+    return projectedData;
+  }
+  const restored = { ...projectedData };
+  for (const key of AGENT_TRANSCRIPT_KEPT_DATA_FIELDS) {
+    if (key in data) {
+      restored[key] = data[key];
+    }
+  }
+  return restored;
+}
+
+/**
  * Removes activity payload fields that no current client reads while retaining
  * the full payload in persistence and the event store.
  */
@@ -353,19 +400,25 @@ export function projectActivityPayload(
   activity: OrchestrationThreadActivity,
   options?: ProjectActivityPayloadOptions,
 ): OrchestrationThreadActivity {
-  const inlineCommandOutput = options?.inlineCommandOutput ?? true;
   const payload = asRecord(activity.payload);
   const data = asRecord(payload?.data);
   if (!payload || !data) {
     return activity;
   }
 
+  const agentTranscriptRow = isAgentTranscriptToolRow(payload);
+  // The recency gate governs unattributed rows, which resolve older output from
+  // the per-activity command-output route. An agent row has no such per-row
+  // fetch path — the nested transcript renders only what its payload carries —
+  // so attribution keeps the output inline whatever the gate decided.
+  const inlineCommandOutput = (options?.inlineCommandOutput ?? true) || agentTranscriptRow;
+
   if (payload.itemType === "mcp_tool_call") {
     return {
       ...activity,
       payload: {
         ...payload,
-        data: projectMcpToolCallData(data),
+        data: restoreAgentTranscriptData(projectMcpToolCallData(data), data, agentTranscriptRow),
       },
     };
   }
@@ -433,7 +486,14 @@ export function projectActivityPayload(
       ...projectedPayload,
       ...(fileChanges.length > 0 ? { hasFileDiff: true } : {}),
       ...(hasCommandOutput ? { hasCommandOutput: true } : {}),
-      data: projectedData,
+      // An agent row keeps its structured patch on the wire. Main-thread rows
+      // advertise `hasFileDiff` and let the client fetch the diff against the
+      // turn's checkpoint; a subagent's edit has no such per-row fetch path, so
+      // stripping it left the transcript with a file_change row and no diff.
+      ...(agentTranscriptRow && payload.fileChanges !== undefined
+        ? { fileChanges: payload.fileChanges }
+        : {}),
+      data: restoreAgentTranscriptData(projectedData, data, agentTranscriptRow),
     },
   };
 }

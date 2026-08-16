@@ -19,6 +19,16 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
     }),
+    subagentTranscript: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:subagent-transcript",
+      tag: ORCHESTRATION_WS_METHODS.getSubagentTranscript,
+      // A settled subagent's on-disk transcript never changes, and a live one
+      // is already followed through streamed thread activity — so this read is
+      // a recovery path, not a poll. Cache it as generously as the script
+      // viewer rather than refetching every time the surface is reopened.
+      staleTimeMs: 300_000,
+      idleTtlMs: 300_000,
+    }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",
       tag: ORCHESTRATION_WS_METHODS.getFullThreadDiff,

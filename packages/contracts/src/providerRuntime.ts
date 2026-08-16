@@ -602,6 +602,15 @@ const taskAgentLinkageFields = {
    * adapter; absent for agent tasks and when the launching tool is unknown.
    */
   command: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Launch prompt a subagent was started with, read from the SDK's
+   * `task_started`. It opens the agent's nested transcript, so it can be as
+   * long as any user turn — truncated at the adapter to the same 1000-char
+   * bound as `command`. Unlike the rest of this bundle it rides on
+   * `task.started` only: repeating a kilobyte on every progress tick would
+   * multiply per-turn wire traffic for a value that never changes.
+   */
+  prompt: Schema.optional(TrimmedNonEmptyStringSchema),
   parentAgentId: Schema.optional(TrimmedNonEmptyStringSchema),
   workflowName: Schema.optional(TrimmedNonEmptyStringSchema),
   agentIndex: Schema.optional(NonNegativeInt),
