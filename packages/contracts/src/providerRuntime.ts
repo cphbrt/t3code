@@ -434,11 +434,29 @@ export const ToolCommandOutputResult = Schema.Struct({
 });
 export type ToolCommandOutputResult = typeof ToolCommandOutputResult.Type;
 
+/**
+ * Character cap for `ItemLifecyclePayload.resultPreview`. Tool results are
+ * unbounded, the preview rides in every completing lifecycle payload on the
+ * wire and in persistence, and the row rendering it is a single line.
+ */
+export const TOOL_RESULT_PREVIEW_LIMIT = 200;
+
 export const ItemLifecyclePayload = Schema.Struct({
   itemType: CanonicalItemType,
   status: Schema.optional(RuntimeItemStatus),
   title: Schema.optional(TrimmedNonEmptyStringSchema),
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Bounded, whitespace-collapsed preview of the tool's textual result, set
+   * only on the stages that carry one. Adapters that summarize a tool row as
+   * `<ToolName>: <serialized input>` say nothing about what the call
+   * produced; this is that missing half.
+   *
+   * Deliberately beside `detail` rather than appended to it: `detail` is the
+   * identity both clients coalesce a tool's lifecycle rows on, so rewriting
+   * it partway through a call splits one call into several rows.
+   */
+  resultPreview: Schema.optional(TrimmedNonEmptyStringSchema),
   data: Schema.optional(Schema.Unknown),
   fileChanges: Schema.optional(Schema.Array(ToolFileChange)),
   /**
