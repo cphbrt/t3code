@@ -3252,7 +3252,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("consumes undeclared and UX-internal system subtypes without warning rows", () => {
+  it.effect("consumes undeclared subtypes and top-level types without warning rows", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -3267,9 +3267,8 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      // Undeclared wire-only roster snapshot + every typed UX-internal
-      // subtype and top-level type consumed silently: none may surface as
-      // unknown-subtype warnings.
+      // Every UX-internal subtype and top-level type consumed silently: none
+      // may surface as unknown-subtype or unknown-type warnings.
       for (const message of [
         {
           type: "system",
@@ -3310,6 +3309,46 @@ describe("ClaudeAdapterLive", () => {
         { type: "system", subtype: "plugin_install", session_id: "session", uuid: "pi" },
         { type: "system", subtype: "memory_recall", session_id: "session", uuid: "mr" },
         { type: "system", subtype: "elicitation_complete", session_id: "session", uuid: "ec" },
+        // Typed by the 0.3.233 bump; each consumed deliberately.
+        {
+          type: "system",
+          subtype: "control_request_progress",
+          request_id: "req-1",
+          status: "api_retry",
+          attempt: 2,
+          session_id: "session",
+          uuid: "crp",
+        },
+        {
+          type: "system",
+          subtype: "informational",
+          content: "heads up",
+          level: "notice",
+          session_id: "session",
+          uuid: "inf",
+        },
+        {
+          type: "system",
+          subtype: "model_refusal_no_fallback",
+          original_model: "claude-sonnet-5",
+          request_id: null,
+          content: "refused",
+          session_id: "session",
+          uuid: "mrnf",
+        },
+        {
+          type: "system",
+          subtype: "worker_shutting_down",
+          reason: "host_exit",
+          session_id: "session",
+          uuid: "wsd",
+        },
+        {
+          type: "conversation_reset",
+          new_conversation_id: "5f1d9d2c-1f4e-4a1a-9a1e-2b7c6f0d3a44",
+          session_id: "session",
+          uuid: "cr",
+        },
         { type: "prompt_suggestion", suggestion: "try this", session_id: "session", uuid: "ps" },
         {
           type: "system",
@@ -4424,6 +4463,7 @@ describe("ClaudeAdapterLive", () => {
             },
           ],
           toolUseID: "tool-use-1",
+          requestId: "req-tool-use-1",
         },
       );
 
@@ -4612,6 +4652,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "tool-agent-1",
+          requestId: "req-tool-agent-1",
         },
       );
 
@@ -4636,6 +4677,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "tool-grep-approval-1",
+          requestId: "req-tool-grep-approval-1",
         },
       );
 
@@ -5173,6 +5215,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: new AbortController().signal,
           toolUseID: "tool-exit-1",
+          requestId: "req-tool-exit-1",
         },
       );
 
@@ -5339,6 +5382,7 @@ describe("ClaudeAdapterLive", () => {
       const permissionPromise = canUseTool("AskUserQuestion", askInput, {
         signal: new AbortController().signal,
         toolUseID: "tool-ask-1",
+        requestId: "req-tool-ask-1",
       });
 
       // The adapter should emit a user-input.requested event.
@@ -5465,6 +5509,7 @@ describe("ClaudeAdapterLive", () => {
       const permissionPromise = canUseTool("AskUserQuestion", askInput, {
         signal: new AbortController().signal,
         toolUseID: "tool-ask-2",
+        requestId: "req-tool-ask-2",
       });
 
       // Should still get user-input.requested even in full-access mode.
@@ -5530,6 +5575,7 @@ describe("ClaudeAdapterLive", () => {
         {
           signal: controller.signal,
           toolUseID: "tool-ask-abort",
+          requestId: "req-tool-ask-abort",
         },
       );
 
