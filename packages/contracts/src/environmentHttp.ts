@@ -33,7 +33,7 @@ import {
   OrchestrationShellSnapshot,
   OrchestrationThreadDetailSnapshot,
 } from "./orchestration.ts";
-import { ToolFileChangesResult } from "./providerRuntime.ts";
+import { ToolCommandOutputResult, ToolFileChangesResult } from "./providerRuntime.ts";
 import {
   PullRequestDiffInput,
   PullRequestDiffResult,
@@ -91,6 +91,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_activity_file_changes_failed",
+  "orchestration_activity_command_output_failed",
   "orchestration_dispatch_failed",
   "internal_error",
 ]);
@@ -497,6 +498,11 @@ const EnvironmentOrchestrationActivityFileChangesParams = Schema.Struct({
   activityId: EventId,
 });
 
+const EnvironmentOrchestrationActivityCommandOutputParams = Schema.Struct({
+  threadId: ThreadId,
+  activityId: EventId,
+});
+
 // Query-string window for windowed thread snapshots (GET payloads must encode
 // to strings). Both fields optional: omitting them keeps the full-snapshot
 // behavior, so pagination stays opt-in per request.
@@ -539,6 +545,18 @@ export class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestr
         headers: OptionalBearerHeaders,
         params: EnvironmentOrchestrationActivityFileChangesParams,
         success: ToolFileChangesResult,
+        error: EnvironmentOrchestrationThreadSnapshotErrors,
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get(
+      "activityCommandOutput",
+      "/api/orchestration/threads/:threadId/activities/:activityId/command-output",
+      {
+        headers: OptionalBearerHeaders,
+        params: EnvironmentOrchestrationActivityCommandOutputParams,
+        success: ToolCommandOutputResult,
         error: EnvironmentOrchestrationThreadSnapshotErrors,
       },
     ).middleware(EnvironmentAuthenticatedAuth),

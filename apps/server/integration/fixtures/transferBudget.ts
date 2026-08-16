@@ -13,6 +13,14 @@ export const TRANSFER_HISTORY_TOOLS_PER_TURN = 5;
 export const TRANSFER_MEASURED_TOOLS = 20;
 export const TRANSFER_HISTORY_MCP_RESULT_BYTES = 900_000;
 export const TRANSFER_MEASURED_MCP_RESULT_BYTES = 1_100_000;
+/**
+ * Captured output per historical command. Comfortably above the projection's
+ * 1,000-byte inline cap so the scenario proves history output stays off the
+ * snapshot rather than merely being truncated on it. The measured turn keeps
+ * its own calibrated size below, so live streaming cost stays comparable.
+ */
+export const TRANSFER_HISTORY_COMMAND_OUTPUT_BYTES = 4_000;
+export const TRANSFER_MEASURED_COMMAND_OUTPUT_BYTES = 1_000;
 
 const sourceModules = [
   "connection/session.ts",
@@ -147,8 +155,10 @@ function baseEvent(
 /**
  * Synthetic canonical events calibrated from heavy local Codex and Claude
  * threads. Ten historical turns produce 9 MB of retained MCP results without
- * committing user content. Command output is intentionally modest because the
- * client projection strips it.
+ * committing user content. Command output is deliberately several times the
+ * projection's inline cap: history rows must leave it out of the snapshot
+ * entirely (advertised as `hasCommandOutput` and fetched on expand), and the
+ * latest turn's rows must inline a truncated copy with an omitted-byte count.
  */
 export function makeRecordedTransferTurn(
   provider: ProviderDriverKind,
@@ -230,7 +240,9 @@ export function makeRecordedTransferTurn(
                 provider,
                 turnIndex,
                 toolIndex,
-                targetBytes: 1_000,
+                targetBytes: measuredTurn
+                  ? TRANSFER_MEASURED_COMMAND_OUTPUT_BYTES
+                  : TRANSFER_HISTORY_COMMAND_OUTPUT_BYTES,
               }),
               exitCode: 0,
               durationMs: 500 + toolIndex,

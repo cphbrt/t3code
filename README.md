@@ -31,7 +31,7 @@ CPH Code's verified mobile setup uses the official T3 Code iOS app as a direct c
 
 This exact route has been verified for pairing, reconnection, existing and new threads, streamed command and file-edit activity, and the mobile terminal. The iOS app has its own presentation—it may collapse tool calls or omit CPH Code's inline diff UI—but functional and protocol compatibility with this direct Tailscale path is a fork requirement. T3 Connect remains a possible future option rather than the current canonical setup.
 
-CPH Code keeps meaningful transcript activity—commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. It may coalesce provider lifecycle noise and collapse large details on request, but it does not automatically hide the semantic record of what an agent did.
+CPH Code keeps meaningful transcript activity—commentary, thinking, reads, searches, edits, commands, and tool calls—visible by default. It may coalesce provider lifecycle noise and collapse large details on request, but it does not automatically hide the semantic record of what an agent did. Command output is kept for good, though it is not all shipped up front: the current turn shows its output right away, while an older command row offers **Show output** and loads the full text when you ask, so opening a long thread stays fast.
 
 Browser automation stays out of that reading surface: CPH Code does not open T3 Code's floating browser mini-player over the transcript. The browser remains available in the right panel when you choose to view it, while agents can keep using its hidden automation host for inspection, screenshots, and recordings.
 

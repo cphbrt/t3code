@@ -4,6 +4,7 @@ import type {
   OrchestrationThreadDetailSnapshot,
 } from "@t3tools/contracts";
 import * as NodeBuffer from "node:buffer";
+import { extractMcpResultText, readCommandOutputText } from "./ActivityCommandOutput.ts";
 import { extractActivityFileChanges } from "./ActivityFileChanges.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -18,10 +19,6 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function asNonBlankString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 function pushChangedFile(target: string[], seen: Set<string>, value: unknown): void {
@@ -168,34 +165,6 @@ const MCP_ITEM_KEPT_FIELDS = [
   "durationMs",
 ] as const;
 
-/**
- * Pulls renderable text out of an MCP tool result: either a Codex-style
- * `{content: [{type: "text", text}, ...]}` record or a raw Claude
- * `tool_result` block whose `content` is a string or block array.
- */
-function extractMcpResultText(result: unknown): string | null {
-  const record = asRecord(result);
-  if (!record) {
-    return typeof result === "string" ? result : null;
-  }
-  if (typeof record.content === "string") {
-    return record.content;
-  }
-  if (Array.isArray(record.content)) {
-    const texts: string[] = [];
-    for (const entry of record.content) {
-      const text = asRecord(entry)?.text;
-      if (typeof text === "string" && text.trim().length > 0) {
-        texts.push(text);
-      }
-    }
-    if (texts.length > 0) {
-      return texts.join("\n");
-    }
-  }
-  return null;
-}
-
 function summarizeMcpResult(result: unknown): Record<string, unknown> | undefined {
   if (result === undefined || result === null) {
     return undefined;
@@ -263,11 +232,7 @@ const COMMAND_OUTPUT_MAX_BYTES = 1_000;
 function projectCommandOutput(
   data: Record<string, unknown>,
 ): { readonly text: string; readonly omittedBytes?: number } | undefined {
-  const text =
-    asNonBlankString(asRecord(data.item)?.aggregatedOutput) ??
-    asNonBlankString(extractMcpResultText(data.result)) ??
-    asNonBlankString(asRecord(data.rawOutput)?.stdout) ??
-    asNonBlankString(asRecord(data.rawOutput)?.content);
+  const text = readCommandOutputText(data);
   if (!text) {
     return undefined;
   }
@@ -354,12 +319,23 @@ function projectAcpContent(value: unknown): Record<string, unknown> | undefined 
 }
 
 /**
+ * Whether this activity's command output travels inline in the payload. Live
+ * events and the latest turn inline it; older history rows only advertise it
+ * and the client fetches the full text on expand.
+ */
+interface ProjectActivityPayloadOptions {
+  readonly inlineCommandOutput?: boolean;
+}
+
+/**
  * Removes activity payload fields that no current client reads while retaining
  * the full payload in persistence and the event store.
  */
 export function projectActivityPayload(
   activity: OrchestrationThreadActivity,
+  options?: ProjectActivityPayloadOptions,
 ): OrchestrationThreadActivity {
+  const inlineCommandOutput = options?.inlineCommandOutput ?? true;
   const payload = asRecord(activity.payload);
   const data = asRecord(payload?.data);
   if (!payload || !data) {
@@ -412,13 +388,22 @@ export function projectActivityPayload(
     projectedData.rawOutput = rawOutput;
   }
 
+  // Inlining every historical command's output dominated thread-open transfer
+  // (68.5% of snapshot gzip bytes on a real thread). Recent rows keep it inline
+  // so the common read costs no extra round trip; older rows advertise it and
+  // the client fetches the full text from the command-output route on expand.
+  let hasCommandOutput = false;
   if (payload.itemType === "command_execution") {
-    const output = projectCommandOutput(data);
-    if (output) {
-      projectedData.output = output.text;
-      if (output.omittedBytes !== undefined) {
-        projectedData.outputOmittedBytes = output.omittedBytes;
+    if (inlineCommandOutput) {
+      const output = projectCommandOutput(data);
+      if (output) {
+        projectedData.output = output.text;
+        if (output.omittedBytes !== undefined) {
+          projectedData.outputOmittedBytes = output.omittedBytes;
+        }
       }
+    } else {
+      hasCommandOutput = readCommandOutputText(data) !== null;
     }
   }
 
@@ -428,6 +413,7 @@ export function projectActivityPayload(
     payload: {
       ...projectedPayload,
       ...(fileChanges.length > 0 ? { hasFileDiff: true } : {}),
+      ...(hasCommandOutput ? { hasCommandOutput: true } : {}),
       data: projectedData,
     },
   };
@@ -580,16 +566,48 @@ function dropSupersededToolUpdatedActivities(
   });
 }
 
+/**
+ * A command the provider has not reported finished. Its output is still
+ * growing, so it must stay inline: the client has no completed row to fetch
+ * yet, and the live event stream is what keeps it current.
+ */
+function isRunningCommand(activity: OrchestrationThreadActivity): boolean {
+  const payload = asRecord(activity.payload);
+  return payload?.itemType === "command_execution" && payload.status === "inProgress";
+}
+
+/**
+ * Rows whose command output travels inline in a snapshot: the thread's latest
+ * turn (what the user is reading when a thread opens) plus any still-running
+ * command from an earlier turn. Everything older is advertised via
+ * `hasCommandOutput` and fetched on expand. A windowed page of older turns
+ * matches no latest-turn id, so history pages carry no inline output at all.
+ */
+function shouldInlineCommandOutput(
+  activity: OrchestrationThreadActivity,
+  latestTurnId: string | null,
+): boolean {
+  if (latestTurnId !== null && activity.turnId === latestTurnId) {
+    return true;
+  }
+  return isRunningCommand(activity);
+}
+
 export function projectThreadDetailSnapshot(
   snapshot: OrchestrationThreadDetailSnapshot,
 ): OrchestrationThreadDetailSnapshot {
+  const latestTurnId = snapshot.thread.latestTurn?.turnId ?? null;
   return {
     ...snapshot,
     thread: {
       ...snapshot.thread,
       activities: dropSupersededToolUpdatedActivities(
         dropStaleContextWindowActivities(snapshot.thread.activities),
-      ).map(projectActivityPayload),
+      ).map((activity) =>
+        projectActivityPayload(activity, {
+          inlineCommandOutput: shouldInlineCommandOutput(activity, latestTurnId),
+        }),
+      ),
     },
   };
 }
