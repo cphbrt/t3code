@@ -2,6 +2,7 @@ import type { RepositoryIdentity } from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
+  withoutInheritedGitRepositoryLocation,
 } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -98,6 +99,10 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
       .run({
         command: "git",
         args: ["-C", cwd, "rev-parse", "--show-toplevel"],
+        // An inherited `GIT_DIR` would resolve some other repository's root and
+        // poison this cache key, so pass a complete, stripped environment.
+        env: withoutInheritedGitRepositoryLocation(process.env),
+        extendEnv: false,
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
@@ -124,6 +129,8 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     .run({
       command: "git",
       args: ["-C", cacheKey, "remote", "-v"],
+      env: withoutInheritedGitRepositoryLocation(process.env),
+      extendEnv: false,
       timeoutBehavior: "timedOutResult",
     })
     .pipe(Effect.option);

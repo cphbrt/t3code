@@ -109,6 +109,28 @@ const git = (
     return result.stdout.trim();
   });
 
+/**
+ * Reproduce what `git bisect run`, hooks, and `rebase --exec` do to the
+ * processes they spawn: export an absolute `GIT_DIR` that overrides working
+ * directory based repository discovery. Restored when the test scope closes.
+ */
+const leakGitDirIntoProcessEnv = (gitDir: string): Effect.Effect<void, never, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.sync(() => {
+      const previous = process.env.GIT_DIR;
+      process.env.GIT_DIR = gitDir;
+      return previous;
+    }),
+    (previous) =>
+      Effect.sync(() => {
+        if (previous === undefined) {
+          delete process.env.GIT_DIR;
+        } else {
+          process.env.GIT_DIR = previous;
+        }
+      }),
+  ).pipe(Effect.asVoid);
+
 const initRepoWithCommit = (
   cwd: string,
 ): Effect.Effect<
@@ -648,6 +670,33 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
 
         assert.equal(locale, "zh_CN.UTF-8");
+      }),
+    );
+
+    it.effect("ignores an inherited GIT_DIR and stays in the requested repository", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        const decoy = yield* makeTmpDir("git-vcs-driver-decoy-");
+
+        yield* git(cwd, ["init"]);
+        yield* git(decoy, ["init"]);
+        yield* git(decoy, ["config", "user.email", "decoy@example.invalid"]);
+        const decoyGitDir = yield* git(decoy, ["rev-parse", "--absolute-git-dir"]);
+
+        yield* leakGitDirIntoProcessEnv(decoyGitDir);
+
+        const resolvedGitDir = yield* git(cwd, ["rev-parse", "--absolute-git-dir"]);
+        assert.equal(
+          yield* fileSystem.realPath(resolvedGitDir),
+          yield* fileSystem.realPath(pathService.join(cwd, ".git")),
+        );
+
+        // Writes are the damaging case: a leaked GIT_DIR made fixture setup edit
+        // a real repository's config instead of its own temporary one.
+        yield* git(cwd, ["config", "user.email", "cwd@example.invalid"]);
+        assert.equal(yield* git(decoy, ["config", "user.email"]), "decoy@example.invalid");
       }),
     );
   });
