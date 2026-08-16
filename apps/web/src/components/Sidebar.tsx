@@ -214,6 +214,75 @@ function ProviderUsageLimitPill(props: { readonly label: string }) {
   );
 }
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
+// Share the sibling shelves' key namespace so all four collapse preferences
+// stay together in local storage.
+const PINNED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:pinned-expanded";
+const ACTIVE_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:active-expanded";
+
+// Every sidebar group (Pinned, Active, Snoozed, Settled) renders the same
+// header: a label that carries the count while collapsed, a rule filling the
+// rest of the row, and a chevron that rotates on expand. Tone is the only
+// difference — snooze keeps the blue accent it uses everywhere else.
+function SidebarShelfHeader(props: {
+  readonly label: string;
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly testId: string;
+  readonly tone: "muted" | "snooze";
+}) {
+  const isSnooze = props.tone === "snooze";
+  return (
+    <li data-thread-selection-safe className="list-none">
+      <button
+        type="button"
+        onClick={props.onToggle}
+        aria-expanded={props.expanded}
+        data-testid={props.testId}
+        className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+      >
+        <span
+          className={cn(
+            "text-xs font-medium",
+            isSnooze ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground/50",
+          )}
+        >
+          {props.expanded ? props.label : `${props.label} (${props.count})`}
+        </span>
+        <span
+          className={cn(
+            "h-px flex-1",
+            isSnooze ? "bg-blue-500/20 dark:bg-blue-400/15" : "bg-sidebar-border/60",
+          )}
+        />
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3 transition-transform",
+            isSnooze ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground/50",
+            props.expanded && "rotate-180",
+          )}
+        />
+      </button>
+    </li>
+  );
+}
+
+// A collapsed shelf still renders the open thread's row: navigating into a
+// thread that lives under a collapsed heading must not hide its highlight or
+// its row actions. Same exception the settled tail's "Show more" makes.
+function shelfRows(
+  threads: readonly EnvironmentThreadShell[],
+  expanded: boolean,
+  routeThreadKey: string | null,
+): readonly EnvironmentThreadShell[] {
+  if (expanded) return threads;
+  if (routeThreadKey === null) return [];
+  const routeThread = threads.find(
+    (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+  );
+  return routeThread === undefined ? [] : [routeThread];
+}
 
 function compactSidebarTimeLabel(label: string): string {
   if (label === "just now") return "now";
@@ -2322,15 +2391,10 @@ export default function Sidebar() {
     () => setSettledShelfExpanded((value) => !value),
     [setSettledShelfExpanded],
   );
-  const renderedSettledThreads = useMemo(() => {
-    if (settledShelfExpanded) return visibleSettledThreads;
-    if (routeThreadKey === null) return [];
-    const routeThread = visibleSettledThreads.find(
-      (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-    );
-    return routeThread === undefined ? [] : [routeThread];
-  }, [routeThreadKey, settledShelfExpanded, visibleSettledThreads]);
+  const renderedSettledThreads = useMemo(
+    () => shelfRows(visibleSettledThreads, settledShelfExpanded, routeThreadKey),
+    [routeThreadKey, settledShelfExpanded, visibleSettledThreads],
+  );
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
   // Collapsed threads don't render (and so don't participate in jump
@@ -2344,23 +2408,53 @@ export default function Sidebar() {
     () => setSnoozedShelfExpanded((value) => !value),
     [setSnoozedShelfExpanded],
   );
-  const visibleSnoozedThreads = useMemo(() => {
-    if (snoozedShelfExpanded) return snoozedThreads;
-    // The open thread must never vanish behind the collapsed shelf: a
-    // snoozed thread reached by route (deep link, open before snoozing
-    // elsewhere) keeps its row — with highlight and wake affordance — same
-    // exception the settled tail's "Show more" makes.
-    if (routeThreadKey === null) return [];
-    const routeThread = snoozedThreads.find(
-      (thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-    );
-    return routeThread === undefined ? [] : [routeThread];
-  }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
+  const visibleSnoozedThreads = useMemo(
+    () => shelfRows(snoozedThreads, snoozedShelfExpanded, routeThreadKey),
+    [routeThreadKey, snoozedShelfExpanded, snoozedThreads],
+  );
+
+  // The pinned shelf is expanded by default: unlike snoozed and settled work,
+  // pins are the threads the user deliberately keeps in view. It collapses
+  // anyway so a long pin list can be folded down to its heading.
+  const [pinnedShelfExpanded, setPinnedShelfExpanded] = useLocalStorage(
+    PINNED_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const togglePinnedShelf = useCallback(
+    () => setPinnedShelfExpanded((value) => !value),
+    [setPinnedShelfExpanded],
+  );
+  const visiblePinnedThreads = useMemo(
+    () => shelfRows(pinnedThreads, pinnedShelfExpanded, routeThreadKey),
+    [pinnedShelfExpanded, pinnedThreads, routeThreadKey],
+  );
+
+  // Active is the landing group, so it is expanded by default and collapses
+  // last resort — but it is a shelf like the others, and folding it is how
+  // you get a sidebar that is nothing but your pins.
+  const [activeShelfExpanded, setActiveShelfExpanded] = useLocalStorage(
+    ACTIVE_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const toggleActiveShelf = useCallback(
+    () => setActiveShelfExpanded((value) => !value),
+    [setActiveShelfExpanded],
+  );
+  const visibleActiveThreads = useMemo(
+    () => shelfRows(activeThreads, activeShelfExpanded, routeThreadKey),
+    [activeShelfExpanded, activeThreads, routeThreadKey],
+  );
 
   const orderedThreads = useMemo(
-    () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
-    [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () => [
+      ...visiblePinnedThreads,
+      ...visibleActiveThreads,
+      ...visibleSnoozedThreads,
+      ...renderedSettledThreads,
+    ],
+    [visiblePinnedThreads, visibleActiveThreads, visibleSnoozedThreads, renderedSettledThreads],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2715,6 +2809,12 @@ export default function Sidebar() {
       getId: (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     });
   }, [optimisticPinnedOrder, pinnedThreads]);
+  // What the pinned shelf actually renders: drag order, minus the rows a
+  // collapsed shelf folds away.
+  const renderedPinnedThreads = useMemo(
+    () => shelfRows(orderedPinnedThreads, pinnedShelfExpanded, routeThreadKey),
+    [orderedPinnedThreads, pinnedShelfExpanded, routeThreadKey],
+  );
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
     const canonical = pinnedThreads.filter((thread) =>
@@ -3925,10 +4025,11 @@ export default function Sidebar() {
                       />
                     );
                   };
-                  // Draft block above everything, then the pinned block:
-                  // full cards above the inbox, closed by a thin divider (the
-                  // pin glyphs carry the meaning, so no header text). Both
-                  // vanish entirely at count 0.
+                  // Draft block above everything, then four shelves that all
+                  // read the same way: Pinned, Active, Snoozed, Settled, each
+                  // announced by its own heading and each vanishing entirely
+                  // at count 0. The headings carry every boundary, so no group
+                  // needs a divider of its own.
                   // Pinned rows render in the one shared pinned order; only
                   // reorder-capable rows register as sortable (legacy-server
                   // pins render in place as plain rows).
@@ -3943,6 +4044,21 @@ export default function Sidebar() {
                       routeDraftId={routeDraftIdForRows}
                       onNavigateToDraft={navigateToDraft}
                     />,
+                  ];
+                  if (pinnedThreads.length > 0) {
+                    items.push(
+                      <SidebarShelfHeader
+                        key="pinned-shelf-header"
+                        label="Pinned"
+                        count={pinnedThreads.length}
+                        expanded={pinnedShelfExpanded}
+                        onToggle={togglePinnedShelf}
+                        testId="sidebar-pinned-shelf-toggle"
+                        tone="muted"
+                      />,
+                    );
+                  }
+                  items.push(
                     <DndContext
                       key="pinned-dnd"
                       sensors={pinnedDndSensors}
@@ -3951,14 +4067,14 @@ export default function Sidebar() {
                       onDragEnd={handlePinnedDragEnd}
                     >
                       <SortableContext
-                        items={orderedPinnedThreads
+                        items={renderedPinnedThreads
                           .map((thread) =>
                             scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
                           )
                           .filter((threadKey) => reorderablePinnedKeys.has(threadKey))}
                         strategy={verticalListSortingStrategy}
                       >
-                        {orderedPinnedThreads.map((thread) => {
+                        {renderedPinnedThreads.map((thread) => {
                           const threadKey = scopedThreadKey(
                             scopeThreadRef(thread.environmentId, thread.id),
                           );
@@ -3973,54 +4089,43 @@ export default function Sidebar() {
                         })}
                       </SortableContext>
                     </DndContext>,
-                  ];
-                  if (pinnedThreads.length > 0) {
+                  );
+                  // Active is the landing group, but it earns its heading the
+                  // same way the others do: an empty heading over an empty
+                  // group is chrome pretending to be content, and the sidebar
+                  // already has a real empty state for a genuinely empty list.
+                  if (activeThreads.length > 0) {
                     items.push(
-                      <li
-                        key="pinned-divider"
-                        aria-hidden
-                        data-testid="sidebar-pinned-divider"
-                        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
+                      <SidebarShelfHeader
+                        key="active-shelf-header"
+                        label="Active"
+                        count={activeThreads.length}
+                        expanded={activeShelfExpanded}
+                        onToggle={toggleActiveShelf}
+                        testId="sidebar-active-shelf-toggle"
+                        tone="muted"
                       />,
                     );
+                    for (const thread of visibleActiveThreads) {
+                      items.push(renderThreadRow(thread, "active"));
+                    }
                   }
-                  for (const thread of activeThreads) {
-                    items.push(renderThreadRow(thread, "active"));
-                  }
-                  // Snoozed shelf: between the inbox and Settled — out of the
+                  // Snoozed shelf: between Active and Settled — out of the
                   // way, never gone. The header always renders while anything
                   // is snoozed (the count is the whole footprint when
                   // collapsed); rows only when expanded. Vanishes entirely at
                   // count 0.
                   if (snoozedThreads.length > 0) {
                     items.push(
-                      <li
+                      <SidebarShelfHeader
                         key="snoozed-shelf-header"
-                        data-thread-selection-safe
-                        className="list-none"
-                      >
-                        <button
-                          type="button"
-                          onClick={toggleSnoozedShelf}
-                          aria-expanded={snoozedShelfExpanded}
-                          data-testid="sidebar-snoozed-shelf-toggle"
-                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
-                        >
-                          <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                            {snoozedShelfExpanded
-                              ? "Snoozed"
-                              : `Snoozed (${snoozedThreads.length})`}
-                          </span>
-                          <span className="h-px flex-1 bg-blue-500/20 dark:bg-blue-400/15" />
-                          <ChevronDownIcon
-                            aria-hidden
-                            className={cn(
-                              "size-3 text-blue-600 transition-transform dark:text-blue-400",
-                              snoozedShelfExpanded && "rotate-180",
-                            )}
-                          />
-                        </button>
-                      </li>,
+                        label="Snoozed"
+                        count={snoozedThreads.length}
+                        expanded={snoozedShelfExpanded}
+                        onToggle={toggleSnoozedShelf}
+                        testId="sidebar-snoozed-shelf-toggle"
+                        tone="snooze"
+                      />,
                     );
                     for (const thread of visibleSnoozedThreads) {
                       items.push(renderThreadRow(thread, "snoozed"));
@@ -4028,33 +4133,15 @@ export default function Sidebar() {
                   }
                   if (settledThreads.length > 0) {
                     items.push(
-                      <li
+                      <SidebarShelfHeader
                         key="settled-shelf-header"
-                        data-thread-selection-safe
-                        className="list-none"
-                      >
-                        <button
-                          type="button"
-                          onClick={toggleSettledShelf}
-                          aria-expanded={settledShelfExpanded}
-                          data-testid="sidebar-settled-shelf-toggle"
-                          className="mb-1 mt-3 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
-                        >
-                          <span className="text-xs font-medium text-muted-foreground/50">
-                            {settledShelfExpanded
-                              ? "Settled"
-                              : `Settled (${settledThreads.length})`}
-                          </span>
-                          <span className="h-px flex-1 bg-sidebar-border/60" />
-                          <ChevronDownIcon
-                            aria-hidden
-                            className={cn(
-                              "size-3 text-muted-foreground/50 transition-transform",
-                              settledShelfExpanded && "rotate-180",
-                            )}
-                          />
-                        </button>
-                      </li>,
+                        label="Settled"
+                        count={settledThreads.length}
+                        expanded={settledShelfExpanded}
+                        onToggle={toggleSettledShelf}
+                        testId="sidebar-settled-shelf-toggle"
+                        tone="muted"
+                      />,
                     );
                   }
                   for (const thread of renderedSettledThreads) {
