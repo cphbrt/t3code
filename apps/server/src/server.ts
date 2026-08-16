@@ -45,6 +45,7 @@ import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ProcessRunner from "./processRunner.ts";
+import { watchShutdownSignals } from "./processShutdown.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -471,6 +472,10 @@ export const makeServerLayer = Layer.unwrap(
 
     yield* fixPath();
 
+    // Provider CLIs share this process group, so they die with the same signal
+    // that stops the server. Recording that signal synchronously lets adapters
+    // tell "the machine is going down" apart from "the provider crashed".
+    const shutdownSignalLayer = Layer.effectDiscard(watchShutdownSignals);
     const httpListeningLayer = Layer.effectDiscard(
       Effect.gen(function* () {
         yield* HttpServer.HttpServer;
@@ -656,6 +661,7 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      shutdownSignalLayer,
     );
 
     return serverApplicationLayer.pipe(

@@ -32,6 +32,16 @@ work itself. Keep entries publishable: technical facts only, no private data.
 - **`runtime.warning` rows always render destructive-red.** The payload
   carries `tone: "info"` but the web renderer ignores it. Small visual fix;
   needs a call on the intended tone mapping.
+- **Quit-killed Codex sessions can still read as errored.** A non-zero child
+  exit sets the Codex session status to `error` and emits `session/exited`
+  without `exitKind: "graceful"`, so a session killed by the same SIGTERM
+  that stops the server (exit 143) looks errored at the session level even
+  though it produces no error activity row and no failed turn. The Claude
+  equivalent is fixed by the shutdown guard in
+  `ClaudeAdapter.handleStreamExit`; Codex was left alone because its exit
+  path is structurally different, observing the child exit code rather than
+  classifying a broken stream. Decide whether a shutdown-time exit should
+  read as graceful there too.
 - **NUL/0x1F bytes in `ActivityPayloadProjection.ts` break grep.** The file
   contains literal control bytes inside string literals, so BSD grep
   classifies it as binary and silently returns zero matches — humans and

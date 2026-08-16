@@ -77,6 +77,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { isShutdownRequested } from "../../processShutdown.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -349,6 +350,8 @@ export interface ClaudeAdapterLiveOptions {
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /** Overridable for tests; defaults to this process's shutdown signal state. */
+  readonly isShuttingDown?: () => boolean;
 }
 
 function isUuid(value: string): boolean {
@@ -1967,6 +1970,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
 
+  const isShuttingDown = options?.isShuttingDown ?? isShutdownRequested;
+
   const createQuery =
     options?.createQuery ??
     ((input: {
@@ -2293,14 +2298,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
+  /**
+   * Emits a durable, client-visible runtime error. `detail` must stay
+   * structural: provider cause messages can carry credential material, and
+   * these events are persisted and shipped to clients. Log the cause instead.
+   */
   const emitRuntimeError = Effect.fn("emitRuntimeError")(function* (
     context: ClaudeSessionContext,
     message: string,
     cause?: unknown,
   ) {
-    if (cause !== undefined) {
-      void cause;
-    }
     const turnState = context.turnState;
     const stamp = yield* makeEventStamp();
     yield* offerRuntimeEvent({
@@ -4243,7 +4250,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (Exit.isFailure(exit)) {
-      if (isClaudeInterruptedCause(exit.cause)) {
+      // The CLI runs in this process group, so a signal aimed at the server
+      // kills it too — before any finalizer can mark the session stopped. That
+      // death is the shutdown, not a provider fault: it must not leave a
+      // durable error on a thread whose work already finished.
+      if (isShuttingDown()) {
+        if (context.turnState) {
+          yield* completeTurn(
+            context,
+            "interrupted",
+            "Claude runtime stopped for server shutdown.",
+          );
+        }
+      } else if (isClaudeInterruptedCause(exit.cause)) {
         if (context.turnState) {
           yield* completeTurn(context, "interrupted", "Claude runtime interrupted.");
         }
@@ -4252,6 +4271,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           Cause.isFailReason(reason) ? [reason.error] : [],
         );
         const message = failures[0]?.detail ?? "Claude runtime stream failed.";
+        // Runtime error payloads stay structural (see `emitRuntimeError`), so
+        // the underlying cause is only diagnosable from the server log.
+        yield* Effect.logError("Claude runtime stream failed.", {
+          threadId: context.session.threadId,
+          cause: exit.cause,
+        });
         yield* emitRuntimeError(context, message, {
           failureCount: failures.length,
           failureTags: failures.map((failure) => failure._tag),
