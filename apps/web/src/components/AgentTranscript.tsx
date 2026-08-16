@@ -225,7 +225,7 @@ function MessageTranscriptRow({
       {isPrompt ? (
         <div className="mb-1 flex items-center gap-1.5 text-[.65rem] font-medium uppercase tracking-wider text-muted-foreground/70">
           <MessageSquare aria-hidden className="size-3" />
-          Prompt
+          {row.label ?? "Prompt"}
         </div>
       ) : null}
       <ChatMarkdown text={row.text} cwd={chrome.markdownCwd} className="text-sm" />

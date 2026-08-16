@@ -101,6 +101,19 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonStri
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+
+/**
+ * The harness tool an agent uses to message another session. Ingestion drops
+ * the generic tool row for it so the message row stands alone.
+ */
+const SEND_MESSAGE_TOOL_NAME = "SendMessage";
+
+/**
+ * Delivery kind for a message injected into one of this session's own
+ * subagents. Distinct from `peer`: the correspondent is this session's main
+ * agent, not another session, so the row must not claim otherwise.
+ */
+const SUBAGENT_INJECTION_DELIVERY_KIND = "subagent-injection";
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -2999,6 +3012,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
+
+      // A delivered SendMessage becomes a message row instead of a tool row
+      // (ingestion drops the tool one), so both directions of a conversation
+      // read the same way and land where they happened.
+      if (tool.toolName === SEND_MESSAGE_TOOL_NAME && !toolResult.isError) {
+        yield* emitOutgoingPeerMessage(context, tool.input ?? {});
+      }
       const toolUseResult =
         context.toolResults.get(toolResult.toolUseId) ?? readClaudeToolUseResult(message);
       const fileChanges = toolResult.isError
@@ -3383,12 +3403,163 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* updateResumeCursor(context);
   });
 
+  /**
+   * Surfaces a message this session received from another agent session.
+   *
+   * The provider reports it only on the terminal result, as the completed
+   * turn's provenance; no inbound user message carrying it appears anywhere on
+   * the stream. So the row is discovered late but stamped with the turn's own
+   * start time, which is when the message was actually received — the delivery
+   * is what woke the turn. Clients sort activities by `createdAt`, so it lands
+   * at the head of the turn it explains rather than after the reply to it.
+   *
+   * Only genuine inter-session deliveries qualify: a direct `peer` envelope,
+   * or the task-notification the harness stamps `peer-send-message`. Other
+   * task notifications (schedules, webhooks, background events) are not
+   * someone talking to this session and carry no body to show.
+   */
+  const emitIncomingPeerMessage = Effect.fn("emitIncomingPeerMessage")(function* (
+    context: ClaudeSessionContext,
+    origin: NonNullable<Extract<SDKMessage, { type: "result" }>["origin"]>,
+  ) {
+    const isPeerSendNotification =
+      origin.kind === "task-notification" && origin.subkind === "peer-send-message";
+    if (origin.kind !== "peer" && !isPeerSendNotification) {
+      return;
+    }
+
+    // `name` is sender-asserted display text the harness has already
+    // sanitized; `verifiedPeerPid` is the kernel-verified identity. Show the
+    // name, but never treat it as authority.
+    const peerName = origin.kind === "peer" ? trimmedString(origin.name) : undefined;
+    const body = origin.kind === "peer" ? trimmedString(origin.body) : undefined;
+    const senderSessionId = origin.kind === "peer" ? trimmedString(origin.fromSession) : undefined;
+    const senderPid = origin.kind === "peer" ? origin.verifiedPeerPid : undefined;
+
+    const turnState = context.turnState;
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "peer.message",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: turnState?.startedAt ?? stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
+      payload: {
+        direction: "incoming",
+        deliveryKind: origin.kind,
+        ...(body ? { body } : {}),
+        ...(peerName ? { peerName } : {}),
+        ...(senderSessionId ? { senderSessionId } : {}),
+        ...(typeof senderPid === "number" ? { senderPid } : {}),
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+  });
+
+  /**
+   * Surfaces a message this session sent to another one. Unlike the incoming
+   * direction this needs no reconstruction: the agent's own `SendMessage` tool
+   * call carries the recipient and the full text, and it happens at the moment
+   * the agent decides to send, so the row sits exactly where the send occurred.
+   *
+   * `to` and `message` are the fields to read. The harness also echoes
+   * `recipient` (a duplicate of `to`) and `content` (a fixed 50-character
+   * preview of `message`), which are ignored here in favour of the full values.
+   *
+   * When `to` names one of this session's own RUNNING subagents, a second row
+   * is emitted for that subagent's transcript. The send is the only thing the
+   * harness ever records for that case: it writes no record into the
+   * subagent's on-disk JSONL and puts no inbound message on the stream even
+   * when delivery demonstrably succeeds, so the subagent otherwise appears to
+   * answer a question nobody asked.
+   *
+   * That row is evidence of a SEND, not of a delivery, and its label says so.
+   * A message queued into a subagent that finishes before its next tool round
+   * is dropped with no error and `success: true` still returned to the sender,
+   * so a delivered/read claim would be unfalsifiable and sometimes false.
+   *
+   * Two rows rather than one shared row because a payload carrying `agentId`
+   * is re-homed out of the parent timeline into the Agents surface, and the
+   * sender's own row has to stay where the send happened.
+   */
+  const emitOutgoingPeerMessage = Effect.fn("emitOutgoingPeerMessage")(function* (
+    context: ClaudeSessionContext,
+    input: Record<string, unknown>,
+  ) {
+    const peerName = trimmedString(input.to) ?? trimmedString(input.recipient);
+    const body = trimmedString(input.message) ?? trimmedString(input.content);
+    const summary = trimmedString(input.summary);
+
+    const turnState = context.turnState;
+    const stamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "peer.message",
+      eventId: stamp.eventId,
+      provider: PROVIDER,
+      createdAt: stamp.createdAt,
+      threadId: context.session.threadId,
+      ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
+      payload: {
+        direction: "outgoing",
+        deliveryKind: "peer",
+        ...(body ? { body } : {}),
+        ...(peerName ? { peerName } : {}),
+        ...(summary ? { summary } : {}),
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+
+    // `to` is the recipient's id, and a subagent's id is its task id — the
+    // same key `agentIdForParentToolUse` resolves attributed traffic to. A
+    // miss means the recipient is another session (or a socket path), which
+    // owns no transcript here.
+    const recipient = peerName === undefined ? undefined : context.taskAgents.get(peerName);
+    if (recipient === undefined) {
+      return;
+    }
+
+    // Only a LIVE subagent's message goes unrecorded. Messaging a settled one
+    // restarts it instead, and the harness re-emits `task_started` for the
+    // same task id carrying this message as the agent's new `prompt` — which
+    // the roster already stores and the transcript already heads with. Both
+    // observed on one real agent: the message sent while it was running left
+    // no trace anywhere, and the message sent 92 seconds after it completed
+    // came back as a fresh launch prompt. Emitting for the second case would
+    // print the same text twice.
+    if (!context.liveTaskIds.has(recipient.taskId)) {
+      return;
+    }
+
+    const agentStamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "peer.message",
+      eventId: agentStamp.eventId,
+      provider: PROVIDER,
+      createdAt: agentStamp.createdAt,
+      threadId: context.session.threadId,
+      ...(turnState ? { turnId: asCanonicalTurnId(turnState.turnId) } : {}),
+      payload: {
+        direction: "incoming",
+        deliveryKind: SUBAGENT_INJECTION_DELIVERY_KIND,
+        agentId: recipient.taskId,
+        ...(body ? { body } : {}),
+        ...(summary ? { summary } : {}),
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+  });
+
   const handleResultMessage = Effect.fn("handleResultMessage")(function* (
     context: ClaudeSessionContext,
     message: SDKMessage,
   ) {
     if (message.type !== "result") {
       return;
+    }
+
+    if (message.origin) {
+      yield* emitIncomingPeerMessage(context, message.origin);
     }
 
     const status = turnStatusFromResult(message);
@@ -3979,7 +4150,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     yield* logNativeSdkMessage(context, message);
     yield* ensureThreadId(context, message);
 
-    // Wire-only command bookkeeping has no user-facing T3 lifecycle.
+    // Wire-only command bookkeeping has no user-facing T3 lifecycle. Its
+    // command_uuid does not match the delivered message's id, so it cannot be
+    // correlated to content either; what the reader needs comes from the
+    // result's `origin` instead (see emitIncomingPeerMessage).
     if (sdkMessageType(message) === "command_lifecycle") {
       return;
     }

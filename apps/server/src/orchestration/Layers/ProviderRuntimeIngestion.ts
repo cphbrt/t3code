@@ -209,9 +209,36 @@ function maxCheckpointTurnCount(
   return maxTurnCount;
 }
 
+/**
+ * The agent's SendMessage call is rendered as a message row emitted by the
+ * adapter, so its generic tool row is dropped to avoid showing one send twice.
+ * Declared here rather than imported: orchestration does not depend on a
+ * provider layer, and this is a harness tool name both sides recognize.
+ */
+const SEND_MESSAGE_TOOL_NAME = "SendMessage";
+
+function isSendMessageToolItem(data: unknown): boolean {
+  if (data === null || typeof data !== "object") {
+    return false;
+  }
+  return (data as { toolName?: unknown }).toolName === SEND_MESSAGE_TOOL_NAME;
+}
+
 function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
+
+/**
+ * An inbound peer message is read in full when expanded, so its body is not
+ * subject to the one-line row truncation above. The cap exists only to bound a
+ * pathological sender: these payloads are flat, so projectActivityPayload
+ * passes them through unslimmed and they ride inline in every thread-open
+ * snapshot. Real bodies are model-authored chat messages — across every
+ * recorded session the largest was ~2.9KB — so this leaves an order of
+ * magnitude of headroom while keeping one sender from reproducing the
+ * command-output snapshot regression.
+ */
+const PEER_MESSAGE_BODY_LIMIT = 32_000;
 
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
@@ -531,6 +558,60 @@ export function runtimeEventToActivities(
       ];
     }
 
+    case "peer.message": {
+      const { peerName, body, direction, agentId } = event.payload;
+      const outgoing = direction === "outgoing";
+      // Symmetric labels so a conversation reads as a conversation. The
+      // collapsed label previews the body; the payload carries the whole
+      // message so expanding the row shows what was actually said.
+      //
+      // An attributed row is one this thread's main agent injected into its
+      // own subagent, and it is read inside that subagent's transcript — so
+      // the correspondent is the main thread, not "another session".
+      //
+      // "sent" is load-bearing and must not be softened to "from". This row is
+      // recorded at the send, and the harness reports nothing about what
+      // became of it: a message queued into an agent that finishes first is
+      // dropped silently, with success still reported to the sender. So the
+      // row may only claim the send happened, never that the agent received
+      // it.
+      const fromMainThread = agentId !== undefined && !outgoing;
+      const who = peerName
+        ? `${outgoing ? "Message to" : "Message from"} ${peerName}`
+        : fromMainThread
+          ? "Message sent from the main thread"
+          : outgoing
+            ? "Message to another session"
+            : "Message from another session";
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: "info",
+          kind: "peer.message",
+          summary: body ? truncateDetail(`${who}: ${body}`, 120) : who,
+          payload: {
+            direction,
+            deliveryKind: event.payload.deliveryKind,
+            ...(body ? { detail: truncateDetail(body, PEER_MESSAGE_BODY_LIMIT) } : {}),
+            ...(peerName ? { peerName } : {}),
+            ...(event.payload.summary ? { summary: event.payload.summary } : {}),
+            ...(event.payload.senderSessionId
+              ? { senderSessionId: event.payload.senderSessionId }
+              : {}),
+            ...(event.payload.senderPid !== undefined
+              ? { senderPid: event.payload.senderPid }
+              : {}),
+            // Re-homes the row from the parent timeline into the owning
+            // subagent's transcript (see isAgentInternalActivity).
+            ...(agentId ? { agentId } : {}),
+          },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "turn.plan.updated": {
       return [
         {
@@ -836,6 +917,10 @@ export function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      if (isSendMessageToolItem(event.payload.data)) {
+        return [];
+      }
+
       // A streaming update's `data` carries the full tool output accumulated
       // so far (adapters merge state forward), and a new activity is emitted
       // per chunk, so persisting `data` verbatim writes O(N²) bytes per tool
@@ -877,6 +962,9 @@ export function runtimeEventToActivities(
       if (!isToolLifecycleItemType(event.payload.itemType)) {
         return [];
       }
+      if (isSendMessageToolItem(event.payload.data)) {
+        return [];
+      }
       return [
         {
           id: event.eventId,
@@ -904,6 +992,9 @@ export function runtimeEventToActivities(
 
     case "item.started": {
       if (!isToolLifecycleItemType(event.payload.itemType)) {
+        return [];
+      }
+      if (isSendMessageToolItem(event.payload.data)) {
         return [];
       }
       return [
