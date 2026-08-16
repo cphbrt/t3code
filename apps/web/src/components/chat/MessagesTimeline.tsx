@@ -5,7 +5,6 @@ import {
   type ScopedThreadRef,
   type ServerProviderSkill,
   type TurnId,
-  type ToolFileChange,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -46,6 +45,7 @@ import {
 } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import {
+  buildToolFileRenderablePatch,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
@@ -2342,29 +2342,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   }
   return <PlainWorkEntryRow workEntry={workEntry} workspaceRoot={workspaceRoot} />;
 });
-
-function buildToolFileRenderablePatch(
-  change: ToolFileChange,
-  workspaceRoot: string | undefined,
-): string {
-  const diff = change.diff.trim();
-  if (diff.startsWith("diff --git ")) {
-    return diff;
-  }
-  const currentPath = formatWorkspaceRelativePath(change.path, workspaceRoot).replaceAll("\\", "/");
-  const previousPath = formatWorkspaceRelativePath(
-    change.previousPath ?? change.path,
-    workspaceRoot,
-  ).replaceAll("\\", "/");
-  const oldHeader = change.kind === "add" ? "/dev/null" : `a/${previousPath}`;
-  const newHeader = change.kind === "delete" ? "/dev/null" : `b/${currentPath}`;
-  return [
-    `diff --git a/${previousPath} b/${currentPath}`,
-    `--- ${oldHeader}`,
-    `+++ ${newHeader}`,
-    diff,
-  ].join("\n");
-}
 
 const ToolFileChangesBody = memo(function ToolFileChangesBody(props: {
   environmentId: EnvironmentId;

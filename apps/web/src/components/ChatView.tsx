@@ -159,6 +159,7 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
+import { AgentTranscriptPanel } from "./AgentTranscript";
 import {
   deriveAgentPanelModel,
   foldSubagentActivities,
@@ -3505,6 +3506,13 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const openAgentTranscriptSurface = useCallback(
+    (agentId: string, title?: string) => {
+      if (!activeThreadRef) return;
+      useRightPanelStore.getState().openAgentTranscript(activeThreadRef, agentId, title);
+    },
+    [activeThreadRef],
+  );
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -6803,6 +6811,29 @@ function ChatViewContent(props: ChatViewProps) {
         model={agentPanelModel}
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
+        onOpenTranscript={openAgentTranscriptSurface}
+      />
+    ) : activeRightPanelSurface?.kind === "agent-transcript" ? (
+      <AgentTranscriptPanel
+        key={activeRightPanelSurface.agentId}
+        environmentId={activeThreadRef?.environmentId ?? null}
+        threadId={activeThreadRef?.threadId ?? null}
+        agentId={activeRightPanelSurface.agentId}
+        agent={
+          agentPanelModel.workflows
+            .flatMap((group) => [
+              ...group.phases.flatMap((phase) => phase.members),
+              ...group.unphasedMembers,
+            ])
+            .concat(agentPanelModel.directAgents)
+            .find((agent) => agent.id === activeRightPanelSurface.agentId) ?? null
+        }
+        activities={threadActivities}
+        activitiesHydrated={!threadDetailLoading}
+        markdownCwd={gitCwd ?? undefined}
+        workspaceRoot={activeWorkspaceRoot}
+        resolvedTheme={resolvedTheme}
+        onBack={addAgentsSurface}
       />
     ) : (activeRightPanelSurface?.kind === "files" || activeRightPanelSurface?.kind === "file") &&
       activeProject &&

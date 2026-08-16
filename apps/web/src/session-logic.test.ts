@@ -2194,6 +2194,27 @@ describe("deriveWorkLogEntries quiet-timeline guarantee", () => {
     expect(entries.some((entry) => entry.sourceActivityKind?.startsWith("tool."))).toBe(false);
   });
 
+  it("subagent narration rows stay out of the main timeline", () => {
+    // Attributed narration reaches the client like any other agent-owned
+    // non-task row: the catch-all agentId check re-homes it, so these kinds
+    // need no per-kind handling here.
+    const entries = deriveWorkLogEntries([
+      makeActivity({
+        kind: "agent.reasoning",
+        summary: "Thinking",
+        payload: { itemType: "reasoning", detail: "weighing options", agentId: "task-1" },
+        sequence: 1,
+      }),
+      makeActivity({
+        kind: "agent.message",
+        summary: "Assistant message",
+        payload: { itemType: "assistant_message", detail: "found it", agentId: "task-1" },
+        sequence: 2,
+      }),
+    ]);
+    expect(entries).toHaveLength(0);
+  });
+
   it("a workflow run and its members collapse into one CTA row keyed to the coordinator", () => {
     const entries = deriveWorkLogEntries([
       makeActivity({

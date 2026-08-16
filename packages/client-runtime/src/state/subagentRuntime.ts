@@ -63,6 +63,12 @@ export interface RuntimeSubagent {
   readonly role: string | null;
   readonly model: string | null;
   readonly effort: string | null;
+  /**
+   * Launch prompt, from `task.started` only (the adapter deliberately keeps it
+   * off progress ticks). Null for agents whose start row aged out — the
+   * transcript view falls back to the prompt recorded on disk.
+   */
+  readonly prompt: string | null;
   readonly status: RuntimeSubagentStatus;
   readonly activationCount: number;
   readonly usage: SubagentUsage | null;
@@ -232,6 +238,7 @@ interface MutableAgent {
   role: string | null;
   model: string | null;
   effort: string | null;
+  prompt: string | null;
   status: RuntimeSubagentStatus;
   activationCount: number;
   usage: SubagentUsage | null;
@@ -286,6 +293,7 @@ function getOrCreate(
     role: asString(payload.role) ?? null,
     model: asString(payload.model) ?? null,
     effort: asString(payload.effort) ?? null,
+    prompt: asString(payload.prompt) ?? null,
     status: "pending",
     activationCount: 0,
     usage: null,
@@ -322,6 +330,10 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
   if (model) agent.model = model;
   const effort = asString(payload.effort);
   if (effort) agent.effort = effort;
+  // Rides on task.started alone (the adapter keeps it off progress ticks), so
+  // a fill-if-present read here also recovers it from an out-of-order start.
+  const prompt = asString(payload.prompt);
+  if (prompt) agent.prompt = prompt;
   const parentAgentId = asString(payload.parentAgentId);
   if (parentAgentId) {
     agent.parentAgentId = parentAgentId;

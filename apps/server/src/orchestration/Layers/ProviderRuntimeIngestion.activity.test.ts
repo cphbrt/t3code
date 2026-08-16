@@ -1,6 +1,7 @@
 import {
   EventId,
   ProviderDriverKind,
+  RuntimeItemId,
   RuntimeTaskId,
   ThreadId,
   type ProviderRuntimeEvent,
@@ -140,5 +141,58 @@ describe("runtimeEventToActivities tool streaming persistence", () => {
     expect(activities).toHaveLength(1);
     const payload = activities[0]?.payload as Record<string, unknown>;
     expect(payload.data).toEqual(streamingData);
+  });
+});
+
+describe("runtimeEventToActivities agent narration", () => {
+  const narration = (
+    itemType: "assistant_message" | "reasoning",
+    detail: string,
+    agentId?: string,
+  ) =>
+    ({
+      ...base,
+      type: "item.completed",
+      eventId: EventId.make(`evt-${itemType}`),
+      itemId: RuntimeItemId.make("snapshot-uuid:0"),
+      payload: {
+        itemType,
+        status: "completed",
+        title: itemType === "reasoning" ? "Thinking" : "Assistant message",
+        detail,
+        ...(agentId ? { agentId, parentToolUseId: "toolu_agent" } : {}),
+      },
+    }) satisfies ProviderRuntimeEvent;
+
+  it("persists agent-owned text and thinking as attributed rows", () => {
+    const [message] = runtimeEventToActivities(
+      narration("assistant_message", "found it", "agent-1"),
+    );
+    expect(message?.kind).toBe("agent.message");
+    expect(message?.payload).toEqual({
+      itemType: "assistant_message",
+      detail: "found it",
+      agentId: "agent-1",
+      parentToolUseId: "toolu_agent",
+    });
+
+    const [thinking] = runtimeEventToActivities(
+      narration("reasoning", "weighing options", "agent-1"),
+    );
+    expect(thinking?.kind).toBe("agent.reasoning");
+    expect(thinking?.summary).toBe("Thinking");
+  });
+
+  it("keeps the whole detail: the row IS the agent transcript", () => {
+    const long = "y".repeat(5_000);
+    const [activity] = runtimeEventToActivities(narration("assistant_message", long, "agent-1"));
+    const payload = activity?.payload as Record<string, unknown>;
+    expect(payload.detail).toBe(long);
+  });
+
+  it("ignores unattributed assistant items, which stay parent messages", () => {
+    expect(runtimeEventToActivities(narration("assistant_message", "main thread text"))).toEqual(
+      [],
+    );
   });
 });

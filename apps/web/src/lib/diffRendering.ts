@@ -1,5 +1,8 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import type { ToolFileChange } from "@t3tools/contracts";
+
+import { formatWorkspaceRelativePath } from "../filePathDisplay";
 
 export const DIFF_THEME_NAMES = {
   light: "pierre-light",
@@ -161,6 +164,35 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
     return raw.slice(2);
   }
   return raw;
+}
+
+/**
+ * Wraps a tool's recorded patch in the `diff --git` header the parser needs.
+ * Adapters store only the hunks, so every host that renders a
+ * `ToolFileChange` inline — the work log and the subagent transcript — builds
+ * the same envelope; keep it here so those two never drift apart.
+ */
+export function buildToolFileRenderablePatch(
+  change: ToolFileChange,
+  workspaceRoot: string | undefined,
+): string {
+  const diff = change.diff.trim();
+  if (diff.startsWith("diff --git ")) {
+    return diff;
+  }
+  const currentPath = formatWorkspaceRelativePath(change.path, workspaceRoot).replaceAll("\\", "/");
+  const previousPath = formatWorkspaceRelativePath(
+    change.previousPath ?? change.path,
+    workspaceRoot,
+  ).replaceAll("\\", "/");
+  const oldHeader = change.kind === "add" ? "/dev/null" : `a/${previousPath}`;
+  const newHeader = change.kind === "delete" ? "/dev/null" : `b/${currentPath}`;
+  return [
+    `diff --git a/${previousPath} b/${currentPath}`,
+    `--- ${oldHeader}`,
+    `+++ ${newHeader}`,
+    diff,
+  ].join("\n");
 }
 
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {

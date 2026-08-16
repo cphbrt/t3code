@@ -313,6 +313,75 @@ describe("projectActivityPayload", () => {
     const projected = projectActivityPayload(source);
     expect(projected.payload).toEqual(source.payload);
   });
+  it("keeps toolName/input/result on an attributed dynamic_tool_call", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        agentId: "task-123",
+        parentToolUseId: "toolu_abc",
+        data: {
+          toolName: "Grep",
+          input: { pattern: "TODO", path: "src" },
+          result: { content: "src/app.ts:1:TODO" },
+          somethingClientNeverReads: { big: "blob" },
+        },
+      }),
+    );
+    const payload = projected.payload as Record<string, unknown>;
+    const data = payload.data as Record<string, unknown>;
+    expect(data.toolName).toBe("Grep");
+    expect(data.input).toEqual({ pattern: "TODO", path: "src" });
+    expect(data.result).toEqual({ content: "src/app.ts:1:TODO" });
+    // Restoring is an allowlist, not a bypass: unread keys still go.
+    expect(data.somethingClientNeverReads).toBeUndefined();
+  });
+
+  it("keeps the structured patch on an attributed file_change", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "file_change",
+        agentId: "task-123",
+        fileChanges: [{ path: "src/app.ts", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new" }],
+        data: { toolName: "Edit", input: { file_path: "src/app.ts" } },
+      }),
+    );
+    const payload = projected.payload as Record<string, unknown>;
+    expect(payload.fileChanges).toEqual([
+      { path: "src/app.ts", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new" },
+    ]);
+    expect(payload.hasFileDiff).toBe(true);
+  });
+
+  it("still slims an unattributed dynamic_tool_call", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "dynamic_tool_call",
+        data: {
+          toolName: "Grep",
+          input: { pattern: "TODO", path: "src" },
+          result: { content: "src/app.ts:1:TODO" },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.toolName).toBeUndefined();
+    expect(data.input).toBeUndefined();
+    expect(data.result).toBeUndefined();
+  });
+
+  it("still strips the patch from an unattributed file_change", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "file_change",
+        fileChanges: [{ path: "src/app.ts", kind: "update", diff: "@@ -1 +1 @@\n-old\n+new" }],
+        data: { toolName: "Edit" },
+      }),
+    );
+    const payload = projected.payload as Record<string, unknown>;
+    expect(payload.fileChanges).toBeUndefined();
+    expect(payload.hasFileDiff).toBe(true);
+  });
+
 });
 
 function commandActivity(options: {

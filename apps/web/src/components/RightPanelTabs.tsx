@@ -7,6 +7,7 @@ import {
   GitPullRequest,
   Globe2,
   Plus,
+  ScrollText,
   TerminalSquare,
   Volume2,
   VolumeOff,
@@ -508,6 +509,10 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "agents":
       return "Agents";
+    case "agent-transcript":
+      // The agent's own title, so several open transcripts are tellable apart
+      // (the tab itself truncates). Older persisted surfaces have no title.
+      return surface.title ?? surface.agentId;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -593,6 +598,8 @@ function SurfaceIcon({
     }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "agent-transcript":
+      return <ScrollText className="size-3 shrink-0" />;
   }
 }
 

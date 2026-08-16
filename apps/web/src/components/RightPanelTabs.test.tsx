@@ -267,3 +267,62 @@ describe("tabMuteMenuItem", () => {
     });
   });
 });
+
+describe("RightPanelTabs agent transcript tabs", () => {
+  const transcriptTabs = (surfaces: ReadonlyArray<Record<string, unknown>>) =>
+    renderToStaticMarkup(
+      <RightPanelTabs
+        mode="inline"
+        surfaces={surfaces as never}
+        activeSurfaceId="agent-transcript:a1"
+        pendingSurfaceIds={new Set()}
+        previewSessions={{}}
+        desktopByTabId={{}}
+        terminalLabelsById={new Map()}
+        onActivate={() => undefined}
+        onCloseSurface={() => undefined}
+        onCloseOtherSurfaces={() => undefined}
+        onCloseSurfacesToRight={() => undefined}
+        onCloseAllSurfaces={() => undefined}
+        onCopyFilePath={() => undefined}
+        onAddBrowser={() => undefined}
+        onAddTerminal={() => undefined}
+        onAddPullRequest={() => undefined}
+        onAddDiff={() => undefined}
+        onAddFiles={() => undefined}
+        onAddAgents={() => undefined}
+        liveAgentCount={0}
+        browserAvailable={false}
+        terminalAvailable={false}
+        diffAvailable={false}
+        filesAvailable={false}
+        pullRequestAvailable={false}
+        agentsAvailable
+      >
+        <div>content</div>
+      </RightPanelTabs>,
+    );
+
+  it("labels each transcript tab with its own agent, not a constant word", () => {
+    const html = transcriptTabs([
+      {
+        id: "agent-transcript:a1",
+        kind: "agent-transcript",
+        agentId: "a1",
+        title: "Explore adapter",
+      },
+      { id: "agent-transcript:a2", kind: "agent-transcript", agentId: "a2", title: "Audit wire" },
+    ]);
+    expect(html).toContain("Explore adapter");
+    expect(html).toContain("Audit wire");
+    expect(html).toContain("Close Explore adapter");
+    expect(html).not.toContain(">Agent<");
+  });
+
+  it("falls back to the agent id when a persisted surface carries no title", () => {
+    const html = transcriptTabs([
+      { id: "agent-transcript:a1", kind: "agent-transcript", agentId: "a1" },
+    ]);
+    expect(html).toContain("a1");
+  });
+});

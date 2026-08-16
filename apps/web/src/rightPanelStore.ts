@@ -22,6 +22,7 @@ export const RIGHT_PANEL_KINDS = [
   "terminal",
   "pull-request",
   "agents",
+  "agent-transcript",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -62,7 +63,24 @@ export type RightPanelSurface =
       repository: string;
       number: number;
     }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  | {
+      /**
+       * One subagent's full transcript, drilled into from the Agents surface.
+       * Keyed by agent id so several agents can stay open as peer tabs; the
+       * thread comes from the surface's own thread scope.
+       */
+      id: `agent-transcript:${string}`;
+      kind: "agent-transcript";
+      agentId: string;
+      /**
+       * The agent's display title, carried on the surface so the tab strip can
+       * label it without reaching into thread state — the same reason a file
+       * surface carries its path. Absent on surfaces persisted before titles
+       * were stored, and refreshed whenever the agent is reopened.
+       */
+      title?: string;
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
@@ -86,9 +104,10 @@ interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "agent-transcript">,
   ) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
+  openAgentTranscript: (ref: ScopedThreadRef, agentId: string, title?: string) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -115,7 +134,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "agent-transcript">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -127,7 +146,10 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<
+    RightPanelKind,
+    "file" | "preview" | "terminal" | "pull-request" | "agent-transcript"
+  >,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -154,6 +176,13 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
+});
+
+const agentTranscriptSurface = (agentId: string, title?: string): RightPanelSurface => ({
+  id: `agent-transcript:${agentId}`,
+  kind: "agent-transcript",
+  agentId,
+  ...(title !== undefined && title.length > 0 ? { title } : {}),
 });
 
 const terminalSurface = (terminalId: string): RightPanelSurface => ({
@@ -299,6 +328,24 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         }),
                       ];
                     }
+                    if (surface.kind === "agent-transcript") {
+                      // Its id is derived from the agent id; a mismatched or
+                      // missing one would render a transcript for nothing.
+                      if (
+                        typeof surface.agentId !== "string" ||
+                        surface.agentId.length === 0 ||
+                        surface.id !== `agent-transcript:${surface.agentId}`
+                      ) {
+                        return [];
+                      }
+                      const { title, ...rest } = surface;
+                      return [
+                        {
+                          ...rest,
+                          ...(typeof title === "string" && title.length > 0 ? { title } : {}),
+                        },
+                      ];
+                    }
                     if (surface.kind !== "terminal") return [surface];
                     if (
                       !("resourceId" in surface) ||
@@ -382,6 +429,25 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? current.surfaces.filter((entry) => entry.id !== "browser:new")
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
+          }),
+        })),
+      openAgentTranscript: (ref, agentId, title) =>
+        set((state) => ({
+          byThreadKey: updateThread(state.byThreadKey, scopedThreadKey(ref), (current) => {
+            // One tab per agent: reopening focuses the existing surface and
+            // refreshes its label, rather than stacking look-alike tabs.
+            const surface = agentTranscriptSurface(agentId, title);
+            const existing = current.surfaces.find((entry) => entry.id === surface.id);
+            if (!existing) {
+              return upsertSurface(current, surface);
+            }
+            return {
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === surface.id ? surface : entry,
+              ),
+            };
           }),
         })),
       openPullRequest: (ref, target) =>

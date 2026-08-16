@@ -23,10 +23,12 @@ import {
   TurnId,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { CanonicalItemType, ToolFileChange } from "./providerRuntime.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getWorkflowScript: "orchestration.getWorkflowScript",
+  getSubagentTranscript: "orchestration.getSubagentTranscript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
@@ -1850,6 +1852,123 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass
   }
 }
 
+export const OrchestrationGetSubagentTranscriptInput = Schema.Struct({
+  threadId: ThreadId,
+  /**
+   * Subagent id as it appears in the provider's on-disk transcript
+   * (`agent-<agentId>.jsonl`). The server re-validates it against a strict
+   * id pattern and matches it against the session's own subagent listing;
+   * the client value is a hint, never a path.
+   */
+  agentId: TrimmedNonEmptyString,
+});
+export type OrchestrationGetSubagentTranscriptInput =
+  typeof OrchestrationGetSubagentTranscriptInput.Type;
+
+/** Per-message provider usage, when the transcript record carried it. */
+export const OrchestrationSubagentTranscriptUsage = Schema.Struct({
+  inputTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  cacheCreationInputTokens: Schema.optional(NonNegativeInt),
+  cacheReadInputTokens: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationSubagentTranscriptUsage = typeof OrchestrationSubagentTranscriptUsage.Type;
+
+/**
+ * One renderable row recovered from a subagent's on-disk transcript.
+ *
+ * Field names deliberately mirror `OrchestrationThreadActivity` and
+ * `ItemLifecyclePayload` (`tone`/`kind`/`summary`/`itemType`/`status`/
+ * `data`/`fileChanges`) so a client can render recovered rows with the same
+ * component it uses for persisted activity. `id` is the transcript record's
+ * uuid rather than an `EventId`: these rows never existed in our event log.
+ * `kind` stays an open string for the same reason activity `kind` does —
+ * new row kinds must not break an older client's decode.
+ */
+export const OrchestrationSubagentTranscriptEntry = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  createdAt: Schema.NullOr(IsoDateTime),
+  tone: OrchestrationThreadActivityTone,
+  kind: TrimmedNonEmptyString,
+  summary: TrimmedNonEmptyString,
+  itemType: CanonicalItemType,
+  status: Schema.optional(Schema.Literals(["inProgress", "completed", "failed", "declined"])),
+  /** Assistant text, thinking text, or the user/launch prompt. */
+  text: Schema.optional(Schema.String),
+  /** `{ toolName, input, result }`, matching the persisted tool activity payload. */
+  data: Schema.optional(Schema.Unknown),
+  fileChanges: Schema.optional(Schema.Array(ToolFileChange)),
+  usage: Schema.optional(OrchestrationSubagentTranscriptUsage),
+  model: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationSubagentTranscriptEntry = typeof OrchestrationSubagentTranscriptEntry.Type;
+
+export const OrchestrationGetSubagentTranscriptResult = Schema.Struct({
+  agentId: TrimmedNonEmptyString,
+  /** Provider session that owns the transcript file. */
+  sessionId: TrimmedNonEmptyString,
+  /** Sibling `.meta.json` details, when the provider wrote one. */
+  agentType: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  entries: Schema.Array(OrchestrationSubagentTranscriptEntry),
+  /** True when the byte cap cut the transcript short; entries stay ordered from the start. */
+  truncated: Schema.Boolean,
+  /**
+   * Conversational records that produced no row. Recovery is meant to be
+   * lossless, so this is normally zero — it is reported rather than inferred
+   * so a client can say "6 of 8 steps shown" instead of quietly showing 6.
+   */
+  droppedRecords: NonNegativeInt,
+  /** Transcript lines that were not parseable — a torn write, or the byte cap's partial tail. */
+  skippedLines: NonNegativeInt,
+  /**
+   * Thinking steps whose content the provider persisted as signature-only.
+   * Nothing was lost on our side and nothing can be recovered: the reasoning
+   * text was never written to disk. Distinct from `droppedRecords`, which
+   * counts content we failed to render.
+   */
+  redactedThinking: NonNegativeInt,
+});
+export type OrchestrationGetSubagentTranscriptResult =
+  typeof OrchestrationGetSubagentTranscriptResult.Type;
+
+const SUBAGENT_TRANSCRIPT_ERROR_MESSAGES = {
+  "invalid-agent-id": "Subagent id is not a valid transcript id.",
+  "provider-unsupported": "This provider does not keep on-disk subagent transcripts.",
+  "session-unknown": "No provider session is recorded for this thread.",
+  "root-unavailable": "Provider transcript root unavailable.",
+  "not-found": "Subagent transcript not found.",
+  "outside-root": "Resolved transcript is outside the provider transcript root.",
+  "not-regular-file": "Subagent transcript is not a regular file.",
+  "changed-during-read": "Subagent transcript changed between resolution and open.",
+  "transcript-too-large": "Subagent transcript is too large to read.",
+  "read-failed": "Subagent transcript read failed.",
+} as const;
+
+export class OrchestrationGetSubagentTranscriptError extends Schema.TaggedErrorClass<OrchestrationGetSubagentTranscriptError>()(
+  "OrchestrationGetSubagentTranscriptError",
+  {
+    reason: Schema.Literals([
+      "invalid-agent-id",
+      "provider-unsupported",
+      "session-unknown",
+      "root-unavailable",
+      "not-found",
+      "outside-root",
+      "not-regular-file",
+      "changed-during-read",
+      "transcript-too-large",
+      "read-failed",
+    ]),
+    agentId: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return SUBAGENT_TRANSCRIPT_ERROR_MESSAGES[this.reason];
+  }
+}
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1858,6 +1977,10 @@ export const OrchestrationRpcSchemas = {
   getWorkflowScript: {
     input: OrchestrationGetWorkflowScriptInput,
     output: OrchestrationGetWorkflowScriptResult,
+  },
+  getSubagentTranscript: {
+    input: OrchestrationGetSubagentTranscriptInput,
+    output: OrchestrationGetSubagentTranscriptResult,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

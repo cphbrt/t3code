@@ -60,6 +60,27 @@ function buildScript() {
         },
       },
     },
+    // A registered child running a tool. The capture's children only reasoned
+    // and answered, so the one shape that proves item forwarding is written
+    // here from the app-server v2 ThreadItem schema.
+    {
+      method: "item/completed",
+      params: {
+        threadId: CHILD_A,
+        turnId: `${CHILD_A}-turn-1`,
+        completedAtMs: 1785898343000,
+        item: {
+          type: "commandExecution",
+          id: "item_child_cmd_1",
+          command: "rg --files apps/server",
+          commandActions: [],
+          cwd: "/workspace/repo",
+          status: "completed",
+          exitCode: 0,
+          aggregatedOutput: "apps/server/src/bin.ts\n",
+        },
+      },
+    },
     // Child terminal lifecycle AFTER the receiver map knows the children —
     // pre-fix, the legacy suppressor dropped these before interception saw
     // them, so no synthetic agent events were emitted.
@@ -133,6 +154,25 @@ describe("CodexSessionRuntime collab integration", () => {
           (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_B,
       );
       assert.isDefined(childClosed, "child B's close becomes an agent event");
+
+      // The child's tool item is forwarded whole, with the two fields the
+      // adapter needs to rebuild a parent-fidelity item.completed: which half
+      // of the lifecycle it is, and the child's item id (the parent path's
+      // providerItemId). CodexCollabWire.test.ts maps this exact shape.
+      const childItem = events.find((event) => event.method === "collabAgent/item");
+      assert.isDefined(childItem, "a registered child's item becomes an agent event");
+      const childItemPayload = childItem!.payload as {
+        agentThreadId?: string;
+        lifecycle?: string;
+        agentTurnId?: string;
+        item?: { type?: string; command?: string; aggregatedOutput?: string };
+      };
+      assert.equal(childItemPayload.agentThreadId, CHILD_A);
+      assert.equal(childItemPayload.lifecycle, "completed");
+      assert.equal(childItemPayload.agentTurnId, `${CHILD_A}-turn-1`);
+      assert.equal(childItem!.itemId, "item_child_cmd_1");
+      assert.equal(childItemPayload.item?.command, "rg --files apps/server");
+      assert.equal(childItemPayload.item?.aggregatedOutput, "apps/server/src/bin.ts\n");
 
       // Parent-owned resolution passes through — not swallowed, not
       // re-labelled as an agent event.
