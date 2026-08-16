@@ -25,6 +25,8 @@ export interface VcsProcessInput {
   readonly spawnCwd?: string;
   readonly stdin?: string;
   readonly env?: NodeJS.ProcessEnv;
+  /** See `ProcessRunInput.extendEnv`; defaults to `true` when `env` is set. */
+  readonly extendEnv?: boolean;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
@@ -118,6 +120,7 @@ export const make = Effect.gen(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.env !== undefined ? { env: input.env } : {}),
+        ...(input.extendEnv !== undefined ? { extendEnv: input.extendEnv } : {}),
         timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: "truncate",

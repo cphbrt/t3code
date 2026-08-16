@@ -30,6 +30,7 @@ import {
   type VcsStatusInput,
   type VcsStatusResult,
 } from "@t3tools/contracts";
+import { withoutInheritedGitRepositoryLocation } from "@t3tools/shared/git";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
@@ -440,8 +441,15 @@ const gitCommand = (
     args: ["-C", cwd, ...args],
     cwd,
     spawnCwd: globalThis.process.cwd(),
+    // `-C <cwd>` chooses the repository, but an inherited `GIT_DIR` would still
+    // override it, so the environment is passed complete and already stripped
+    // rather than as an overlay that `extendEnv` would merge back over.
+    env: {
+      ...withoutInheritedGitRepositoryLocation(globalThis.process.env),
+      ...options?.env,
+    },
+    extendEnv: false,
     ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
-    ...(options?.env !== undefined ? { env: options.env } : {}),
     ...(options?.allowNonZeroExit !== undefined
       ? { allowNonZeroExit: options.allowNonZeroExit }
       : {}),
@@ -716,8 +724,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         gitCommonDir,
         `t3-checkpoint-index-${NodeCrypto.randomUUID()}`,
       );
+      // Overlay only: `gitCommand` supplies the sanitized inherited environment,
+      // and re-spreading `process.env` here would restore the stripped keys.
       const commitEnv: NodeJS.ProcessEnv = {
-        ...process.env,
         GIT_INDEX_FILE: tempIndexPath,
         GIT_AUTHOR_NAME: "T3 Code",
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",

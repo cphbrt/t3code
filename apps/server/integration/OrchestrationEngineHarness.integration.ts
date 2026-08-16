@@ -23,6 +23,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { withoutInheritedGitRepositoryLocation } from "@t3tools/shared/git";
+
 import * as CheckpointStore from "../src/checkpointing/CheckpointStore.ts";
 import { TextGeneration, type TextGenerationShape } from "../src/textGeneration/TextGeneration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -88,6 +90,9 @@ const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return NodeChildProcess.execFileSync("git", args, {
     cwd,
+    // Without this, a GIT_DIR inherited from `git bisect run`, a hook, or
+    // `rebase --exec` would aim these fixture writes at a real repository.
+    env: withoutInheritedGitRepositoryLocation(process.env),
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
   });

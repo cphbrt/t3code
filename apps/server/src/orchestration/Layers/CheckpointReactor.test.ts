@@ -30,6 +30,8 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { withoutInheritedGitRepositoryLocation } from "@t3tools/shared/git";
+
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
@@ -203,6 +205,9 @@ async function waitForEvent(
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return NodeChildProcess.execFileSync("git", args, {
     cwd,
+    // Without this, a GIT_DIR inherited from `git bisect run`, a hook, or
+    // `rebase --exec` would aim these fixture writes at a real repository.
+    env: withoutInheritedGitRepositoryLocation(process.env),
     stdio: ["ignore", "pipe", "pipe"],
     encoding: "utf8",
   });

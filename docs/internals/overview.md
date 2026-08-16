@@ -117,6 +117,25 @@ baseline capture, completed-turn capture, diff projection, and reverting both th
 provider conversation. The storage contract is `VcsCheckpointOps` in
 [`VcsDriver.ts`](../../apps/server/src/vcs/VcsDriver.ts), implemented for Git in the same directory.
 
+## Git subprocesses
+
+A spawned Git command must never inherit the repository-location environment variables `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, and `GIT_OBJECT_DIRECTORY`. Git exports them
+into the processes it spawns — `bisect run` scripts, hooks, `rebase --exec` — and for a linked
+worktree `GIT_DIR` is an absolute path to `<repo>/.git/worktrees/<name>`. Because they override
+discovery from the working directory, a server or test run started from inside one of those
+processes would otherwise operate on that repository no matter which directory it was handed, and
+`git -C` does not help.
+
+Route Git through the drivers, which strip them: [`GitVcsDriverCore.ts`](../../apps/server/src/vcs/GitVcsDriverCore.ts)
+spawns with an explicit `cwd`, and [`GitVcsDriver.ts`](../../apps/server/src/vcs/GitVcsDriver.ts)
+passes a complete environment with `extendEnv: false` so the stripped values cannot be merged back
+in. A caller's own value still wins — checkpoint capture points `GIT_INDEX_FILE` at a scratch index.
+Wrap any raw `spawn`/`execFile` of `git`, including test fixtures, with
+`withoutInheritedGitRepositoryLocation` from [`git.ts`](../../packages/shared/src/git.ts).
+`GIT_CONFIG_*` and `GIT_CEILING_DIRECTORIES` are deliberately preserved; they do not relocate the
+repository.
+
 ## Startup
 
 [`serverRuntimeStartup.ts`][startup] runs a fixed lifecycle: start keybindings, settings, and
