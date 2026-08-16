@@ -1985,7 +1985,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("task.started carries model/effort; subagent snapshots refine the model", () => {
+  it.effect("task.started carries the launch model; subagent snapshots refine it", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2013,8 +2013,8 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      // No explicit model/effort on the launch input: the task inherits the
-      // session's selection.
+      // No explicit model on the launch input: the task inherits the
+      // session's selection until a snapshot refines it.
       harness.query.emit({
         type: "system",
         subtype: "task_started",
@@ -2052,14 +2052,377 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(started?.type, "task.started");
       if (started?.type === "task.started") {
         assert.equal(started.payload.model, "claude-opus-4-6");
-        assert.equal(started.payload.effort, "max");
       }
       const progress = taskEvents[1];
       assert.equal(progress?.type, "task.progress");
       if (progress?.type === "task.progress") {
         assert.equal(progress.payload.model, "claude-sonnet-5[1m]");
-        assert.equal(progress.payload.effort, "max");
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("task payloads omit effort when the launch carried no override", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const taskEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      // The session runs at "max". Nothing the SDK sends reports the
+      // subagent's resolved effort, so publishing the session's value would
+      // label the subagent with the PARENT's effort.
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-effort-unknown",
+        description: "Agent U",
+        task_type: "local_agent",
+        tool_use_id: "toolu_agent_u",
+        uuid: "task-effort-started-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_progress",
+        task_id: "task-effort-unknown",
+        description: "Agent U",
+        usage: { total_tokens: 100, tool_uses: 1, duration_ms: 10 },
+        uuid: "task-effort-progress-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      const taskEvents = Array.from(yield* Fiber.join(taskEventsFiber));
+      const started = taskEvents[0];
+      assert.equal(started?.type, "task.started");
+      if (started?.type === "task.started") {
+        assert.equal(started.payload.model, "claude-opus-4-6");
+        assert.equal(started.payload.effort, undefined);
+      }
+      // The linkage repeated on every later row must stay silent too.
+      const progress = taskEvents[1];
+      assert.equal(progress?.type, "task.progress");
+      if (progress?.type === "task.progress") {
+        assert.equal(progress.payload.effort, undefined);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("a restart's task_started keeps the refined model and the launch effort", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      // The launching Agent call overrides both, so a re-seed from the
+      // session would be visibly wrong on both fields.
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session",
+        uuid: "stream-agent-start",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "toolu_example_spawn",
+            name: "Agent",
+            input: {
+              description: "Agent R",
+              model: "claude-example-launch-3",
+              effort: "low",
+            },
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-restart-model",
+        description: "Agent R",
+        task_type: "local_agent",
+        tool_use_id: "toolu_example_spawn",
+        uuid: "task-restart-started-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // The subagent's own snapshot is the only authoritative model source.
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_example_spawn",
+        message: { model: "claude-example-subagent-2", content: [] },
+        uuid: "restart-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-restart-model",
+        patch: { status: "completed" },
+        uuid: "task-restart-settled-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // Messaging the settled agent restarts it: same task id, new tool_use
+      // id, and no model/effort on the restarting call's input.
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-restart-model",
+        description: "Agent R",
+        task_type: "local_agent",
+        tool_use_id: "toolu_example_restart",
+        prompt: "Another round, please.",
+        uuid: "task-restart-restarted-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const startRows = runtimeEvents.filter((event) => event.type === "task.started");
+      assert.equal(startRows.length, 2);
+      const first = startRows[0];
+      if (first?.type === "task.started") {
+        assert.equal(first.payload.model, "claude-example-launch-3");
+        assert.equal(first.payload.effort, "low");
+        assert.equal(first.payload.toolUseId, "toolu_example_spawn");
+      }
+      const restart = startRows[1];
+      if (restart?.type === "task.started") {
+        // The refined model, not the parent session's "claude-opus-4-6".
+        assert.equal(restart.payload.model, "claude-example-subagent-2");
+        // The launch override, not the session's "max".
+        assert.equal(restart.payload.effort, "low");
+        // The spawn id, so the restart row does not introduce a second
+        // identity for the same agent.
+        assert.equal(restart.payload.toolUseId, "toolu_example_spawn");
+        assert.equal(restart.payload.prompt, "Another round, please.");
+      }
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("a snapshot carrying the spawn id still attributes after a restart", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-restart-attribution",
+        description: "Agent A",
+        task_type: "local_agent",
+        tool_use_id: "toolu_example_spawn",
+        uuid: "attribution-started-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_updated",
+        task_id: "task-restart-attribution",
+        patch: { status: "completed" },
+        uuid: "attribution-settled-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-restart-attribution",
+        description: "Agent A",
+        task_type: "local_agent",
+        tool_use_id: "toolu_example_restart",
+        uuid: "attribution-restarted-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      // The restarted agent's traffic goes on carrying the SPAWN id, never
+      // the restarting call's id (wire-confirmed on a real restarted agent).
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_example_spawn",
+        message: {
+          model: "claude-example-subagent-2",
+          content: [
+            { type: "text", text: "back at it" },
+            {
+              type: "tool_use",
+              id: "toolu_example_post_restart_bash",
+              name: "Bash",
+              input: { command: "echo post-restart" },
+            },
+          ],
+        },
+        uuid: "post-restart-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const narration = runtimeEvents.find(
+        (event) =>
+          event.type === "item.completed" && event.payload.itemType === "assistant_message",
+      );
+      assert.isDefined(narration);
+      if (narration?.type === "item.completed") {
+        assert.equal(narration.payload.detail, "back at it");
+        assert.equal(narration.payload.agentId, "task-restart-attribution");
+        assert.equal(narration.payload.parentToolUseId, "toolu_example_spawn");
+      }
+      const snapshotTool = runtimeEvents.find(
+        (event) =>
+          event.type === "item.started" &&
+          String(event.itemId) === "toolu_example_post_restart_bash",
+      );
+      assert.isDefined(snapshotTool);
+      if (snapshotTool?.type === "item.started") {
+        assert.equal(snapshotTool.payload.agentId, "task-restart-attribution");
+      }
+      runtimeEventsFiber.interruptUnsafe();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("terminal task rows carry the refined model after a restart", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEvents: Array<ProviderRuntimeEvent> = [];
+      const runtimeEventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => runtimeEvents.push(event)),
+      ).pipe(Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          "claude-opus-4-6",
+          [{ id: "effort", value: "max" }],
+        ),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "spawn an agent",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-restart-terminal",
+        description: "Agent T2",
+        task_type: "local_agent",
+        tool_use_id: "toolu_example_spawn",
+        uuid: "terminal-started-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "assistant",
+        parent_tool_use_id: "toolu_example_spawn",
+        message: { model: "claude-example-subagent-2", content: [] },
+        uuid: "terminal-snapshot-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_started",
+        task_id: "task-restart-terminal",
+        description: "Agent T2",
+        task_type: "local_agent",
+        tool_use_id: "toolu_example_restart",
+        uuid: "terminal-restarted-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+      harness.query.emit({
+        type: "system",
+        subtype: "task_notification",
+        task_id: "task-restart-terminal",
+        status: "completed",
+        summary: "done",
+        uuid: "terminal-notification-uuid",
+        session_id: "sdk-session",
+      } as unknown as SDKMessage);
+
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      const completed = runtimeEvents.find((event) => event.type === "task.completed");
+      assert.isDefined(completed);
+      if (completed?.type === "task.completed") {
+        assert.equal(completed.payload.model, "claude-example-subagent-2");
+        // This launch carried no effort override, so the session's "max"
+        // must not ride along on the terminal row.
+        assert.equal(completed.payload.effort, undefined);
+        assert.equal(completed.payload.toolUseId, "toolu_example_spawn");
+      }
+      runtimeEventsFiber.interruptUnsafe();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
