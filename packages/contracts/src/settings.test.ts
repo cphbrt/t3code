@@ -69,6 +69,47 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
+describe("ClientSettings dictation", () => {
+  it("defaults both paths to unconfigured and the language to English", () => {
+    const decoded = decodeClientSettings({});
+    expect(decoded.dictationWhisperCliPath).toBe("");
+    expect(decoded.dictationModelPath).toBe("");
+    expect(decoded.dictationLanguage).toBe("en");
+  });
+
+  it("round-trips configured paths and a language override", () => {
+    const decoded = decodeClientSettings({
+      dictationWhisperCliPath: "/opt/whisper/whisper-cli",
+      dictationModelPath: "/opt/whisper/ggml-small.en.bin",
+      dictationLanguage: "auto",
+    });
+    expect(decoded.dictationWhisperCliPath).toBe("/opt/whisper/whisper-cli");
+    expect(decoded.dictationModelPath).toBe("/opt/whisper/ggml-small.en.bin");
+    expect(decoded.dictationLanguage).toBe("auto");
+  });
+
+  it("accepts each dictation field as an independent patch", () => {
+    expect(
+      decodeClientSettingsPatch({ dictationWhisperCliPath: "/bin/whisper-cli" })
+        .dictationWhisperCliPath,
+    ).toBe("/bin/whisper-cli");
+    expect(decodeClientSettingsPatch({ dictationModelPath: "/m.bin" }).dictationModelPath).toBe(
+      "/m.bin",
+    );
+    expect(decodeClientSettingsPatch({ dictationLanguage: "fr" }).dictationLanguage).toBe("fr");
+  });
+
+  it("rejects an empty or untrimmed language, which whisper would not accept", () => {
+    expect(() => decodeClientSettings({ dictationLanguage: "" })).toThrow();
+    expect(() => decodeClientSettings({ dictationLanguage: " en" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ dictationLanguage: "" })).toThrow();
+  });
+
+  it("rejects an implausibly long path rather than persisting it", () => {
+    expect(() => decodeClientSettings({ dictationWhisperCliPath: "/".repeat(2_000) })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar with automatic merge and inactivity settling", () => {
     const settings = decodeClientSettings({});

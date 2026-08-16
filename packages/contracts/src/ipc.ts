@@ -959,6 +959,82 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
   input: PreviewAutomationWaitForInput,
 });
 
+// ── Dictation ────────────────────────────────────────────────────────
+//
+// Local speech-to-text runs entirely in the desktop main process against a
+// user-supplied whisper.cpp binary and model. Audio never leaves the machine
+// and never reaches a T3 server, so none of this crosses the WebSocket.
+
+/**
+ * A recorded utterance handed to the main process for transcription.
+ *
+ * `wavData` is a complete 16 kHz mono 16-bit PCM WAV file, not raw samples:
+ * whisper.cpp reads a file, so main writes these bytes straight to a temp
+ * file. `Uint8Array` survives Electron IPC's structured clone, matching the
+ * preview recording-save payload.
+ */
+export const DesktopDictationTranscribeInputSchema = Schema.Struct({
+  wavData: Schema.Uint8Array,
+  /** BCP-47-ish whisper language code, or "auto" to let whisper detect it. */
+  language: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()),
+});
+
+/**
+ * Transcription outcome. Failure is a value rather than a rejected promise so
+ * the renderer always has a displayable reason (missing binary, non-zero exit,
+ * unparseable output) instead of an opaque IPC error string.
+ */
+export const DesktopDictationTranscribeResultSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), text: Schema.String }),
+  Schema.Struct({ ok: Schema.Literal(false), error: Schema.String }),
+]);
+export type DesktopDictationTranscribeResult = typeof DesktopDictationTranscribeResultSchema.Type;
+
+/**
+ * Which configuration an availability check should judge.
+ *
+ * Each path supplied here overrides the persisted setting for that field.
+ * The settings page passes the values currently in its fields, because it has
+ * only just handed them to an asynchronous settings write and persisted
+ * settings would still describe the previous configuration. The composer
+ * passes nothing and gets a verdict on the saved configuration.
+ */
+export const DesktopDictationAvailabilityInputSchema = Schema.Struct({
+  whisperCliPath: Schema.optionalKey(Schema.String),
+  modelPath: Schema.optionalKey(Schema.String),
+});
+export type DesktopDictationAvailabilityInput = typeof DesktopDictationAvailabilityInputSchema.Type;
+
+/**
+ * Whether dictation can run right now. `note` names the exact blocker so the
+ * settings row and the mic button's tooltip can say what to fix rather than
+ * just reporting "unavailable".
+ */
+export const DesktopDictationAvailabilitySchema = Schema.Struct({
+  available: Schema.Boolean,
+  note: Schema.optionalKey(Schema.String),
+});
+export type DesktopDictationAvailability = typeof DesktopDictationAvailabilitySchema.Type;
+
+export interface DesktopDictationBridge {
+  /**
+   * Transcribe one utterance. Rejects while another transcription is in
+   * flight; whisper is CPU-bound and a second concurrent run would only make
+   * both slower.
+   */
+  transcribe: (input: {
+    readonly wavData: Uint8Array;
+    readonly language: string;
+  }) => Promise<DesktopDictationTranscribeResult>;
+  /**
+   * Re-checks the binary and model paths on every call. Pass paths to judge
+   * those instead of the persisted ones; omit for the saved configuration.
+   */
+  checkAvailability: (
+    input?: DesktopDictationAvailabilityInput,
+  ) => Promise<DesktopDictationAvailability>;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /**
@@ -1040,6 +1116,12 @@ export interface DesktopBridge {
    * Electron desktop build; web builds have `preview === undefined`.
    */
   preview?: DesktopPreviewBridge;
+  /**
+   * Local whisper.cpp dictation. Optional: desktop builds from before
+   * dictation shipped lack it, so the composer feature-detects rather than
+   * assuming any Electron host can transcribe.
+   */
+  dictation?: DesktopDictationBridge;
 }
 
 export interface DesktopPreviewBridge {

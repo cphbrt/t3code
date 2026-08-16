@@ -57,6 +57,7 @@ import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopTelemetryPublisher from "./telemetry/DesktopTelemetryPublisher.ts";
 import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as DictationService from "./dictation/DictationService.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
@@ -149,9 +150,16 @@ const desktopPreviewLayer = PreviewManager.layer.pipe(
   Layer.provideMerge(desktopFoundationLayer),
 );
 
+// Dictation reads the configured whisper paths from client settings, so it
+// hangs off the foundation layer that owns them.
+const desktopDictationLayer = DictationService.layer.pipe(
+  Layer.provideMerge(desktopFoundationLayer),
+);
+
 const desktopWindowLayer = DesktopWindow.layer.pipe(
   Layer.provideMerge(desktopServerExposureLayer),
   Layer.provideMerge(desktopPreviewLayer),
+  Layer.provideMerge(desktopDictationLayer),
 );
 
 // Pool layer instantiates the backend factory once for the Windows

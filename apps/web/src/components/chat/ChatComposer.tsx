@@ -226,7 +226,9 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { toastManager } from "../ui/toast";
+import { stackedThreadToast, toastManager } from "../ui/toast";
+import { ComposerDictationButton } from "./ComposerDictationButton";
+import { dictationBridge, useDictation } from "../../hooks/useDictation";
 import {
   BotIcon,
   CircleAlertIcon,
@@ -2622,6 +2624,72 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
   });
 
+  // ------------------------------------------------------------------
+  // Dictation (macOS desktop only)
+  // ------------------------------------------------------------------
+  const dictation = useDictation({
+    language: settings.dictationLanguage,
+    onTranscript: (text) => insertComposerTextAtEnd(text, { ensureLeadingBoundary: true }),
+    onError: (message, transcript) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Dictation",
+          description: message,
+          // A transcript that could not be inserted is still the user's
+          // words; offer it back rather than losing what they said.
+          ...(transcript
+            ? {
+                actionProps: {
+                  children: "Copy transcript",
+                  onClick: () => {
+                    void navigator.clipboard.writeText(transcript).catch(() => undefined);
+                  },
+                },
+              }
+            : {}),
+        }),
+      );
+    },
+  });
+  const dictationAvailable = dictationBridge() !== null;
+  const {
+    state: dictationState,
+    start: startDictation,
+    stopAndTranscribe: stopDictation,
+    cancel: cancelDictation,
+    refreshAvailability: refreshDictationAvailability,
+  } = dictation;
+  const dictationStatus = dictationState.status;
+  // Stable identity keeps the memoized mic button from re-rendering with the
+  // composer, which re-renders on every keystroke.
+  const toggleDictation = useCallback(() => {
+    if (dictationStatus === "recording") {
+      void stopDictation();
+      return;
+    }
+    if (dictationStatus === "idle") {
+      // Paths may have been fixed since mount; re-check so a freshly
+      // configured binary does not require a restart to become usable.
+      void refreshDictationAvailability();
+      void startDictation();
+    }
+  }, [dictationStatus, stopDictation, refreshDictationAvailability, startDictation]);
+
+  // Escape abandons a recording without transcribing. Registered only while
+  // recording so it never competes with the composer's other Escape handling.
+  useEffect(() => {
+    if (dictationStatus !== "recording") return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancelDictation();
+    };
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+  }, [dictationStatus, cancelDictation]);
+
   const onComposerMentionDragLeaveCapture = (event: React.DragEvent<HTMLFormElement>) => {
     if (!dataTransferHasComposerMention(event.dataTransfer.types)) return;
     event.stopPropagation();
@@ -3405,6 +3473,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 >
                   {showMobilePendingAnswerActions ? null : inlineTasksBadge}
                   {showMobilePendingAnswerActions ? null : inlineStashBadge}
+                  {dictationAvailable ? (
+                    <ComposerDictationButton
+                      state={dictationState}
+                      disabled={
+                        isConnecting || environmentUnavailable !== null || projectSelectionRequired
+                      }
+                      preserveComposerFocusOnPointerDown={isMobileViewport}
+                      onToggle={toggleDictation}
+                    />
+                  ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
