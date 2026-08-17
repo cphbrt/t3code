@@ -32,6 +32,7 @@ artifacts/app-store/screenshots/
 .github/pr-assets/
 native/**/target/
 node_modules/
+.pnpm-store/
 *.log
 .env*
 !.env.example
