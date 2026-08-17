@@ -30,6 +30,7 @@ dist-electron/
 artifacts/app-store/screenshots/
 native/**/target/
 node_modules/
+.pnpm-store/
 *.log
 .env*
 !.env.example
