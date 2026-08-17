@@ -6,7 +6,7 @@ import type { InAppActionHistoryInput } from "@t3tools/contracts";
 import { serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { useAtomCommand } from "../state/use-atom-command";
-import { inAppShortcutForEvent } from "./inAppActionSignals";
+import { inAppShortcutForEvent, setInAppShortcutReporter } from "./inAppActionSignals";
 import { randomUUID } from "./utils";
 
 const ACTIONABLE_SELECTOR = [
@@ -119,6 +119,23 @@ export function InAppActionHistoryRecorder() {
       });
     };
 
+    // Actions that run without consuming their key are invisible to the
+    // `defaultPrevented` rule below, so they announce themselves instead. The
+    // rule itself stays as strict as it was: this is a second, explicit door,
+    // not a wider one.
+    const uninstallReporter = setInAppShortcutReporter((report) => {
+      const routeBefore = currentInAppRoute();
+      window.setTimeout(() => {
+        persist({
+          source: "shortcut",
+          action: report.action,
+          ...(report.shortcut ? { shortcut: report.shortcut } : {}),
+          routeBefore,
+          routeAfter: currentInAppRoute(),
+        });
+      }, 0);
+    });
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (!event.isTrusted) return;
       const routeBefore = currentInAppRoute();
@@ -167,6 +184,7 @@ export function InAppActionHistoryRecorder() {
     window.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("click", onClick, true);
     return () => {
+      uninstallReporter();
       window.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("click", onClick, true);
     };

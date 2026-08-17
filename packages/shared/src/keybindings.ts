@@ -39,7 +39,10 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+f", command: "projectSearch.toggle", when: "!terminalFocus" },
   { key: "mod+alt+shift+t", command: "themeEditor.toggle" },
   { key: "mod+s", command: "composer.stash", when: "!terminalFocus" },
-  { key: "mod+alt+r", command: "chat.readingFocus.toggle", when: "!terminalFocus" },
+  { key: "mod+.", command: "chat.readingFocus.toggle", when: "!terminalFocus" },
+  // Escape only ever hides the composer, and only when nothing else claimed the
+  // key. It is deliberately not a toggle: Escape must stay a dismissal.
+  { key: "esc", command: "chat.readingFocus.enable", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
@@ -56,6 +59,26 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command,
     when: "modelPickerOpen",
   })),
+];
+
+/**
+ * Rules that were once shipped as defaults and have since been withdrawn.
+ *
+ * The config file is written on first run and reconciled per *command*, so a
+ * rule that is still on disk keeps winning over the default that replaced it —
+ * a retired chord would otherwise keep working forever and its replacement
+ * would never arrive. Startup removes any persisted rule matching an entry here
+ * exactly, on key, command, and `when` together.
+ *
+ * Discipline for adding an entry: it must be a rule this project itself once
+ * shipped as a default, reproduced byte for byte. That exactness is the whole
+ * safety property — a user who deliberately chose a different key for the same
+ * command has a different triple and is left alone. Never add an entry to
+ * clobber a binding a user could plausibly have chosen for themselves.
+ */
+export const RETIRED_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
+  // Replaced by `mod+.`; `mod+alt+r` was awkward to reach.
+  { key: "mod+alt+r", command: "chat.readingFocus.toggle", when: "!terminalFocus" },
 ];
 
 function normalizeKeyToken(token: string): string {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+
+import { formatShortcutLabel } from "../../keybindings";
 
 import {
   buildKeybindingRows,
@@ -247,5 +250,46 @@ describe("KeybindingsSettings.logic", () => {
         when: "",
       }),
     ).toEqual(["Chat: New Local"]);
+  });
+});
+
+describe("bare Escape reading-focus binding in Settings", () => {
+  const escapeRow = () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    const row = rows.find((entry) => entry.command === "chat.readingFocus.enable");
+    if (!row) throw new Error("chat.readingFocus.enable row missing");
+    return row;
+  };
+
+  it("renders the row with a readable key rather than a blank cell", () => {
+    const row = escapeRow();
+    expect(row.key).toBe("esc");
+    expect(row.when).toBe("!terminalFocus");
+    expect(formatShortcutLabel(row.binding.shortcut, "MacIntel")).toBe("Esc");
+  });
+
+  it("is recognized as a default and can be reset to one", () => {
+    const row = escapeRow();
+    expect(row.source).toBe("Default");
+    expect(row.defaultKey).toBe("esc");
+    expect(row.defaultWhen).toBe("!terminalFocus");
+  });
+
+  it("reports no conflict with the Cmd+. toggle", () => {
+    const rows = buildKeybindingRows(DEFAULT_RESOLVED_KEYBINDINGS, "");
+    const row = rows.find((entry) => entry.command === "chat.readingFocus.enable");
+    const toggle = rows.find((entry) => entry.command === "chat.readingFocus.toggle");
+    expect(row?.conflicts).toEqual([]);
+    expect(toggle?.key).toBe("mod+.");
+    expect(toggle?.conflicts).toEqual([]);
+  });
+
+  it("still refuses to capture a bare Escape from the keyboard field", () => {
+    expect(
+      keybindingFromKeyboardEvent(
+        { key: "Escape", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false },
+        "MacIntel",
+      ),
+    ).toBeNull();
   });
 });

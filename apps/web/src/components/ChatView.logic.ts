@@ -386,20 +386,70 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
-// Typing in reading focus takes the same route as the Reply button: reveal the
-// composer and focus it, then append the key that started it. Revealing must
-// not depend on the insert, because a busy composer (connecting, an approval,
-// a pending question) refuses text and would otherwise leave the composer
-// visible but unfocused. Focus lands through the reveal, not through a
-// synchronous focus call: the composer's own text write-back would replay the
-// pre-insert value over the key that was just typed.
+// Typing in reading focus reveals the composer and appends the key that
+// started it. Revealing must not depend on the insert, because a busy composer
+// (connecting, an approval, a pending question) refuses text and would
+// otherwise leave the composer visible but unfocused: `showComposerAndFocus`
+// is what delivers focus, on its own, whether or not any text follows.
+//
+// Space is the exception. It reads as a gesture to open the prompt box rather
+// than a character the user meant to type, so it reveals and stops there,
+// leaving the draft empty.
 export function revealComposerForTypedKey(input: {
   showComposerAndFocus: () => void;
   insertTextAtEnd: (text: string) => boolean;
   key: string;
 }): void {
   input.showComposerAndFocus();
+  if (input.key === " ") return;
   input.insertTextAtEnd(input.key);
+}
+
+// Escape hides the composer only as a last resort. Every other Escape consumer
+// in the app — dialogs, menus, inline renames, multi-select, the image viewer —
+// is allowed to win first, so this answers "did anyone else want this key?"
+// rather than "is Escape bound?". `defaultPrevented` is read after the event has
+// finished dispatching, which is what makes the answer independent of listener
+// registration order. Reading focus already being on is a no-op, not a toggle.
+export function shouldHideComposerForReadingFocus(input: {
+  readingFocus: boolean;
+  readingFocusAvailable: boolean;
+  defaultPrevented: boolean;
+  isComposing: boolean;
+  floatingLayerOpen: boolean;
+}): boolean {
+  if (input.defaultPrevented) return false;
+  if (input.isComposing) return false;
+  if (input.floatingLayerOpen) return false;
+  if (!input.readingFocusAvailable) return false;
+  return !input.readingFocus;
+}
+
+export const READING_FOCUS_ENABLE_COMMAND = "chat.readingFocus.enable";
+
+// Performs the Escape hide and records it. The two belong together: because the
+// key is deliberately left unconsumed so other Escape consumers keep working,
+// the history recorder's `defaultPrevented` rule cannot see this action, and a
+// hide that went unrecorded would misrepresent how the composer gets closed.
+// Reporting happens only on the branch that actually hides, so a no-op Escape
+// and an Escape someone else claimed both stay out of the history.
+export function hideComposerForEscape(input: {
+  readingFocus: boolean;
+  readingFocusAvailable: boolean;
+  defaultPrevented: boolean;
+  isComposing: boolean;
+  floatingLayerOpen: boolean;
+  shortcutLabel: string | null;
+  hideComposer: () => void;
+  reportShortcut: (report: { action: string; shortcut?: string }) => void;
+}): boolean {
+  if (!shouldHideComposerForReadingFocus(input)) return false;
+  input.hideComposer();
+  input.reportShortcut({
+    action: READING_FOCUS_ENABLE_COMMAND,
+    ...(input.shortcutLabel ? { shortcut: input.shortcutLabel } : {}),
+  });
+  return true;
 }
 
 export function branchMismatchKey(

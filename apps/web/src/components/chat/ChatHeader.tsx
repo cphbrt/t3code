@@ -239,6 +239,9 @@ export const ChatHeader = memo(function ChatHeader({
         renameCommittedRef.current = true;
         commitRename(event.currentTarget.value);
       } else if (event.key === "Escape") {
+        // Claim the key so app-level Escape handling (hiding the composer)
+        // sees that the rename already consumed this dismissal.
+        event.preventDefault();
         renameCommittedRef.current = true;
         setRenaming(null);
       }

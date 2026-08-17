@@ -201,7 +201,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("themeEditor.toggle"), "mod+alt+shift+t");
       assert.equal(defaultsByCommand.get("filePicker.toggle"), "mod+p");
       assert.equal(defaultsByCommand.get("projectSearch.toggle"), "mod+shift+f");
-      assert.equal(defaultsByCommand.get("chat.readingFocus.toggle"), "mod+alt+r");
+      assert.equal(defaultsByCommand.get("chat.readingFocus.toggle"), "mod+.");
+      assert.equal(defaultsByCommand.get("chat.readingFocus.enable"), "esc");
       assert.equal(defaultsByCommand.get("sidebar.toggle"), "mod+b");
       assert.equal(defaultsByCommand.get("rightPanel.toggle"), "mod+alt+b");
       assert.isFalse(defaultsByCommand.has("rightPanel.toggleMaximized"));
@@ -605,4 +606,180 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       }
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
+
+  const RETIRED_READING_FOCUS = {
+    key: "mod+alt+r",
+    command: "chat.readingFocus.toggle" as const,
+    when: "!terminalFocus",
+  };
+
+  const runStartupSync = Effect.gen(function* () {
+    const keybindings = yield* Keybindings.Keybindings;
+    yield* keybindings.syncDefaultKeybindingsOnStartup;
+  });
+
+  it.effect("retires the withdrawn reading focus chord and backfills its replacement", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+b", command: "sidebar.toggle" },
+        RETIRED_READING_FOCUS,
+      ]);
+
+      yield* runStartupSync;
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isFalse(persisted.some((entry) => entry.key === "mod+alt+r"));
+      assert.deepInclude(persisted, {
+        key: "mod+.",
+        command: "chat.readingFocus.toggle",
+        when: "!terminalFocus",
+      });
+      assert.deepInclude(persisted, {
+        key: "esc",
+        command: "chat.readingFocus.enable",
+        when: "!terminalFocus",
+      });
+      assert.deepInclude(persisted, { key: "mod+b", command: "sidebar.toggle" });
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("keeps a user's own rebinding of the retired command and adds no replacement", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const userRule = {
+        key: "mod+alt+y",
+        command: "chat.readingFocus.toggle" as const,
+        when: "!terminalFocus",
+      };
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [userRule]);
+
+      yield* runStartupSync;
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepInclude(persisted, userRule);
+      assert.isFalse(persisted.some((entry) => entry.key === "mod+."));
+      // The unrelated new default must still arrive.
+      assert.deepInclude(persisted, {
+        key: "esc",
+        command: "chat.readingFocus.enable",
+        when: "!terminalFocus",
+      });
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("leaves the retired chord alone when it is bound to another command", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const userRule = { key: "mod+alt+r", command: "script.run-tests.run" as const };
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [userRule]);
+
+      yield* runStartupSync;
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepInclude(persisted, userRule);
+      assert.deepInclude(persisted, {
+        key: "mod+.",
+        command: "chat.readingFocus.toggle",
+        when: "!terminalFocus",
+      });
+      assert.deepInclude(persisted, {
+        key: "esc",
+        command: "chat.readingFocus.enable",
+        when: "!terminalFocus",
+      });
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("retiring is idempotent across restarts", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [RETIRED_READING_FOCUS]);
+
+      yield* runStartupSync;
+      const afterFirst = yield* fs.readFileString(keybindingsConfigPath);
+
+      yield* runStartupSync;
+      const afterSecond = yield* fs.readFileString(keybindingsConfigPath);
+
+      assert.equal(afterSecond, afterFirst);
+      assert.isFalse(afterSecond.includes("mod+alt+r"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("a config that never had the retired rule is not rewritten", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      // Already complete: nothing to retire and nothing to backfill, so the
+      // sync must leave the bytes on disk exactly as it found them.
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [...Keybindings.DEFAULT_KEYBINDINGS]);
+      const before = yield* fs.readFileString(keybindingsConfigPath);
+
+      yield* runStartupSync;
+
+      const after = yield* fs.readFileString(keybindingsConfigPath);
+      assert.equal(after, before);
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
+  it.effect("logs the retirement so a removed binding is not silent", () => {
+    const messages: string[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(String(message));
+    });
+
+    return Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [RETIRED_READING_FOCUS]);
+
+      yield* runStartupSync;
+
+      assert.isTrue(
+        messages.some((message) => message.includes("removing retired default keybinding")),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          makeKeybindingsLayer(),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("does not log a retirement when there is nothing to retire", () => {
+    const messages: string[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(String(message));
+    });
+
+    return Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+shift+t", command: "terminal.toggle" },
+      ]);
+
+      yield* runStartupSync;
+
+      assert.isFalse(
+        messages.some((message) => message.includes("removing retired default keybinding")),
+      );
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepInclude(persisted, { key: "mod+shift+t", command: "terminal.toggle" });
+      assert.deepInclude(persisted, {
+        key: "esc",
+        command: "chat.readingFocus.enable",
+        when: "!terminalFocus",
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          makeKeybindingsLayer(),
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
 });
