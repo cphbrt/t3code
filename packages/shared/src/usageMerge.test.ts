@@ -40,6 +40,7 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    scannedFiles?: number;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -58,7 +59,7 @@ function summary(
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
       status: "ok" as const,
-      scannedFiles: 1,
+      scannedFiles: source.scannedFiles ?? 1,
       skippedFiles: 0,
       malformedRecords: 0,
       distinctSessions: source.distinctSessions ?? 1,
@@ -144,6 +145,42 @@ describe("mergeUsage", () => {
         merged.providers.map((provider) => [provider.provider, provider.sessions]),
       ),
     ).toEqual({ claude: 1, codex: 1 });
+  });
+
+  it("reports a transcript directory that was read and held nothing", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket()],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex", scannedFiles: 0 },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.emptySources).toEqual(["env-a: /a/.codex"]);
+  });
+
+  it("reports an empty directory once when environments share it", () => {
+    const shared = {
+      provider: "claude" as const,
+      hostId: "mac",
+      homePath: "/home/theo/.claude",
+      scannedFiles: 0,
+    };
+    const merged = mergeUsage(
+      [environment("env-a", summary([], [shared])), environment("env-b", summary([], [shared]))],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.emptySources).toEqual(["env-a: /home/theo/.claude"]);
+    expect(merged.duplicateSources).toEqual(["env-b: /home/theo/.claude"]);
   });
 
   it("excludes an environment reporting an older contract version", () => {

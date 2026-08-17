@@ -38,6 +38,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
+import { resolveUsageProviderSettings } from "./usageProviderSettings.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
   listTranscriptFiles,
@@ -215,9 +216,12 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const claudeHome = yield* resolveClaudeHomePath(settings.providers.claudeAgent);
+    // Through the provider-instance precedence, not the legacy blob: a home
+    // configured as a provider instance is where the transcripts really are.
+    const providerSettings = resolveUsageProviderSettings(settings);
+    const claudeHome = yield* resolveClaudeHomePath(providerSettings.claude);
     const claudeDir = yield* resolveClaudeTranscriptDir(claudeHome);
-    const codexLayout = yield* resolveCodexHomeLayout(settings.providers.codex);
+    const codexLayout = yield* resolveCodexHomeLayout(providerSettings.codex);
 
     return [
       { provider: "claude" as const, dir: claudeDir },
