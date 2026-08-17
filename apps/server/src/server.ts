@@ -104,6 +104,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as QuotaHistoryStore from "./usage/QuotaHistoryStore.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
@@ -413,6 +414,11 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(ServerLifecycleEvents.layer),
+  // Deepest of the merged layers so the single store instance is shared by
+  // its writer (the provider registry, inside the core dependencies) and its
+  // reader (`UsageLayerLive`). Two instances would each hold their own view of
+  // the file and overwrite each other's observations.
+  Layer.provideMerge(QuotaHistoryStore.layer),
   Layer.provide(NetService.layer),
 );
 
