@@ -56,8 +56,14 @@ export interface DesktopSettingsChange {
 }
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-const MIN_MAIN_WINDOW_SIZE = {
-  width: 840,
+// Also the shell's `minWidth`/`minHeight` (see DesktopWindow.createWindow): a
+// window the user can drag narrower than this floor would have its bounds
+// rejected here and silently fall back to the default size on next launch.
+// 440 is where the renderer's narrowest overlay still gets its designed width —
+// the right panel is sheet-mode below 980px and sized `min(88vw, 24rem)` below
+// 760px, so 24rem is only reached at 436px (see web rightPanelLayout.ts).
+export const MIN_MAIN_WINDOW_SIZE = {
+  width: 440,
   height: 620,
 } as const;
 export const DesktopWindowBoundsSchema = Schema.Struct({
