@@ -142,6 +142,11 @@ export function ProviderQuotaDetails(props: {
   );
 }
 
+/**
+ * The model picker's inline quota card. It renders as the model list's scroll
+ * header, so it carries no horizontal margin of its own and inherits the list
+ * content container's insets to stay aligned with the model rows.
+ */
 export function ProviderQuotaPickerSummary(props: {
   readonly quota: ServerProviderQuota;
   readonly displayName: string;
@@ -150,7 +155,7 @@ export function ProviderQuotaPickerSummary(props: {
   if (!primary) return null;
   const colors = severityClasses(primary.usedPercent);
   return (
-    <div className={cn("mx-2 mb-1 rounded-md border px-2 py-2", colors.surface)}>
+    <div className={cn("mb-1 rounded-md border px-2 py-2", colors.surface)}>
       <ProviderQuotaDetails quota={props.quota} displayName={props.displayName} compact />
     </div>
   );

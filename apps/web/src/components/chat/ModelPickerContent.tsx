@@ -567,6 +567,43 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => ({ favoritesSet, modelJumpLabelByKey }),
     [favoritesSet, modelJumpLabelByKey],
   );
+  /**
+   * Provider usage sits inside the virtualized scroller as its list header so
+   * it scrolls away with the models instead of permanently eating the picker's
+   * limited height. Horizontal insets come from the list's content container,
+   * which lines the card up with the model rows below it.
+   */
+  const usageListHeader = useMemo(() => {
+    if (!selectedInstanceEntry) {
+      return null;
+    }
+    const quota = selectedInstanceEntry.snapshot.quota;
+    if (!selectedUsageLimitCountdown && !quota) {
+      return null;
+    }
+    return (
+      <div>
+        {selectedUsageLimitCountdown ? (
+          <div
+            role="status"
+            className="mb-1 flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-800 dark:text-amber-200/90"
+          >
+            <ClockIcon aria-hidden className="size-3 shrink-0 opacity-80" />
+            <span className="min-w-0 flex-1 truncate">{selectedInstanceEntry.displayName}</span>
+            <span className="shrink-0 font-medium tabular-nums">
+              available in {selectedUsageLimitCountdown.exact}
+            </span>
+          </div>
+        ) : null}
+        {quota ? (
+          <ProviderQuotaPickerSummary
+            quota={quota}
+            displayName={selectedInstanceEntry.displayName}
+          />
+        ) : null}
+      </div>
+    );
+  }, [selectedInstanceEntry, selectedUsageLimitCountdown]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -730,26 +767,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 />
               </div>
             </div>
-            {selectedInstanceEntry && selectedUsageLimitCountdown ? (
-              <div
-                role="status"
-                className="mx-2 mb-1 flex items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5 text-[10px] text-amber-800 dark:text-amber-200/90"
-              >
-                <ClockIcon aria-hidden className="size-3 shrink-0 opacity-80" />
-                <span className="min-w-0 flex-1 truncate">{selectedInstanceEntry.displayName}</span>
-                <span className="shrink-0 font-medium tabular-nums">
-                  available in {selectedUsageLimitCountdown.exact}
-                </span>
-              </div>
-            ) : null}
-            {selectedInstanceEntry?.snapshot.quota ? (
-              <ProviderQuotaPickerSummary
-                quota={selectedInstanceEntry.snapshot.quota}
-                displayName={selectedInstanceEntry.displayName}
-              />
-            ) : null}
 
-            {/* Model list */}
+            {/* Model list (provider usage rides along as the list header) */}
             <div className="relative min-h-0 flex-1 overflow-hidden pr-px">
               <ComboboxListVirtualized className="size-full min-w-0 p-0 not-empty:p-0">
                 <LegendList<string>
@@ -819,6 +838,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   recycleItems
                   contentContainerClassName="pl-2 pr-px"
                   ItemSeparatorComponent={ModelListSeparator}
+                  ListHeaderComponent={usageListHeader}
                   onLayout={updateModelListScrollFades}
                   onScroll={updateModelListScrollFades}
                   className={cn(
