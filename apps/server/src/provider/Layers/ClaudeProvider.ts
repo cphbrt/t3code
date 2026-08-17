@@ -645,7 +645,24 @@ type ClaudeCapabilitiesProbe = {
    */
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
-  readonly usage?: SDKControlGetUsageResponse;
+  /**
+   * Type-only narrowing to the fields the quota normalizer reads. At runtime
+   * this is still whatever the SDK returned, `session` and `behaviors`
+   * included — the probe spreads the response through untouched. Declaring the
+   * narrower shape just stops callers depending on fields nothing here
+   * consumes, and spares fixtures from fabricating them.
+   */
+  readonly usage?: ClaudeQuotaUsageResponse;
+  /**
+   * When this probe's data was actually read out of the CLI.
+   *
+   * Deliberately distinct from the enclosing status check's `checkedAt`: the
+   * driver serves probes from a multi-minute cache, so a cached probe's usage
+   * numbers are as old as this stamp, not as young as the check that returned
+   * them. Anything projecting probe data onto a snapshot must date it from
+   * here, or it claims a freshness the reading does not have.
+   */
+  readonly probedAt: string;
 };
 
 export type ClaudeQuotaUsageResponse = Pick<
@@ -831,6 +848,8 @@ function dedupeSlashCommands(
   return [...commandsByName.values()];
 }
 
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
 function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     return Promise.resolve();
@@ -874,7 +893,7 @@ const probeClaudeCapabilities = (
       claudeSettings.binaryPath,
       claudeEnvironment,
     );
-    return yield* Effect.tryPromise(async () => {
+    const probe = yield* Effect.tryPromise(async () => {
       const q = claudeQuery({
         // Never yield — we only need initialization data, not a conversation.
         // This prevents any prompt from reaching the Anthropic API.
@@ -906,8 +925,12 @@ const probeClaudeCapabilities = (
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
         ...(usage ? { usage } : {}),
-      } satisfies ClaudeCapabilitiesProbe;
+      } satisfies Omit<ClaudeCapabilitiesProbe, "probedAt">;
     });
+    // Stamped where the reading happened, not where it was consumed. The
+    // driver's cache can hand this same object back for minutes afterwards.
+    const probedAt = yield* nowIso;
+    return { ...probe, probedAt } satisfies ClaudeCapabilitiesProbe;
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
@@ -1088,8 +1111,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  // `probedAt`, not `checkedAt`: the capabilities probe is cached for minutes,
+  // so dating the quota from this status check would claim a freshness the
+  // usage numbers do not have and defeat every staleness check downstream.
   const quota = capabilities.usage
-    ? normalizeClaudeProviderQuota(capabilities.usage, checkedAt)
+    ? normalizeClaudeProviderQuota(capabilities.usage, capabilities.probedAt)
     : undefined;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
@@ -1112,8 +1138,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     },
   });
 });
-
-const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 export const makePendingClaudeProvider = (
   claudeSettings: ClaudeSettings,

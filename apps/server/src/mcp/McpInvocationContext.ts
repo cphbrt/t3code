@@ -10,9 +10,10 @@ import * as Effect from "effect/Effect";
 /**
  * What a `t3-code` credential is allowed to do. "preview" drives the
  * collaborative browser; "settle" lets the thread's own agent park its thread
- * once the turn lands cleanly.
+ * once the turn lands cleanly; "usage" lets it read its own provider account's
+ * usage-limit status.
  */
-export type McpCapability = "preview" | "settle";
+export type McpCapability = "preview" | "settle" | "usage";
 
 export interface McpInvocationScope {
   readonly environmentId: EnvironmentId;
