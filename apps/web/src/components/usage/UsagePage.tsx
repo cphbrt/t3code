@@ -272,6 +272,7 @@ export function UsagePage() {
                 <UsageCoverageNotice
                   environments={environments}
                   duplicateSources={merged.duplicateSources}
+                  emptySources={merged.emptySources}
                   staleEnvironments={merged.staleEnvironments}
                 />
 
@@ -533,25 +534,33 @@ function Metric({ label, value }: { readonly label: string; readonly value: stri
 }
 
 /**
- * Says plainly when the totals are incomplete: an environment that failed, or
- * one whose transcripts another environment already reported. Environments
- * that are still answering never reach this notice; the page shows the
- * loading skeleton until every one is terminal.
+ * Says plainly when the totals are incomplete: an environment that failed, one
+ * whose transcripts another environment already reported, or a provider
+ * directory that was read and held nothing. Environments that are still
+ * answering never reach this notice; the page shows the loading skeleton until
+ * every one is terminal.
  */
 function UsageCoverageNotice({
   environments,
   duplicateSources,
+  emptySources,
   staleEnvironments,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly duplicateSources: readonly string[];
+  readonly emptySources: readonly string[];
   readonly staleEnvironments: readonly string[];
 }) {
   const failed = environments.filter((environment) => environment.error !== null);
   const stale = environments.filter((environment) =>
     staleEnvironments.includes(environment.environmentId),
   );
-  if (failed.length === 0 && stale.length === 0 && duplicateSources.length === 0) {
+  if (
+    failed.length === 0 &&
+    stale.length === 0 &&
+    duplicateSources.length === 0 &&
+    emptySources.length === 0
+  ) {
     return null;
   }
 
@@ -570,6 +579,9 @@ function UsageCoverageNotice({
           Counted once across environments sharing a transcript directory:{" "}
           {duplicateSources.join(", ")}
         </span>
+      ) : null}
+      {emptySources.length > 0 ? (
+        <span>No transcripts found in: {emptySources.join(", ")}</span>
       ) : null}
     </div>
   );
