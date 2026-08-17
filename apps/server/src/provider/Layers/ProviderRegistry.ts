@@ -42,6 +42,7 @@ import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import { ServerConfig } from "../../config.ts";
+import { QuotaHistoryStore } from "../../usage/QuotaHistoryStore.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry, type ProviderRegistryShape } from "../Services/ProviderRegistry.ts";
 import {
@@ -200,6 +201,7 @@ export const ProviderRegistryLive = Layer.effect(
     const config = yield* ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const quotaHistory = yield* QuotaHistoryStore;
 
     // Aggregator PubSub — consumers (WS gateway, etc.) subscribe here for
     // coalesced updates across every instance.
@@ -359,6 +361,29 @@ export const ProviderRegistryLive = Layer.effect(
           concurrency: "unbounded",
         },
       );
+      // Every quota snapshot that reaches the aggregator is recorded, before
+      // any merge or change check can discard it. The registry keeps only the
+      // latest snapshot, so this is the single point where the shape of a
+      // subscription window over time can still be observed.
+      //
+      // Recorded from the arriving snapshots rather than the merged result:
+      // a merge carries a previous quota forward when a refresh returns none,
+      // and that is not a new observation. Recording cannot fail, and the
+      // store de-duplicates on `(instanceId, windowId, observedAt)`, so
+      // repeated probes of a provider's own cached snapshot cost nothing.
+      yield* Effect.forEach(
+        nextProvidersWithRuntimeState,
+        (provider) =>
+          provider.quota === undefined
+            ? Effect.void
+            : quotaHistory.record({
+                instanceId: provider.instanceId,
+                observedAt: provider.quota.observedAt,
+                windows: provider.quota.windows,
+              }),
+        { discard: true },
+      );
+
       const [previousProviders, providers, providersToPersist] = yield* Ref.modify(
         providersRef,
         (previousProviders) => {
