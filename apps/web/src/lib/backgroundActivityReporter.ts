@@ -25,7 +25,6 @@ const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
 const REPORT_INTERVAL_MS = 25_000;
 const LEASE_TTL_MS = 45_000;
 const RECENT_INTERACTION_WINDOW_MS = LEASE_TTL_MS;
-const BASELINE_SCOPES: ReadonlyArray<BackgroundScope> = [{ type: "provider-status" }];
 
 interface RetainedScope {
   readonly environmentId: EnvironmentId;
@@ -84,17 +83,16 @@ export function wasRecentlyInteracted(lastInteractionAtMs: number, observedAtMs:
   );
 }
 
+/**
+ * A client claims nothing by default: every scope in a report is one a mounted
+ * surface asked for. A baseline claim would mean any open tab keeps the
+ * server's periodic work alive whether or not anything on screen reads it.
+ */
 function createActivityReport(
   environmentId: EnvironmentId,
   lastInteractionAtMs: number,
   observedAtMs: number,
 ): ClientActivityReportInput {
-  const scopes = [...BASELINE_SCOPES];
-  for (const entry of retainedScopes.values()) {
-    if (entry.environmentId === environmentId) {
-      scopes.push(entry.scope);
-    }
-  }
   return {
     environmentId,
     clientId: getClientId(),
@@ -103,7 +101,7 @@ function createActivityReport(
     focused: document.hasFocus(),
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
     appState: document.visibilityState === "visible" ? "active" : "background",
-    scopes,
+    scopes: retainedBackgroundScopes(environmentId),
     ttlMs: LEASE_TTL_MS,
     observedAt: DateTime.makeUnsafe(observedAtMs),
   };
@@ -122,7 +120,22 @@ function scopeForSubscription(
   return typeof input.cwd === "string" ? { type: "vcs-status", cwd: input.cwd } : null;
 }
 
-function retainBackgroundScope(environmentId: EnvironmentId, scope: BackgroundScope): () => void {
+/** One environment's worth of demand for a single scope. */
+export interface BackgroundScopeClaim {
+  readonly environmentId: EnvironmentId;
+  readonly scope: BackgroundScope;
+}
+
+/**
+ * Claims background demand for `scope` until the returned release runs.
+ *
+ * Claims are ref-counted per environment and scope, so several surfaces may
+ * hold the same one and the server keeps seeing it until the last releases.
+ */
+export function retainBackgroundScope(
+  environmentId: EnvironmentId,
+  scope: BackgroundScope,
+): () => void {
   const key = stableScopeKey(environmentId, scope);
   const existing = retainedScopes.get(key);
   if (existing) {
@@ -141,6 +154,22 @@ function retainBackgroundScope(environmentId: EnvironmentId, scope: BackgroundSc
       notifyRetainedScopesChanged();
     }
   };
+}
+
+/** Claims every scope in `claims` at once; the release drops all of them. */
+export function retainBackgroundScopes(claims: readonly BackgroundScopeClaim[]): () => void {
+  const releases = claims.map((claim) => retainBackgroundScope(claim.environmentId, claim.scope));
+  return () => {
+    for (const release of releases) release();
+  };
+}
+
+/**
+ * Identity of a claim set by value, for callers that rebuild their claims on
+ * every render and only want to re-take them when the set actually changed.
+ */
+export function backgroundScopeClaimsKey(claims: readonly BackgroundScopeClaim[]): string {
+  return claims.map((claim) => stableScopeKey(claim.environmentId, claim.scope)).join("\n");
 }
 
 export function observeBackgroundActivitySubscription(
