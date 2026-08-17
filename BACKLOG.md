@@ -86,6 +86,73 @@ work itself. Keep entries publishable: technical facts only, no private data.
   surfaces are provider-neutral, so parity is additive, but it needs a real
   Codex payload to confirm where result text lands per item type; the two
   adapters' completion paths are not similar enough to share code cheaply.
+- **Frequently-clicked controls have no keyboard shortcut.** The in-app
+  action history was queried on 2026-08-17 over its first ~39 hours (1006
+  recorded activations, desktop client only). Several controls are activated
+  often by mouse and have no `KeybindingCommand` at all: Settle thread (30
+  activations), dictation start/stop (22 and 22 — a natural push-to-talk
+  candidate), Send message (19), Pin thread (8), Stop generation (8), Snooze
+  thread (5). Separately, `rightPanel.toggle` has a default binding
+  (`mod+alt+b`) but was activated 48 times by mouse against once by keyboard,
+  and the command palette was opened 11 times exclusively as the new-thread
+  flow and never as a palette. Thread switching is 306 sidebar clicks against
+  99 keyboard activations across 30 distinct threads, while `mod+1`–`mod+9`
+  reaches only the first nine and `mod+6`–`mod+9` were never used. Decide
+  which of these deserve bindings, and whether thread jumping needs a
+  different model than fixed positional slots. Note the recorder only
+  captures semantic activations, so these ratios describe control usage, not
+  keystrokes.
+
+## Known defects
+
+- **The agent browser surface never fires `requestAnimationFrame`.** A page
+  driven through the agent preview tools does not composite, so rAF callbacks
+  are never scheduled — while `document.visibilityState` still reports
+  `"visible"`, `document.hidden` is `false`, and `document.hasFocus()` can be
+  `true`. Anything the app defers to a rAF therefore silently never runs, and
+  nothing in the surface signals that it was dropped. Confirmed on 2026-08-17:
+  `requestAnimationFrame(cb)` did not invoke `cb` within 500 ms, and opening
+  the preview changed nothing.
+  This produces convincing false defects, and it cost a full investigation on
+  2026-08-17. Composer focus is scheduled through `scheduleComposerFocus` → rAF
+  (`apps/web/src/components/ChatView.tsx`), so revealing the composer appeared
+  never to focus it, appeared to emit no `focus()` call anywhere in the
+  document, and read as a real product bug affecting the reading-focus toggle's
+  show direction and the **Reply** button. It is not one. Instrumenting the
+  whole chain and substituting a timer for rAF showed every step running, with
+  `document.activeElement` landing on the composer editor and `promptLength: 0`
+  — an empty composer, correctly focused. Typing a character appeared to work
+  throughout only because that path applies its DOM selection from a React
+  effect, which needs no rAF.
+  Mitigations when verifying anything animation-, transition-, or focus-related
+  through this surface: confirm `requestAnimationFrame` actually fires before
+  trusting a negative result; temporarily patch `window.requestAnimationFrame`
+  to a `setTimeout` shim to emulate a compositing browser; or verify in a real
+  window. Treat "the app never called X" as unproven until rAF is known to be
+  live.
+  For the record, the following observations from that investigation were all
+  artifacts of this and should not be treated as findings:
+  - "The reveal path produces no `focus()` call anywhere in the document, so
+    `focusComposer` → `ChatComposerHandle.focusAtEnd` →
+    `ComposerPromptEditor.focusAt` never reaches its `rootElement.focus()`
+    call." The chain is intact; its rAF entry point simply never fired.
+  - "Focus is delivered only as a side effect of Lexical setting a DOM
+    selection, and the application's focus calls are inert on every path."
+    The focus calls work; only the rAF-scheduled ones were unreachable.
+  - "The failure is content-independent, reproducing with an empty composer
+    and with a draft present." True of the artifact, and it is what made the
+    earlier empty-composer correlation look wrong when it was merely
+    incomplete.
+  - The editor element was never at fault: at the apparent moment of failure it
+    was present, rendered, `contenteditable="true"`, and a manual `.focus()` on
+    it succeeded immediately.
+    A separate real observation survived the correction and is worth keeping:
+    `ComposerPromptEditor.tsx:1600`, the controlled-value sync effect, returns
+    early when the value is unchanged and the editor is not already focused,
+    which gates the `editor.update(...)` → `$setSelectionAtComposerOffset(...)`
+    block. That is why a text-changing edit applies a DOM selection and an
+    unchanged-value render does not. It is working as designed given that the rAF
+    path handles the reveal, but it is the reason the artifact was so convincing.
 
 ## Housekeeping (safe once Chris has relaunched happily)
 

@@ -6,6 +6,7 @@ import {
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   formatShortcutLabel,
   isChatNewShortcut,
@@ -134,8 +135,20 @@ const DEFAULT_BINDINGS = compile([
     command: "themeEditor.toggle",
   },
   {
-    shortcut: modShortcut("r", { altKey: true }),
+    shortcut: modShortcut("."),
     command: "chat.readingFocus.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: {
+      key: "escape",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    },
+    command: "chat.readingFocus.enable",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
@@ -340,7 +353,11 @@ describe("shortcutLabelForCommand", () => {
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.new", "MacIntel"), "⇧⌘O");
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.readingFocus.toggle", "MacIntel"),
-      "⌥⌘R",
+      "⌘.",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "chat.readingFocus.enable", "MacIntel"),
+      "Esc",
     );
     assert.strictEqual(shortcutLabelForCommand(DEFAULT_BINDINGS, "diff.toggle", "Linux"), "Ctrl+D");
     assert.strictEqual(
@@ -918,5 +935,92 @@ describe("plus key parsing", () => {
         platform: "Linux",
       }),
     );
+  });
+});
+
+describe("reading focus defaults", () => {
+  const macOptions = { platform: "MacIntel", context: { terminalFocus: false } };
+
+  it("resolves Cmd+. to the reading focus toggle", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: ".", metaKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        macOptions,
+      ),
+      "chat.readingFocus.toggle",
+    );
+  });
+
+  it("resolves a bare Escape to the hide-only command", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "Escape" }), DEFAULT_RESOLVED_KEYBINDINGS, macOptions),
+      "chat.readingFocus.enable",
+    );
+  });
+
+  it("leaves Escape to the terminal when the terminal has focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "Escape" }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      null,
+    );
+  });
+
+  it("no longer binds the retired Opt+Cmd+R chord", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "r", metaKey: true, altKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        macOptions,
+      ),
+      null,
+    );
+  });
+
+  it("does not claim modified Escape chords", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "Escape", shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        macOptions,
+      ),
+      null,
+    );
+  });
+});
+
+describe("self-reporting commands", () => {
+  it("does not mark the deferred Escape hide as an invoked shortcut", () => {
+    const escapeEvent = event({ key: "Escape" });
+
+    assert.strictEqual(
+      resolveShortcutCommand(escapeEvent, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "chat.readingFocus.enable",
+    );
+    // Marking would let the passive recorder log a hide that never happened,
+    // because any dialog that consumes this Escape sets defaultPrevented.
+    assert.isNull(inAppShortcutForEvent(escapeEvent));
+  });
+
+  it("still marks the reading focus toggle, which consumes its own key", () => {
+    const toggleEvent = event({ key: ".", metaKey: true });
+
+    assert.strictEqual(
+      resolveShortcutCommand(toggleEvent, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+      "chat.readingFocus.toggle",
+    );
+    assert.deepEqual(inAppShortcutForEvent(toggleEvent), {
+      action: "chat.readingFocus.toggle",
+      shortcut: "⌘.",
+    });
   });
 });

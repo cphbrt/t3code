@@ -41,8 +41,15 @@ Commands are IDs like `terminal.toggle`, `commandPalette.toggle`, `preview.refre
 `projectSearch.toggle` searches inside the active project's files and defaults to `mod+shift+f`.
 Repeating either shortcut closes that search, and switching shortcuts replaces the open search.
 `chat.readingFocus.toggle` hides or restores the composer and branch controls so the transcript can
-use more vertical space. It defaults to `mod+alt+r`; while focused, select **Reply** or start typing
-to restore the composer. Approval requests and agent questions restore it automatically.
+use more vertical space. It defaults to `mod+.`; while focused, select **Reply** or start typing
+to restore the composer. Space opens the prompt box and leaves it empty, without typing a space.
+Any other printable character opens the prompt box and becomes the first character of the draft.
+Approval requests and agent questions restore it automatically.
+
+`chat.readingFocus.enable` only hides the composer, and defaults to `esc`. It is deliberately not a
+toggle, so Escape never re-opens the composer it just closed. Escape keeps its usual meaning
+everywhere else: the composer is hidden only when nothing else on screen — a dialog, menu, inline
+rename, selection, or the terminal — claimed that press first.
 `themeEditor.toggle` opens or closes the floating theme editor and defaults to
 `mod+alt+shift+t`. Select a color label to spotlight the elements that use it; select the label
 again to clear the spotlight. The swatch and hex field keep that color selected while you edit it.
