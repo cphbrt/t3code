@@ -51,6 +51,7 @@ function summary(
     sinceDay: "2026-08-01" as UsageDay,
     untilDay: "2026-08-31" as UsageDay,
     buckets,
+    quotaHistory: [],
     sources: sources.map((source) => ({
       fingerprint: {
         hostId: source.hostId,
@@ -317,5 +318,110 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+});
+
+function quotaSummary(quotaHistory: UsageSummary["quotaHistory"]): UsageSummary {
+  return {
+    ...summary([], [{ provider: "claude", hostId: "mac", homePath: "/a/.claude" }]),
+    quotaHistory,
+  };
+}
+
+describe("mergeUsage quota history", () => {
+  it("keeps one series per (instanceId, windowId), ordered", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          quotaSummary([
+            {
+              instanceId: "codex",
+              windowId: "Weekly",
+              label: "Weekly",
+              samples: [{ observedAt: "2026-08-07T10:00:00.000Z", usedPercent: 5 }],
+            },
+            {
+              instanceId: "claudeAgent",
+              windowId: "5-hour",
+              label: "5-hour",
+              durationMinutes: 300,
+              samples: [{ observedAt: "2026-08-07T10:00:00.000Z", usedPercent: 20 }],
+            },
+          ]),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.quotaHistory.map((series) => [series.instanceId, series.windowId])).toEqual([
+      ["claudeAgent", "5-hour"],
+      ["codex", "Weekly"],
+    ]);
+    expect(merged.quotaHistory[0]?.durationMinutes).toBe(300);
+  });
+
+  it("unions two environments watching one account without double counting", () => {
+    // Unlike token buckets, a quota reading is an account-level fact: the two
+    // environments report the same 10:00 observation and each contribute one
+    // the other missed.
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          quotaSummary([
+            {
+              instanceId: "claudeAgent",
+              windowId: "5-hour",
+              label: "5-hour",
+              samples: [
+                { observedAt: "2026-08-07T10:00:00.000Z", usedPercent: 20 },
+                { observedAt: "2026-08-07T10:10:00.000Z", usedPercent: 40 },
+              ],
+            },
+          ]),
+        ),
+        environment(
+          "env-b",
+          quotaSummary([
+            {
+              instanceId: "claudeAgent",
+              windowId: "5-hour",
+              label: "5-hour",
+              samples: [
+                { observedAt: "2026-08-07T10:05:00.000Z", usedPercent: 30 },
+                { observedAt: "2026-08-07T10:00:00.000Z", usedPercent: 20 },
+              ],
+            },
+          ]),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    expect(merged.quotaHistory).toHaveLength(1);
+    expect(merged.quotaHistory[0]?.samples).toEqual([
+      { observedAt: "2026-08-07T10:00:00.000Z", usedPercent: 20 },
+      { observedAt: "2026-08-07T10:05:00.000Z", usedPercent: 30 },
+      { observedAt: "2026-08-07T10:10:00.000Z", usedPercent: 40 },
+    ]);
+  });
+
+  it("excludes an environment whose contract version is stale", () => {
+    const stale: UsageSummary = {
+      ...quotaSummary([
+        {
+          instanceId: "claudeAgent",
+          windowId: "5-hour",
+          label: "5-hour",
+          samples: [{ observedAt: "2026-08-07T10:00:00.000Z", usedPercent: 20 }],
+        },
+      ]),
+      contractVersion: USAGE_CONTRACT_VERSION - 1,
+    };
+
+    expect(mergeUsage([environment("env-a", stale)], USAGE_CONTRACT_VERSION).quotaHistory).toEqual(
+      [],
+    );
   });
 });

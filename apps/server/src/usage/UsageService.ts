@@ -37,7 +37,8 @@ import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
-import { UsageAggregator } from "./usageAggregation.ts";
+import { makeDayFormatter, UsageAggregator } from "./usageAggregation.ts";
+import { QuotaHistoryStore } from "./QuotaHistoryStore.ts";
 import { resolveUsageProviderSettings } from "./usageProviderSettings.ts";
 import { parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -87,6 +88,35 @@ const ScanCacheJson = Schema.fromJsonString(Schema.Unknown as unknown as Schema.
 const decodeScanCacheFile = Schema.decodeUnknownEffect(ScanCacheJson);
 const encodeScanCacheFile = Schema.encodeEffect(ScanCacheJson);
 
+/**
+ * The window test applied to recorded quota samples.
+ *
+ * Deliberately the same rule `UsageAggregator` applies to transcript records,
+ * so the quota history and the cost chart drawn beside it cover one span:
+ * hourly requests bound on the instant, half-open at the end; daily requests
+ * bound on the wall-clock day in the reporting zone, which is the only thing
+ * `sinceDay`/`untilDay` mean.
+ */
+export const makeQuotaWindowFilter = (input: {
+  readonly timeZone: string;
+  readonly sinceDay: string;
+  readonly untilDay: string;
+  readonly hourlyWindow: {
+    readonly sinceTimeMs: number;
+    readonly untilTimeMs: number;
+  } | null;
+}): ((observedAtMs: number) => boolean) => {
+  if (input.hourlyWindow !== null) {
+    const { sinceTimeMs, untilTimeMs } = input.hourlyWindow;
+    return (observedAtMs) => observedAtMs >= sinceTimeMs && observedAtMs < untilTimeMs;
+  }
+  const toDay = makeDayFormatter(input.timeZone);
+  return (observedAtMs) => {
+    const day = toDay(observedAtMs);
+    return day >= input.sinceDay && day <= input.untilDay;
+  };
+};
+
 export class UsageService extends Context.Service<
   UsageService,
   {
@@ -107,6 +137,7 @@ export const layerTest = Layer.succeed(
         untilDay: input.untilDay,
         buckets: [],
         sources: [],
+        quotaHistory: [],
         pricing: {
           status: "unavailable",
           source: LITELLM_RATES_URL,
@@ -124,6 +155,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
+  const quotaHistory = yield* QuotaHistoryStore;
 
   const fileCache: ScanCache = new Map();
   let cacheDirty = false;
@@ -421,6 +453,15 @@ export const make = Effect.gen(function* () {
     if (pruned > 0) cacheDirty = true;
     yield* persistScanCache();
 
+    const recordedQuotaHistory = yield* quotaHistory.read({
+      includeSample: makeQuotaWindowFilter({
+        timeZone: input.timeZone,
+        sinceDay: input.sinceDay,
+        untilDay: input.untilDay,
+        hourlyWindow,
+      }),
+    });
+
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
     const finishedAtMs = yield* Clock.currentTimeMillis;
@@ -433,6 +474,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
+      quotaHistory: recordedQuotaHistory,
       pricing: {
         status: ratesStatus,
         source: LITELLM_RATES_URL,

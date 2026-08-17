@@ -12,16 +12,17 @@
  *
  * @module usage
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
  * Bumped whenever the shape of {@link UsageSummary} changes incompatibly. The
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 4 as const;
+export const USAGE_CONTRACT_VERSION = 5 as const;
 
 export const UsageProviderKind = Schema.Literals(["claude", "codex"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
@@ -160,6 +161,44 @@ export const UsagePricing = Schema.Struct({
 });
 export type UsagePricing = typeof UsagePricing.Type;
 
+/**
+ * One provider-reported quota reading, as recorded when it was observed.
+ *
+ * `usedPercent` is the provider's own figure for how much of the window's
+ * allowance was consumed at `observedAt`. `resetsAt` is the instant the
+ * provider said that window would roll over, so a chart can mark the reset
+ * that explains a drop back to zero rather than inferring one from the curve.
+ */
+export const UsageQuotaSample = Schema.Struct({
+  observedAt: IsoDateTime,
+  usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  resetsAt: Schema.optionalKey(IsoDateTime),
+});
+export type UsageQuotaSample = typeof UsageQuotaSample.Type;
+
+/**
+ * Every observation the environment holds for one provider allowance window,
+ * oldest first.
+ *
+ * Keyed by `(instanceId, windowId)`: `instanceId` is the configured provider
+ * instance the reading came from and `windowId` is that provider's own id for
+ * the window (`"5-hour"`, `"Weekly"`, …). `label`, `durationMinutes` and
+ * `scopeLabel` carry the most recent description of the window, which is
+ * presentation only — two series never merge on them.
+ *
+ * `instanceId` is a plain string here rather than the branded
+ * `ProviderInstanceId` so this module stays free of provider-shaped imports.
+ */
+export const UsageQuotaHistorySeries = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  windowId: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  durationMinutes: Schema.optionalKey(PositiveInt),
+  scopeLabel: Schema.optionalKey(TrimmedNonEmptyString),
+  samples: Schema.Array(UsageQuotaSample),
+});
+export type UsageQuotaHistorySeries = typeof UsageQuotaHistorySeries.Type;
+
 export const UsageSummaryInput = Schema.Struct({
   /** Inclusive first day of the window, in `timeZone`. */
   sinceDay: UsageDay,
@@ -187,6 +226,14 @@ export const UsageSummary = Schema.Struct({
   untilDay: UsageDay,
   buckets: Schema.Array(UsageBucket),
   sources: Schema.Array(UsageSource),
+  /**
+   * Provider quota observations recorded by this environment, trimmed to the
+   * requested window. Defaulted on decode so a summary produced before this
+   * field existed still decodes; producers always set it.
+   */
+  quotaHistory: Schema.Array(UsageQuotaHistorySeries).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   pricing: UsagePricing,
   /** Wall-clock cost of the scan, surfaced in diagnostics. */
   scanDurationMs: NonNegativeInt,

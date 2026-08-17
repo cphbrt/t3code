@@ -10,6 +10,7 @@ import type {
   EnvironmentId,
   UsageBucket,
   UsageProviderKind,
+  UsageQuotaHistorySeries,
   UsageSourceFingerprint,
   UsageSummary,
 } from "@t3tools/contracts";
@@ -75,6 +76,17 @@ export interface MergedUsage {
   readonly daily: readonly DailyTotals[];
   readonly hourly: readonly HourlyTotals[];
   readonly costQuality: CostQuality;
+  /**
+   * Provider quota observations, one series per `(instanceId, windowId)`,
+   * samples oldest first.
+   *
+   * Not claimed through source fingerprints the way buckets are: a quota
+   * reading is the provider's own account-level figure, so two environments
+   * watching the same account are reporting the same fact rather than double
+   * counting it. Identical observations therefore collapse on `observedAt`,
+   * and observations the other environment happened to miss are kept.
+   */
+  readonly quotaHistory: readonly UsageQuotaHistorySeries[];
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
   /**
@@ -167,6 +179,70 @@ function ownedContribution(
   };
 }
 
+/**
+ * Unions every environment's quota series.
+ *
+ * Two environments on one machine resolve the same provider account and report
+ * the same readings, so samples are keyed by `observedAt` within a series and
+ * the duplicate is dropped. That is deliberately unlike the bucket path, where
+ * one environment has to claim a transcript directory outright: adding two
+ * environments' token counts double counts, while merging two views of one
+ * account's quota curve simply fills each other's gaps.
+ */
+function mergeQuotaHistory(
+  environments: readonly EnvironmentUsage[],
+): readonly UsageQuotaHistorySeries[] {
+  const seriesByKey = new Map<
+    string,
+    {
+      instanceId: string;
+      windowId: string;
+      label: string;
+      durationMinutes: number | undefined;
+      scopeLabel: string | undefined;
+      samples: Map<string, UsageQuotaHistorySeries["samples"][number]>;
+    }
+  >();
+
+  for (const environment of environments) {
+    for (const series of environment.summary.quotaHistory) {
+      const key = `${series.instanceId} ${series.windowId}`;
+      let merged = seriesByKey.get(key);
+      if (merged === undefined) {
+        merged = {
+          instanceId: series.instanceId,
+          windowId: series.windowId,
+          label: series.label,
+          durationMinutes: series.durationMinutes,
+          scopeLabel: series.scopeLabel,
+          samples: new Map(),
+        };
+        seriesByKey.set(key, merged);
+      }
+      for (const sample of series.samples) {
+        if (!merged.samples.has(sample.observedAt)) merged.samples.set(sample.observedAt, sample);
+      }
+    }
+  }
+
+  return [...seriesByKey.values()]
+    .map((merged) => ({
+      instanceId: merged.instanceId,
+      windowId: merged.windowId,
+      label: merged.label,
+      ...(merged.durationMinutes === undefined ? {} : { durationMinutes: merged.durationMinutes }),
+      ...(merged.scopeLabel === undefined ? {} : { scopeLabel: merged.scopeLabel }),
+      // Lexicographic is chronological here: environments emit `observedAt`
+      // normalised to UTC with millisecond precision, as `hourStart` is.
+      samples: [...merged.samples.values()].sort((a, b) =>
+        a.observedAt.localeCompare(b.observedAt),
+      ),
+    }))
+    .sort(
+      (a, b) => a.instanceId.localeCompare(b.instanceId) || a.windowId.localeCompare(b.windowId),
+    );
+}
+
 function bucketTokens(bucket: UsageBucket): number {
   // reasoningTokens is a subset of outputTokens and must not be added again.
   return (
@@ -197,6 +273,7 @@ const EMPTY_MERGED: MergedUsage = {
     unpricedShare: 0,
     cacheSavingsUsd: 0,
   },
+  quotaHistory: [],
   duplicateSources: [],
   emptySources: [],
   contributingEnvironments: [],
@@ -405,6 +482,7 @@ export function mergeUsage(
         records === 0 ? 0 : (records - providerReportedRecords - unpricedRecords) / records,
       cacheSavingsUsd,
     },
+    quotaHistory: mergeQuotaHistory(current),
     duplicateSources: duplicates,
     emptySources: empties,
     contributingEnvironments,

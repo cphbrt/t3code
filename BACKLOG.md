@@ -17,6 +17,17 @@ work itself. Keep entries publishable: technical facts only, no private data.
   investigation. The subagent-transcripts team volunteered (they know the
   live-streaming payload path best). Needs prioritization and assignment.
   Do not weaken the caps to make the test pass.
+  Re-verified on 2026-08-17 against clean main at 5fd994669.
+  `TransferBudgetReport.integration.ts` is the budget table and the
+  `transferBudgetViolations` helper, not a test; its only consumer is
+  `server.test.ts` "reports thread HTTP and WebSocket transfer budgets", so
+  that one test is where all of this surfaces. It reports four violations per
+  provider, not two — total thread wire bytes 19,103 codex / 19,070
+  claudeAgent against 15,500; thread snapshot wire bytes 7,935 / 7,937 against
+  7,500; measured-turn wire bytes 11,168 / 11,133 against 8,000; measured-turn
+  decoded bytes 73,660 / 74,486 against 68,000. Decoded bytes have drifted up
+  from the 71,446 recorded above, so they hold steady only within a given main,
+  not across its movement.
 - **"Plan updated" surface is dead in production.** Claude CLI 2.1.233
   removed `TodoWrite`/`Task*` from the default toolset on modern models, so
   `turn.plan.updated` never fires anymore. Decide: remove the surface, or
