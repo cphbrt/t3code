@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
 import {
+  annotateQuotaWindowCycles,
   appendQuotaHistory,
   decodeQuotaHistory,
   emptyQuotaHistory,
@@ -287,5 +288,81 @@ describe("quotaRowsFromWindows", () => {
         scopeLabel: "Fable",
       },
     ]);
+  });
+});
+
+describe("annotateQuotaWindowCycles", () => {
+  const WEEK_MINUTES = 7 * 24 * 60;
+  const WEEK_MS = WEEK_MINUTES * 60 * 1000;
+
+  /**
+   * A rolling weekly window as Codex reports one: every probe restates the
+   * reset a full week ahead of itself. Synthetic values.
+   */
+  function rollingRows(probeCount: number, everyMinutes = 10): readonly QuotaHistoryRow[] {
+    return Array.from({ length: probeCount }, (_, index) => {
+      const observedAtMs = Date.parse(OBSERVED_AT) + index * everyMinutes * 60 * 1000;
+      return row({
+        windowId: "weekly:primary",
+        label: "Weekly",
+        durationMinutes: WEEK_MINUTES,
+        observedAt: iso(observedAtMs),
+        usedPercent: (index / probeCount) * 40,
+        resetsAt: iso(observedAtMs + WEEK_MS),
+      });
+    });
+  }
+
+  it("marks a window whose reset advances with every probe as rolling", () => {
+    const state = emptyQuotaHistory();
+    appendQuotaHistory(state, rollingRows(600));
+
+    expect(
+      annotateQuotaWindowCycles(state, "claudeAgent", [
+        { id: "weekly:primary", label: "Weekly", usedPercent: 40, durationMinutes: WEEK_MINUTES },
+      ]),
+    ).toEqual([
+      {
+        id: "weekly:primary",
+        label: "Weekly",
+        usedPercent: 40,
+        durationMinutes: WEEK_MINUTES,
+        cycleKind: "rolling",
+      },
+    ]);
+  });
+
+  it("marks a window whose reset holds still as fixed", () => {
+    const state = emptyQuotaHistory();
+    appendQuotaHistory(state, [
+      row({ observedAt: at(0), usedPercent: 10 }),
+      row({ observedAt: at(60), usedPercent: 25 }),
+      row({ observedAt: at(120), usedPercent: 44 }),
+    ]);
+
+    const annotated = annotateQuotaWindowCycles(state, "claudeAgent", [
+      { id: "5-hour", label: "5-hour", usedPercent: 44, durationMinutes: 300 },
+    ]);
+
+    expect(annotated[0]?.cycleKind).toBe("fixed");
+  });
+
+  it("marks a window with no recorded history as unknown", () => {
+    const annotated = annotateQuotaWindowCycles(emptyQuotaHistory(), "claudeAgent", [
+      { id: "5-hour", label: "5-hour", usedPercent: 44, durationMinutes: 300 },
+    ]);
+
+    expect(annotated[0]?.cycleKind).toBe("unknown");
+  });
+
+  it("falls back to the recorded duration when a snapshot stops reporting one", () => {
+    const state = emptyQuotaHistory();
+    appendQuotaHistory(state, rollingRows(600));
+
+    const annotated = annotateQuotaWindowCycles(state, "claudeAgent", [
+      { id: "weekly:primary", label: "Weekly", usedPercent: 40 },
+    ]);
+
+    expect(annotated[0]?.cycleKind).toBe("rolling");
   });
 });
