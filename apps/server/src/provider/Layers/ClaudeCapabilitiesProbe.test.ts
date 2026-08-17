@@ -1,6 +1,7 @@
 import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -255,7 +256,14 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
         workspaceCwd,
       );
 
-      assert.deepEqual(capabilities, {
+      assert.notEqual(capabilities, undefined);
+      // `probedAt` is a live reading taken when the probe ran, so it is
+      // asserted for shape rather than value and kept out of the structural
+      // comparison below.
+      const { probedAt, ...probe } = capabilities ?? { probedAt: "" };
+      assert.equal(DateTime.formatIso(DateTime.makeUnsafe(probedAt)), probedAt);
+
+      assert.deepEqual(probe, {
         email: "dev@example.com",
         subscriptionType: "pro",
         tokenSource: "oauth",

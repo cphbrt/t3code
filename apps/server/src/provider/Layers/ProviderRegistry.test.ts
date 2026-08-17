@@ -32,7 +32,7 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
-import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { checkClaudeProviderStatus, type ClaudeQuotaUsageResponse } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
@@ -133,7 +133,12 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly usage?: ClaudeQuotaUsageResponse;
+  readonly probedAt: string;
 };
+
+/** A probe stamped well before any status check that consumes it. */
+const PROBED_AT = "2026-04-14T00:00:00.000Z";
 
 function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
   return () =>
@@ -143,6 +148,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
+      probedAt: PROBED_AT,
       ...overrides,
     });
 }
@@ -1395,6 +1401,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
     // ── checkClaudeProviderStatus tests ──────────────────────────
 
     describe("checkClaudeProviderStatus", () => {
+      it.effect("dates the quota from when the probe ran, not from the status check", () =>
+        Effect.gen(function* () {
+          // The driver serves `probeClaudeCapabilities` from a multi-minute
+          // cache, so this is the cached case: a probe read at `PROBED_AT` is
+          // handed to a status check running much later. Stamping the quota
+          // with the check's own `checkedAt` would advertise minutes-old
+          // utilization figures as current and silently defeat every
+          // staleness check downstream, including `usage_status`.
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              subscriptionType: "max",
+              usage: {
+                subscription_type: "max",
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: { utilization: 61, resets_at: "2026-04-14T05:00:00.000Z" },
+                } as ClaudeQuotaUsageResponse["rate_limits"],
+              },
+            }),
+          );
+
+          assert.strictEqual(status.quota?.observedAt, PROBED_AT);
+          assert.notStrictEqual(status.quota?.observedAt, status.checkedAt);
+          // The reading itself still comes through intact.
+          assert.deepStrictEqual(
+            status.quota?.windows.map((window) => [window.id, window.usedPercent]),
+            [["five_hour", 61]],
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.233\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("returns ready when claude is installed and authenticated", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(

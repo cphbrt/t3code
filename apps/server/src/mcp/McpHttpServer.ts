@@ -24,6 +24,9 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import { UsageToolkitHandlersLive } from "./toolkits/usage/handlers.ts";
+import { UsageToolkit } from "./toolkits/usage/tools.ts";
+import * as ProviderUsageStatus from "./ProviderUsageStatus.ts";
 
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
@@ -222,6 +225,16 @@ export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pi
   Layer.provide(ThreadToolkitHandlersLive),
 );
 
+/**
+ * `ProviderUsageStatus` holds this toolkit's refresh throttle, so it is
+ * provided here rather than in the runtime graph — one instance per MCP
+ * server, shared by every credential. Its own `ProviderRegistry` requirement
+ * bubbles out to `makeRoutesLayer`, where `RuntimeDependenciesLive` satisfies it.
+ */
+export const UsageToolkitRegistrationLive = McpServer.toolkit(UsageToolkit).pipe(
+  Layer.provide(UsageToolkitHandlersLive.pipe(Layer.provide(ProviderUsageStatus.layer))),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -232,4 +245,5 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   ThreadToolkitRegistrationLive,
+  UsageToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

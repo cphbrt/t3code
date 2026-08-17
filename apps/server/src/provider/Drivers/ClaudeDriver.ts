@@ -14,7 +14,6 @@
  */
 import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
-import * as Duration from "effect/Duration";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -54,11 +53,18 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
+import { PROVIDER_QUOTA_REFRESH_MIN_INTERVAL } from "../providerQuota.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
-const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
+/**
+ * This cache is what actually decides how often the promptless `get_usage`
+ * probe reaches Anthropic, so it is the quota-refresh policy in disguise.
+ * Bound to the shared constant rather than restated, so tightening the policy
+ * cannot leave a stale five minutes behind here.
+ */
+const CAPABILITIES_PROBE_TTL = PROVIDER_QUOTA_REFRESH_MIN_INTERVAL;
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
