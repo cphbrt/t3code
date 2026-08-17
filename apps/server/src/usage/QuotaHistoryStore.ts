@@ -19,6 +19,7 @@
  * @module QuotaHistoryStore
  */
 import type { ServerProviderQuotaWindow, UsageQuotaHistorySeries } from "@t3tools/contracts";
+import { classifyQuotaWindowCycle } from "@t3tools/shared/quotaWindowCycle";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -330,6 +331,43 @@ export function selectQuotaHistory(
   );
 }
 
+const MINUTE_MS = 60_000;
+
+/**
+ * Annotates each window with how it renews, judged from recorded history.
+ *
+ * The server is the only side that keeps quota history, and history is the
+ * only thing that can tell a fixed cycle from a rolling window: a single
+ * snapshot of either reports a percentage and a reset in the future. So the
+ * verdict is computed here and published as part of the live snapshot,
+ * sparing every client — including the released iOS app, which never sees
+ * this history at all — from having to guess.
+ *
+ * A window with no recorded history yet is `"unknown"` rather than absent, so
+ * a reader never has to distinguish "we looked and could not tell" from "an
+ * older server did not look".
+ */
+export function annotateQuotaWindowCycles(
+  state: QuotaHistoryState,
+  instanceId: string,
+  windows: readonly ServerProviderQuotaWindow[],
+): readonly ServerProviderQuotaWindow[] {
+  return windows.map((window) => {
+    const entry = state.series.get(quotaSeriesKey(instanceId, window.id));
+    // The live snapshot's own duration wins; the stored one covers a provider
+    // that has stopped reporting the figure it used to.
+    const durationMinutes = window.durationMinutes ?? entry?.durationMinutes ?? null;
+    const cycleKind =
+      entry === undefined
+        ? ("unknown" as const)
+        : classifyQuotaWindowCycle({
+            observations: entry.samples.values(),
+            durationMs: durationMinutes === null ? null : durationMinutes * MINUTE_MS,
+          });
+    return { ...window, cycleKind };
+  });
+}
+
 /** Flattens one provider quota snapshot into the rows this store records. */
 export function quotaRowsFromWindows(input: {
   readonly instanceId: string;
@@ -365,6 +403,16 @@ export class QuotaHistoryStore extends Context.Service<
     readonly read: (
       options?: SelectQuotaHistoryOptions,
     ) => Effect.Effect<readonly UsageQuotaHistorySeries[]>;
+    /**
+     * Stamps each window with its cycle kind. Deliberately not `read`: this
+     * runs on every provider snapshot, and projecting the whole history onto
+     * the wire shape just to inspect its reset instants would allocate tens of
+     * thousands of formatted strings per refresh.
+     */
+    readonly annotateCycles: (input: {
+      readonly instanceId: string;
+      readonly windows: readonly ServerProviderQuotaWindow[];
+    }) => Effect.Effect<readonly ServerProviderQuotaWindow[]>;
   }
 >()("t3/usage/QuotaHistoryStore") {}
 
@@ -374,6 +422,7 @@ export const layerTest = Layer.succeed(
   QuotaHistoryStore.of({
     record: () => Effect.void,
     read: () => Effect.succeed([]),
+    annotateCycles: (input) => Effect.succeed(input.windows),
   }),
 );
 
@@ -447,7 +496,15 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(() => Effect.succeed([] as readonly UsageQuotaHistorySeries[])),
     );
 
-  return { record, read } as const;
+  // History we cannot load costs the annotation, never the snapshot: the
+  // windows pass through unchanged and read as "unknown".
+  const annotateCycles: QuotaHistoryStore["Service"]["annotateCycles"] = (input) =>
+    ensureLoaded.pipe(
+      Effect.map(() => annotateQuotaWindowCycles(state, input.instanceId, input.windows)),
+      Effect.catchCause(() => Effect.succeed(input.windows)),
+    );
+
+  return { record, read, annotateCycles } as const;
 });
 
 export const layer = Layer.effect(QuotaHistoryStore, make);
