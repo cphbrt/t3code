@@ -448,7 +448,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   activePromptCacheWarmth: PromptCacheWarmth | null;
   nowMs: number;
   activeThreadProviderDisplayName: string | null;
+  environmentId: EnvironmentId;
   providerQuota: ServerProvider["quota"];
+  providerQuotaInstanceId: ProviderInstanceId | undefined;
   providerQuotaDisplayName: string;
   isPreparingWorktree: boolean;
   pendingAction: {
@@ -477,6 +479,8 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   return (
     <>
       <ProviderQuotaIndicator
+        environmentId={props.environmentId}
+        instanceId={props.providerQuotaInstanceId}
         quota={props.providerQuota}
         displayName={props.providerQuotaDisplayName}
         compact={props.compact}
@@ -3613,7 +3617,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     activePromptCacheWarmth={activePromptCacheWarmth}
                     nowMs={promptCacheNowMs}
                     activeThreadProviderDisplayName={activeThreadProviderDisplayName}
+                    environmentId={environmentId}
                     providerQuota={selectedProviderStatus?.quota}
+                    providerQuotaInstanceId={selectedProviderStatus?.instanceId}
                     providerQuotaDisplayName={
                       selectedProviderEntry?.displayName ??
                       activeThreadProviderDisplayName ??

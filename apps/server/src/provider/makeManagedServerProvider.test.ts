@@ -223,6 +223,46 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(NeverRunTestLayer, TestClock.layer()))),
   );
 
+  it.effect("runs periodic provider refreshes while an agent turn is active", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const activeWork = yield* Ref.make(true);
+        const initialCheckDone = yield* Deferred.make<void>();
+        const periodicCheckDone = yield* Deferred.make<void>();
+        yield* makeManagedServerProvider<TestSettings>({
+          maintenanceCapabilities,
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 1
+                ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
+                : Deferred.succeed(periodicCheckDone, undefined).pipe(Effect.ignore),
+            ),
+            Effect.as(refreshedSnapshot),
+          ),
+          hasActiveWork: Ref.get(activeWork),
+          refreshInterval: "1 second",
+        });
+
+        yield* Deferred.await(initialCheckDone);
+        // No client is watching: the lease-based demand source says no.
+        yield* TestClock.adjust("1 second");
+        yield* Deferred.await(periodicCheckDone);
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+
+        // The turn ends, and demand goes with it.
+        yield* Ref.set(activeWork, false);
+        yield* TestClock.adjust("1 second");
+        yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(NeverRunTestLayer, TestClock.layer()))),
+  );
+
   it.effect("disables periodic provider refreshes when the explicit interval is zero", () =>
     Effect.scoped(
       Effect.gen(function* () {

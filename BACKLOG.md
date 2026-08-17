@@ -13,6 +13,32 @@ subject, never as the entry's identifier.
 
 ## Decisions needed from Chris
 
+- **Claude quota refresh and its probe cache beat against each other.**
+  `ClaudeDriver.ts` caches `probeClaudeCapabilities` with
+  `CAPABILITIES_PROBE_TTL = PROVIDER_QUOTA_REFRESH_MIN_INTERVAL` (5 min), and
+  `providerHealthRefreshInterval` defaults to the same 5 minutes, so an
+  unsynchronized refresh tick often lands just inside the TTL and serves the
+  previous reading with its old `probedAt` — effective Claude quota cadence
+  drifts toward ~10 minutes even under continuous demand. Piercing the cache
+  on demand-driven refreshes was assessed and rejected: the probe spawns a
+  full Claude SDK subprocess, and the TTL deliberately pins the cache to the
+  refresh-policy floor (`providerQuota.ts:23-26`). Proposed fix instead:
+  desynchronize by setting the TTL slightly under the floor (e.g. 4m30s) so a
+  5-minute tick reliably misses the cache; probes still cannot exceed the
+  policy rate because ticks alone trigger them. Decide: accept the desync, or
+  live with the beat.
+- **Codex mid-turn rate-limit telemetry is dropped instead of refreshing the
+  quota gauge.** `account/rateLimits/updated` notifications already arrive on
+  `payload.rateLimits` mid-turn (`CodexAdapter.ts:1476-1492`), but
+  `ProviderRuntimeIngestion.ts` reads only `payload.usageLimit`. Ingesting
+  them would make the quota gauge move during turns for free probes-wise, but
+  it is a real feature, not a ride-along: the notification is a sparse rolling
+  update with no `rateLimitsByLimitId`, OpenAI's schema annotation requires
+  merging into the last `account/rateLimits/read` response (absent means
+  unchanged, never zero), there is no `setProviderQuota` write path on the
+  registry, and a partial snapshot must not enter quota history where it
+  would feed the `cycleKind` classifier. Needs a merge-against-last-read
+  design and a decision on history admission before implementation.
 - **WebSocket transfer-budget regression (unowned).** The measured-turn
   budgets in `TransferBudgetReport.integration.ts` fail on clean main:
   roughly 11k wire bytes against the 8k cap and 71,446 decoded bytes against
