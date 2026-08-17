@@ -77,6 +77,12 @@ export interface MergedUsage {
   readonly costQuality: CostQuality;
   /** Environments whose data was dropped as a duplicate of another's. */
   readonly duplicateSources: readonly string[];
+  /**
+   * Transcript directories that were scanned successfully and held nothing.
+   * Legitimate for a provider the user never runs, and the only signal that a
+   * provider home is pointed somewhere empty.
+   */
+  readonly emptySources: readonly string[];
   readonly contributingEnvironments: readonly EnvironmentId[];
   readonly staleEnvironments: readonly EnvironmentId[];
 }
@@ -110,9 +116,11 @@ function fingerprintKey(fingerprint: UsageSourceFingerprint): string {
 function claimSources(environments: readonly EnvironmentUsage[]): {
   readonly ownerByFingerprint: ReadonlyMap<string, EnvironmentId>;
   readonly duplicates: readonly string[];
+  readonly empties: readonly string[];
 } {
   const ownerByFingerprint = new Map<string, EnvironmentId>();
   const duplicates: string[] = [];
+  const empties: string[] = [];
 
   const ordered = [...environments].sort((a, b) => a.environmentId.localeCompare(b.environmentId));
 
@@ -125,10 +133,15 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
         continue;
       }
       ownerByFingerprint.set(key, environment.environmentId);
+      // Reported only for the environment that owns the directory: a duplicate
+      // reader of the same empty directory adds nothing to say.
+      if (source.status === "ok" && source.scannedFiles === 0) {
+        empties.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
+      }
     }
   }
 
-  return { ownerByFingerprint, duplicates };
+  return { ownerByFingerprint, duplicates, empties };
 }
 
 /** Sources this environment owns after fingerprint claims, plus their buckets. */
@@ -185,6 +198,7 @@ const EMPTY_MERGED: MergedUsage = {
     cacheSavingsUsd: 0,
   },
   duplicateSources: [],
+  emptySources: [],
   contributingEnvironments: [],
   staleEnvironments: [],
 };
@@ -212,7 +226,7 @@ export function mergeUsage(
     }
   }
 
-  const { ownerByFingerprint, duplicates } = claimSources(current);
+  const { ownerByFingerprint, duplicates, empties } = claimSources(current);
 
   let costUsd = 0;
   let uncachedInputTokens = 0;
@@ -392,6 +406,7 @@ export function mergeUsage(
       cacheSavingsUsd,
     },
     duplicateSources: duplicates,
+    emptySources: empties,
     contributingEnvironments,
     staleEnvironments,
   };

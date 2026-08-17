@@ -11,6 +11,11 @@ the percentage used, and the next reset time. These values come from the provide
 estimated from local transcripts. A missing window means the provider did not report it; it does not
 mean the window is unused.
 
+Token totals come from the session history in each provider's configured home directory, so a
+custom Codex or Claude Code home is included. When a directory is present but holds no sessions for
+the selected range, the page names it above the totals instead of quietly reporting nothing — which
+is expected for a provider you do not use, and a hint that the home is wrong if you do.
+
 Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. The **7 days**,
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart, and refreshing rescans every connected environment.
