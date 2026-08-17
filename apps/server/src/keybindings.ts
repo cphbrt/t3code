@@ -46,6 +46,7 @@ import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJso
 import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_RESOLVED_KEYBINDINGS,
+  RETIRED_KEYBINDINGS,
   compileResolvedKeybindingRule,
   compileResolvedKeybindingsConfig,
   parseKeybindingShortcut,
@@ -493,7 +494,31 @@ const make = Effect.gen(function* () {
         return;
       }
       const customConfig = runtimeConfig.keybindings;
-      const existingCommands = new Set(customConfig.map((entry) => entry.command));
+
+      // Withdraw retired defaults before anything else looks at the config, so
+      // the backfill below sees the freed command as missing and restores it
+      // through the ordinary path. Matching is exact on key, command, and
+      // `when`, which is what keeps a user's own rebinding of the same command
+      // out of range.
+      const isRetiredRule = (entry: KeybindingRule) =>
+        RETIRED_KEYBINDINGS.some((retired) => isSameKeybindingRule(entry, retired));
+      const retiredRules = customConfig.filter(isRetiredRule);
+      const activeConfig =
+        retiredRules.length === 0
+          ? customConfig
+          : customConfig.filter((entry) => !isRetiredRule(entry));
+      if (retiredRules.length > 0) {
+        yield* Effect.logWarning("removing retired default keybinding", {
+          path: keybindingsConfigPath,
+          rules: retiredRules.map((rule) => ({
+            key: rule.key,
+            command: rule.command,
+            when: rule.when ?? null,
+          })),
+        });
+      }
+
+      const existingCommands = new Set(activeConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
         defaultCommand: KeybindingRule["command"];
@@ -505,7 +530,7 @@ const make = Effect.gen(function* () {
         if (existingCommands.has(defaultRule.command)) {
           continue;
         }
-        const conflictingEntry = customConfig.find((entry) =>
+        const conflictingEntry = activeConfig.find((entry) =>
           hasSameShortcutContext(entry, defaultRule),
         );
         if (conflictingEntry) {
@@ -529,26 +554,23 @@ const make = Effect.gen(function* () {
           reason: "shortcut context already used by existing rule",
         });
       }
-      if (missingDefaults.length === 0) {
-        yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
-        return;
-      }
-
-      const matchingDefaults = Array.filterMap(DEFAULT_KEYBINDINGS, (defaultRule) =>
-        customConfig.some((entry) => isSameKeybindingRule(entry, defaultRule))
-          ? Result.succeed(defaultRule.command)
-          : Result.failVoid,
-      );
-      if (matchingDefaults.length > 0) {
-        yield* Effect.logWarning("default keybinding rule already defined in user config", {
-          path: keybindingsConfigPath,
-          commands: matchingDefaults,
-        });
+      if (missingDefaults.length > 0) {
+        const matchingDefaults = Array.filterMap(DEFAULT_KEYBINDINGS, (defaultRule) =>
+          activeConfig.some((entry) => isSameKeybindingRule(entry, defaultRule))
+            ? Result.succeed(defaultRule.command)
+            : Result.failVoid,
+        );
+        if (matchingDefaults.length > 0) {
+          yield* Effect.logWarning("default keybinding rule already defined in user config", {
+            path: keybindingsConfigPath,
+            commands: matchingDefaults,
+          });
+        }
       }
 
       // Startup backfill must never evict persisted user rules: append only
       // the defaults that fit and skip the rest.
-      const availableSlots = Math.max(0, MAX_KEYBINDINGS_COUNT - customConfig.length);
+      const availableSlots = Math.max(0, MAX_KEYBINDINGS_COUNT - activeConfig.length);
       const defaultsToAppend = missingDefaults.slice(0, availableSlots);
       const skippedDefaults = missingDefaults.slice(availableSlots);
       if (skippedDefaults.length > 0) {
@@ -558,12 +580,15 @@ const make = Effect.gen(function* () {
           commands: skippedDefaults.map((rule) => rule.command),
         });
       }
-      if (defaultsToAppend.length === 0) {
-        yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
-        return;
-      }
 
-      yield* writeConfigAtomically([...customConfig, ...defaultsToAppend]);
+      // One write covers both halves. A retirement that never reached disk
+      // would shadow its replacement again on the very next start, so this
+      // cannot be skipped just because there is nothing to append — and with
+      // nothing to retire and nothing to append it writes nothing at all,
+      // which is what makes a repeat start a no-op.
+      if (retiredRules.length > 0 || defaultsToAppend.length > 0) {
+        yield* writeConfigAtomically([...activeConfig, ...defaultsToAppend]);
+      }
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
     }),
   );

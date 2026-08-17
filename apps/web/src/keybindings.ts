@@ -117,6 +117,17 @@ function matchesShortcut(
   return resolveEventKeys(event).has(shortcut.key);
 }
 
+/**
+ * Commands that are dispatched conditionally, after the event has finished
+ * propagating, rather than by the handler that matched them. For every other
+ * command a match means the command ran, because the matching handler consumes
+ * the key on the spot — which is exactly what the passive history recorder
+ * infers. These break that inference (Escape frequently matches and then does
+ * nothing because a dialog wanted it), so they are left unmarked and report
+ * their own invocation once they actually run.
+ */
+const SELF_REPORTING_COMMANDS: ReadonlySet<string> = new Set(["chat.readingFocus.enable"]);
+
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
   return options?.platform ?? navigator.platform;
 }
@@ -218,7 +229,11 @@ export function resolveShortcutCommand(
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
     if (!matchesShortcut(event, binding.shortcut, platform)) continue;
-    if (typeof event === "object" && event !== null) {
+    if (
+      typeof event === "object" &&
+      event !== null &&
+      !SELF_REPORTING_COMMANDS.has(binding.command)
+    ) {
       markInAppShortcut(event, {
         action: binding.command,
         shortcut: formatShortcutLabel(binding.shortcut, platform),

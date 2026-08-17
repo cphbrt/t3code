@@ -203,6 +203,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { reportInAppShortcut } from "../lib/inAppActionSignals";
 import {
   preventRepeatedTerminalCloseShortcut,
   preventTerminalCloseShortcut,
@@ -345,6 +346,7 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftHeroState,
   revealComposerForTypedKey,
+  hideComposerForEscape,
   resolveOpenThreadVisitedAt,
   resolveTimelineEntryReadingAnchor,
   resolveThreadMetadataUpdateForNextTurn,
@@ -2738,6 +2740,14 @@ function ChatViewContent(props: ChatViewProps) {
     showComposerAndFocus,
     toggleReadingFocusForThread,
   ]);
+
+  // Hide-only counterpart to the toggle. Already being in reading focus is a
+  // no-op so Escape never re-opens the composer it just closed.
+  const hideComposerForReadingFocus = useCallback(() => {
+    if (!readingFocusAvailable || activeThreadKey === null) return;
+    if (readingFocus) return;
+    enableReadingFocusForThread(activeThreadKey);
+  }, [activeThreadKey, enableReadingFocusForThread, readingFocus, readingFocusAvailable]);
 
   useEffect(() => subscribeChatLayoutAction(() => toggleReadingFocus()), [toggleReadingFocus]);
 
@@ -5134,6 +5144,68 @@ function ChatViewContent(props: ChatViewProps) {
     composerRef,
     showComposerAndFocus,
     readingFocus,
+  ]);
+
+  // Escape hides the composer, but only if nothing else in the app wanted it.
+  //
+  // Bubble phase on window is the last node in the propagation path, yet that
+  // alone is not enough: order among window listeners is registration order,
+  // which React decides by mount order. ChatView is a descendant of the `_chat`
+  // route, so its effects run first and a synchronous check here would beat the
+  // route's multi-select clear; overlays that mount later (the expanded image
+  // viewer) register after us and would lose. Deferring the decision by one
+  // task removes ordering from the equation entirely — by then every listener
+  // at every node has run, so `defaultPrevented` is final. This mirrors the
+  // established pattern in `lib/inAppActionHistory.tsx`, and a microtask will
+  // not do: trusted-event dispatch performs microtask checkpoints between
+  // listeners.
+  //
+  // The handler never calls preventDefault or stopPropagation. It acts only on
+  // an Escape nobody else claimed, so consuming the key would be a lie.
+  useEffect(() => {
+    const pendingTimers = new Set<number>();
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (!activeThreadId || isCommandPaletteOpen()) return;
+      if (event.isComposing || event.defaultPrevented) return;
+
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen: Boolean(terminalUiState.terminalOpen),
+          modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+        },
+      });
+      if (command !== "chat.readingFocus.enable") return;
+
+      const timer = window.setTimeout(() => {
+        pendingTimers.delete(timer);
+        hideComposerForEscape({
+          readingFocus,
+          readingFocusAvailable,
+          defaultPrevented: event.defaultPrevented,
+          isComposing: event.isComposing,
+          floatingLayerOpen: document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) !== null,
+          shortcutLabel: shortcutLabelForCommand(keybindings, "chat.readingFocus.enable"),
+          hideComposer: hideComposerForReadingFocus,
+          reportShortcut: reportInAppShortcut,
+        });
+      }, 0);
+      pendingTimers.add(timer);
+    };
+    window.addEventListener("keydown", handler);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      for (const timer of pendingTimers) window.clearTimeout(timer);
+      pendingTimers.clear();
+    };
+  }, [
+    activeThreadId,
+    keybindings,
+    terminalUiState.terminalOpen,
+    composerRef,
+    hideComposerForReadingFocus,
+    readingFocus,
+    readingFocusAvailable,
   ]);
 
   const onRevertToTurnCount = useCallback(

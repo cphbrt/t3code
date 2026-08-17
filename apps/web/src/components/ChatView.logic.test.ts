@@ -29,6 +29,8 @@ import {
   resolveBackgroundDraftWorkspaceOptions,
   resolveDraftPromotionNavigationTarget,
   revealComposerForTypedKey,
+  shouldHideComposerForReadingFocus,
+  hideComposerForEscape,
   resolveOpenThreadVisitedAt,
   resolveTimelineEntryReadingAnchor,
   resolveThreadMetadataUpdateForNextTurn,
@@ -555,7 +557,7 @@ describe("resolveBackgroundDraftWorkspaceOptions", () => {
 });
 
 describe("revealComposerForTypedKey", () => {
-  it("reveals and focuses the composer before appending the typed key", () => {
+  const traceReveal = (key: string) => {
     const calls: string[] = [];
     revealComposerForTypedKey({
       showComposerAndFocus: () => calls.push("reveal"),
@@ -563,9 +565,27 @@ describe("revealComposerForTypedKey", () => {
         calls.push(`insert:${text}`);
         return true;
       },
-      key: " ",
+      key,
     });
-    expect(calls).toEqual(["reveal", "insert: "]);
+    return calls;
+  };
+
+  it("reveals the composer and appends an ordinary character", () => {
+    expect(traceReveal("q")).toEqual(["reveal", "insert:q"]);
+  });
+
+  it("reveals the composer without typing a space", () => {
+    // Space opens the prompt box as a gesture; the reveal focuses it on its
+    // own, so the draft stays genuinely empty.
+    expect(traceReveal(" ")).toEqual(["reveal"]);
+  });
+
+  it("never inserts a space, even into a composer that would accept it", () => {
+    const showComposerAndFocus = vi.fn();
+    const insertTextAtEnd = vi.fn(() => true);
+    revealComposerForTypedKey({ showComposerAndFocus, insertTextAtEnd, key: " " });
+    expect(showComposerAndFocus).toHaveBeenCalledTimes(1);
+    expect(insertTextAtEnd).not.toHaveBeenCalled();
   });
 
   it("still reveals and focuses when the composer refuses the text", () => {
@@ -962,5 +982,105 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingApproval: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, hasPendingUserInput: true })).toBe(true);
     expect(hasServerAcknowledgedLocalDispatch({ ...common, threadError: "failed" })).toBe(true);
+  });
+});
+
+describe("shouldHideComposerForReadingFocus", () => {
+  const visibleComposer = {
+    readingFocus: false,
+    readingFocusAvailable: true,
+    defaultPrevented: false,
+    isComposing: false,
+    floatingLayerOpen: false,
+  };
+
+  it("hides the composer when it is visible and nothing else claimed the key", () => {
+    expect(shouldHideComposerForReadingFocus(visibleComposer)).toBe(true);
+  });
+
+  it("is a no-op when the composer is already hidden", () => {
+    expect(shouldHideComposerForReadingFocus({ ...visibleComposer, readingFocus: true })).toBe(
+      false,
+    );
+  });
+
+  it("yields to anything that already claimed the key", () => {
+    expect(shouldHideComposerForReadingFocus({ ...visibleComposer, defaultPrevented: true })).toBe(
+      false,
+    );
+  });
+
+  it("does not fire mid IME composition", () => {
+    expect(shouldHideComposerForReadingFocus({ ...visibleComposer, isComposing: true })).toBe(
+      false,
+    );
+  });
+
+  it("yields to an open dialog, menu, or popover", () => {
+    expect(shouldHideComposerForReadingFocus({ ...visibleComposer, floatingLayerOpen: true })).toBe(
+      false,
+    );
+  });
+
+  it("does nothing on a thread with no transcript to read", () => {
+    expect(
+      shouldHideComposerForReadingFocus({ ...visibleComposer, readingFocusAvailable: false }),
+    ).toBe(false);
+  });
+});
+
+describe("hideComposerForEscape", () => {
+  const makeInput = (overrides: Record<string, unknown> = {}) => {
+    const hidden: string[] = [];
+    const reports: Array<{ action: string; shortcut?: string }> = [];
+    const input = {
+      readingFocus: false,
+      readingFocusAvailable: true,
+      defaultPrevented: false,
+      isComposing: false,
+      floatingLayerOpen: false,
+      shortcutLabel: "Esc" as string | null,
+      hideComposer: () => hidden.push("hide"),
+      reportShortcut: (report: { action: string; shortcut?: string }) => reports.push(report),
+      ...overrides,
+    };
+    return { input, hidden, reports };
+  };
+
+  it("records exactly one shortcut row when the composer is actually hidden", () => {
+    const { input, hidden, reports } = makeInput();
+    expect(hideComposerForEscape(input)).toBe(true);
+    expect(hidden).toEqual(["hide"]);
+    expect(reports).toEqual([{ action: "chat.readingFocus.enable", shortcut: "Esc" }]);
+  });
+
+  it("records nothing on the already-hidden no-op", () => {
+    const { input, hidden, reports } = makeInput({ readingFocus: true });
+    expect(hideComposerForEscape(input)).toBe(false);
+    expect(hidden).toEqual([]);
+    expect(reports).toEqual([]);
+  });
+
+  it("records nothing when another handler claimed the key", () => {
+    const { input, hidden, reports } = makeInput({ defaultPrevented: true });
+    expect(hideComposerForEscape(input)).toBe(false);
+    expect(hidden).toEqual([]);
+    expect(reports).toEqual([]);
+  });
+
+  it("records nothing while composing or behind a floating layer", () => {
+    const composing = makeInput({ isComposing: true });
+    expect(hideComposerForEscape(composing.input)).toBe(false);
+    expect(composing.reports).toEqual([]);
+
+    const layered = makeInput({ floatingLayerOpen: true });
+    expect(hideComposerForEscape(layered.input)).toBe(false);
+    expect(layered.reports).toEqual([]);
+  });
+
+  it("still records the action when the chord cannot be named", () => {
+    const { input, reports } = makeInput({ shortcutLabel: null });
+    expect(hideComposerForEscape(input)).toBe(true);
+    expect(reports).toEqual([{ action: "chat.readingFocus.enable" }]);
   });
 });
