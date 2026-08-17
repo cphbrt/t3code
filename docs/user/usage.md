@@ -20,3 +20,8 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 **30 days**, and **90 days** ranges use daily resolution. Cost and token toggles update both the
 headline and chart, and refreshing rescans every connected environment.
 Refreshing also asks each connected environment to update its provider quota snapshots.
+
+Quota snapshots are kept current only while something is showing them: this page while it is open,
+or the composer's quota chip while its details are open. Close both and environments stop checking
+allowances until you look again, so a snapshot you return to may be a few minutes old before its
+first refresh lands.

@@ -1,6 +1,14 @@
-import type { ServerProviderQuota, ServerProviderQuotaWindow } from "@t3tools/contracts";
+import type {
+  BackgroundScope,
+  EnvironmentId,
+  ProviderInstanceId,
+  ServerProviderQuota,
+  ServerProviderQuotaWindow,
+} from "@t3tools/contracts";
 import { ClockIcon, GaugeIcon } from "lucide-react";
+import { useState } from "react";
 
+import { useBackgroundScopes } from "../../hooks/useBackgroundScopes";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { cn } from "../../lib/utils";
 import {
@@ -148,17 +156,35 @@ export function ProviderQuotaPickerSummary(props: {
   );
 }
 
+/**
+ * The composer's quota chip and the detail popover behind it.
+ *
+ * The chip itself is passive: it draws whatever quota snapshot the server has
+ * already sent and asks for nothing. Opening the popover is the only moment a
+ * viewer is actually reading these numbers, so that is where the client claims
+ * provider-status demand — scoped to the one instance on screen, or unscoped
+ * when the composer has no instance resolved.
+ */
 export function ProviderQuotaIndicator(props: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId | undefined;
   readonly quota: ServerProviderQuota | undefined;
   readonly displayName: string;
   readonly compact?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const scope: BackgroundScope =
+    props.instanceId === undefined
+      ? { type: "provider-status" }
+      : { type: "provider-status", instanceId: props.instanceId };
+  useBackgroundScopes(open ? [{ environmentId: props.environmentId, scope }] : []);
+
   const primary = primaryProviderQuotaWindow(props.quota);
   if (!props.quota || !primary) return null;
   const colors = severityClasses(primary.usedPercent);
   const label = `${providerQuotaWindowLabel(primary)} ${providerQuotaPercentLabel(primary.usedPercent)} used`;
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <Tooltip>
         <TooltipTrigger
           render={

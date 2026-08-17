@@ -32,6 +32,7 @@ import { UsageChartLegend, UsageProviderChart, type UsageChartMetric } from "./U
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 import { ProviderQuotaDetails } from "../providerQuota/ProviderQuotaPresentation";
 import { QuotaLimitsSection } from "./QuotaLimitsSection";
+import { useBackgroundScopes } from "../../hooks/useBackgroundScopes";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -73,6 +74,16 @@ export function UsagePage() {
       ),
     );
   }, [environments, serverConfigs]);
+
+  // This page is built entirely out of provider quota, so for as long as it is
+  // mounted it asks every environment to keep its quota snapshots current. No
+  // other surface claims this, so closing the page ends the probing.
+  useBackgroundScopes(
+    environments.map((environment) => ({
+      environmentId: environment.environmentId,
+      scope: { type: "provider-status" as const },
+    })),
+  );
 
   // Quota history identifies its windows by instance id; the display names live
   // on the provider snapshots, so the charts are handed the lookup rather than
