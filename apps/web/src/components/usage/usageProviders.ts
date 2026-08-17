@@ -44,3 +44,31 @@ export function providersWithUsage(
   );
   return PROVIDER_ORDER.filter((provider) => active.has(provider));
 }
+
+/**
+ * Categorical slots for quota-history series, in assignment order.
+ *
+ * The two-color provider palette above identifies a *harness*; these identify
+ * one instance's allowance window, and several of those can belong to the same
+ * harness (a Claude account's 5-hour and weekly windows, or two Claude
+ * accounts), so they need separation the provider colors cannot give. The
+ * brand marks still carry the harness, exactly as the chart legend already
+ * assumes when it notes that series colors may differ from brand colors.
+ *
+ * The slots are defined in `index.css` with light and dark steps selected per
+ * mode. Assignment is by position and never cycles: a seventh series would
+ * repeat a hue and quietly claim to be the first, so `quotaSeriesColor` hands
+ * the overflow a neutral ink and leaves identity to the legend label.
+ */
+export const QUOTA_SERIES_COLORS = [
+  "var(--quota-series-1)",
+  "var(--quota-series-2)",
+  "var(--quota-series-3)",
+  "var(--quota-series-4)",
+  "var(--quota-series-5)",
+  "var(--quota-series-6)",
+] as const;
+
+export function quotaSeriesColor(index: number): string {
+  return QUOTA_SERIES_COLORS[index] ?? "var(--muted-foreground)";
+}

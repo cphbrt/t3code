@@ -18,8 +18,26 @@ const PLOT_TOP = 8;
 
 export type UsageChartMetric = "tokens" | "cost";
 
+/**
+ * A shaded span of the plot, positioned as a fraction of the plot's width.
+ *
+ * Callers work in fractions rather than timestamps so the chart keeps knowing
+ * only about its own period index space; translating wall-clock time into that
+ * space is the caller's problem, since only the caller knows what the periods
+ * mean. Bands carry no label of their own — naming them is the caller's job
+ * too, in a legend beside the chart rather than in a hover that would compete
+ * with the series readout.
+ */
+export interface UsageChartBand {
+  readonly key: string;
+  readonly startFraction: number;
+  readonly endFraction: number;
+  readonly color: string;
+}
+
 interface UsageProviderChartProps {
   readonly providers: readonly UsageProviderKind[];
+  readonly bands?: readonly UsageChartBand[];
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
   readonly hours: readonly string[];
@@ -189,6 +207,7 @@ export function buildDayColumns(
 
 export function UsageProviderChart({
   providers,
+  bands,
   days,
   daily,
   hours,
@@ -380,6 +399,20 @@ export function UsageProviderChart({
                 />
               );
             })}
+
+            {/* Bands sit under the series: they are context for the shape of
+                the data, not a layer competing with it. */}
+            {bands?.map((band) => (
+              <rect
+                key={band.key}
+                x={band.startFraction * VIEW_WIDTH}
+                width={Math.max(0, band.endFraction - band.startFraction) * VIEW_WIDTH}
+                y={PLOT_TOP}
+                height={VIEW_HEIGHT - PLOT_TOP}
+                fill={band.color}
+                fillOpacity={0.14}
+              />
+            ))}
 
             {/* Fills first, then every stroke, so no series covers another's line. */}
             {paths.map(({ provider, area }) => (

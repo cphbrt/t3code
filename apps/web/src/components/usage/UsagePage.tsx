@@ -38,6 +38,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import { ProviderQuotaDetails } from "../providerQuota/ProviderQuotaPresentation";
+import { QuotaLimitsSection } from "./QuotaLimitsSection";
 
 const WINDOW_OPTIONS = [
   { days: 1, label: "Past 24h" },
@@ -79,6 +80,21 @@ export function UsagePage() {
       ),
     );
   }, [environments, serverConfigs]);
+
+  // Quota history identifies its windows by instance id; the display names live
+  // on the provider snapshots, so the charts are handed the lookup rather than
+  // the configs.
+  const instanceLabels = useMemo(
+    () =>
+      new Map(
+        [...serverConfigs].flatMap(([, config]) =>
+          deriveProviderInstanceEntries(config.providers).map(
+            (entry) => [String(entry.instanceId), entry.displayName] as const,
+          ),
+        ),
+      ),
+    [serverConfigs],
+  );
 
   // Hold the content until every environment is terminal. Rendering merged
   // totals while devices are still answering makes every number on the page
@@ -518,6 +534,20 @@ export function UsagePage() {
                     </table>
                   )}
                 </section>
+
+                <QuotaLimitsSection
+                  quotaHistory={merged.quotaHistory}
+                  instanceLabels={instanceLabels}
+                  windowDays={windowDays}
+                  days={days}
+                  daily={merged.daily}
+                  hours={hours}
+                  hourly={merged.hourly}
+                  metric={metric}
+                  referenceTime={window.untilTime}
+                  resolution={isPast24Hours ? "hour" : "day"}
+                  timeZone={window.timeZone}
+                />
               </>
             )}
           </WorkspacePageContainer>

@@ -226,6 +226,10 @@
     "./promptCache": {
       "types": "./src/promptCache.ts",
       "import": "./src/promptCache.ts"
+    },
+    "./quotaWindowCycle": {
+      "types": "./src/quotaWindowCycle.ts",
+      "import": "./src/quotaWindowCycle.ts"
     }
   },
   "scripts": {

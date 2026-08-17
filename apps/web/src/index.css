@@ -1464,6 +1464,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --terminal-cursor: rgb(38 56 78);
   --terminal-selection-background: rgb(37 63 99 / 20%);
 
+  /* Quota-history chart series. One slot per provider instance's allowance
+     window, assigned in fixed order and never cycled, so a series keeps its
+     color when the set of windows changes. These are identity colors and stay
+     out of the themeable roles below, alongside the provider and channel
+     colors. Ordering is the colorblind-safety mechanism: adjacent slots clear
+     an OKLab CVD separation of 8 against both app backgrounds. Three light
+     slots fall under 3:1 contrast, so every chart using them ships a legend
+     with visible text labels rather than relying on color alone. */
+  --quota-series-1: #2a78d6;
+  --quota-series-2: #eb6834;
+  --quota-series-3: #1baf7a;
+  --quota-series-4: #eda100;
+  --quota-series-5: #e87ba4;
+  --quota-series-6: #008300;
+
   @variant dark {
     color-scheme: dark;
     /* Keep the workspace in the same neutral-black family as sidebar v2.
@@ -1501,6 +1516,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --sidebar-stage-fade: var(--card);
     --terminal-cursor: rgb(180 203 255);
     --terminal-selection-background: rgb(180 203 255 / 25%);
+
+    /* The same six hues re-stepped for the dark background, not an automatic
+       inversion of the light values. All six clear 3:1 here. */
+    --quota-series-1: #3987e5;
+    --quota-series-2: #d95926;
+    --quota-series-3: #199e70;
+    --quota-series-4: #c98500;
+    --quota-series-5: #d55181;
+    --quota-series-6: #008300;
   }
 }
 

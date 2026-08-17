@@ -371,17 +371,29 @@ export const ProviderRegistryLive = Layer.effect(
       // and that is not a new observation. Recording cannot fail, and the
       // store de-duplicates on `(instanceId, windowId, observedAt)`, so
       // repeated probes of a provider's own cached snapshot cost nothing.
-      yield* Effect.forEach(
+      //
+      // Recording first also makes the annotation that follows include this
+      // very observation, which is what lets a window be classified from the
+      // first snapshot that completes the evidence rather than the next one.
+      const nextProvidersWithQuotaCycles = yield* Effect.forEach(
         nextProvidersWithRuntimeState,
-        (provider) =>
-          provider.quota === undefined
-            ? Effect.void
-            : quotaHistory.record({
-                instanceId: provider.instanceId,
-                observedAt: provider.quota.observedAt,
-                windows: provider.quota.windows,
-              }),
-        { discard: true },
+        Effect.fn("annotateProviderQuotaCycles")(function* (provider) {
+          const quota = provider.quota;
+          if (quota === undefined) return provider;
+          yield* quotaHistory.record({
+            instanceId: provider.instanceId,
+            observedAt: quota.observedAt,
+            windows: quota.windows,
+          });
+          // Whether a window renews on a cycle or rolls continuously is only
+          // visible in history, which no client keeps, so the answer rides
+          // along with the snapshot.
+          const windows = yield* quotaHistory.annotateCycles({
+            instanceId: provider.instanceId,
+            windows: quota.windows,
+          });
+          return { ...provider, quota: { ...quota, windows } };
+        }),
       );
 
       const [previousProviders, providers, providersToPersist] = yield* Ref.modify(
@@ -392,7 +404,7 @@ export const ProviderRegistryLive = Layer.effect(
           );
           const updatedKeys = new Set<ProviderInstanceId>();
 
-          for (const provider of nextProvidersWithRuntimeState) {
+          for (const provider of nextProvidersWithQuotaCycles) {
             const key = snapshotInstanceKey(provider);
             updatedKeys.add(key);
             mergedProviders.set(

@@ -170,6 +170,23 @@ export const ServerProviderUsageLimit = Schema.Struct({
 export type ServerProviderUsageLimit = typeof ServerProviderUsageLimit.Type;
 
 /**
+ * How an allowance window renews.
+ *
+ * `fixed` windows have a real start and end — Claude's five-hour allowance
+ * fills toward a stated reset and then empties — so "how far through this
+ * window am I" is a question with an answer. `rolling` windows have no cycle:
+ * their `resetsAt` advances with the clock, so the derived start is always
+ * approximately now and elapsed fraction is meaningless. `unknown` means the
+ * server has not seen enough history to tell, and consumers should behave as
+ * they would for a fixed window.
+ *
+ * A single snapshot cannot distinguish the two, so this is classified
+ * server-side from recorded quota history and published as an annotation.
+ */
+export const ServerProviderQuotaWindowCycleKind = Schema.Literals(["fixed", "rolling", "unknown"]);
+export type ServerProviderQuotaWindowCycleKind = typeof ServerProviderQuotaWindowCycleKind.Type;
+
+/**
  * One provider-reported allowance window. This is descriptive quota
  * telemetry, not proof that the provider is unavailable; hard exhaustion is
  * represented separately by `ServerProviderUsageLimit`.
@@ -181,6 +198,9 @@ export const ServerProviderQuotaWindow = Schema.Struct({
   durationMinutes: Schema.optionalKey(PositiveInt),
   resetsAt: Schema.optionalKey(IsoDateTime),
   scopeLabel: Schema.optionalKey(TrimmedNonEmptyString),
+  // Additive and optional: every released client predates this field and must
+  // keep decoding windows without it. Absent reads exactly as `"unknown"`.
+  cycleKind: Schema.optionalKey(ServerProviderQuotaWindowCycleKind),
 });
 export type ServerProviderQuotaWindow = typeof ServerProviderQuotaWindow.Type;
 
