@@ -240,7 +240,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-browser-access",
-    title: "Agent browser access",
+    title: "Agent app tools",
     to: "/settings/integrations",
     targetId: "browser",
   },

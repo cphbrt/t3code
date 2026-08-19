@@ -146,6 +146,25 @@ subject, never as the entry's identifier.
 
 ## Planned work
 
+- **Per-toolset gating for the `t3-code` MCP server (deferred).** Upstream
+  `cd096b9ad` added the `enableAgentBrowserAccess` server setting, but it gates
+  the whole `t3-code` MCP credential rather than the browser toolset:
+  `prepareMcpSession` in `apps/server/src/provider/Layers/ProviderService.ts`
+  revokes the thread credential and clears the provider session when the setting
+  is off, and every adapter then treats the thread as having no MCP server. The
+  fork adds thread (`settle_thread`), artifact (`show_chris`), and usage
+  (`usage_status`) toolkits to that same server, so the toggle withdraws all of
+  them along with `preview_*`. The Codex developer-instruction blocks are
+  already split in `CodexDeveloperInstructions.ts` —
+  `browserToolInstructions` and `sharedToolInstructions` are separate
+  predicates — but both read the same `browserToolsAvailable` flag, because
+  emitting guidance for tools the turn does not have is the failure mode the
+  browser block avoids. A genuine browser-only gate needs per-toolset filtering
+  at credential issuance so the server can attach without `preview_*`; only
+  `sharedToolInstructions` would change here. Chris decided on 2026-08-19 to
+  keep the all-or-nothing toggle and make the Settings wording honest instead.
+  Candidate upstream-facing feature if per-toolset control is ever wanted.
+
 - **Split application storage across the XDG base directories.** The Linux
   desktop honors `XDG_CONFIG_HOME` for Electron user data and `XDG_DATA_HOME`
   for desktop integration, but desktop and server runtime storage still share
