@@ -27,7 +27,7 @@ import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
-import { makeQuitHoldHandler } from "./QuitHold.ts";
+import { makeConfirmQuitResolver, makeQuitHoldHandler } from "./QuitHold.ts";
 
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
@@ -552,18 +552,21 @@ export const make = Effect.gen(function* () {
     // Chrome-style hold-to-quit: intercept the quit accelerator before the
     // native menu sees it and only quit after the shortcut is held. The
     // renderer shows the "Hold to Quit" hint via QUIT_SHORTCUT_CHANNEL.
+    const resolveConfirmQuit = makeConfirmQuitResolver(DEFAULT_CLIENT_SETTINGS.confirmQuit);
+    const readConfirmQuit = Effect.map(clientSettings.get, (settings) =>
+      resolveConfirmQuit(
+        Option.match(settings, {
+          onNone: () => undefined,
+          onSome: (value) => value.confirmQuit,
+        }),
+      ),
+    );
+    // Warm the resolver so the first quit press already decides from a real
+    // read rather than the built-in default.
+    runFork(readConfirmQuit);
     const quitHoldHandler = makeQuitHoldHandler({
       platform: environment.platform,
-      isEnabled: () =>
-        runPromise(
-          Effect.map(
-            clientSettings.get,
-            Option.match({
-              onNone: () => DEFAULT_CLIENT_SETTINGS.confirmQuit,
-              onSome: (settings) => settings.confirmQuit,
-            }),
-          ),
-        ),
+      isEnabled: () => runPromise(readConfirmQuit),
       notify: (state) => {
         if (!window.isDestroyed()) {
           window.webContents.send(QUIT_SHORTCUT_CHANNEL, state);

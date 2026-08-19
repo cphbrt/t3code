@@ -20,6 +20,28 @@ export const QUIT_HOLD_RELEASE_GRACE_MS = 600;
 
 export type QuitHoldState = "down" | "up";
 
+/**
+ * Resolves the hold-to-quit setting for one keypress from a possibly-absent
+ * read. An unreadable or undecodable settings file reads as "absent", and
+ * falling back to the built-in default there silently re-enables hold-to-quit
+ * for a user who turned it off — the "Hold to Quit" hint then flashes on a
+ * shortcut the user expects to quit outright. The last value actually observed
+ * in this session wins instead, so the default only applies before anything
+ * has been read.
+ */
+export function makeConfirmQuitResolver(
+  defaultValue: boolean,
+): (observed: boolean | undefined) => boolean {
+  let lastKnown: boolean | undefined;
+  return (observed) => {
+    if (observed !== undefined) {
+      lastKnown = observed;
+      return observed;
+    }
+    return lastKnown ?? defaultValue;
+  };
+}
+
 export interface QuitHoldKeyInput {
   readonly type: string;
   readonly key: string;

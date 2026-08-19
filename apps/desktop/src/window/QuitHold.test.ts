@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  makeConfirmQuitResolver,
   makeQuitHoldHandler,
   QUIT_DOUBLE_TAP_MS,
   QUIT_HOLD_DURATION_MS,
@@ -213,5 +214,30 @@ describe("makeQuitHoldHandler", () => {
     await harness.holdFor(QUIT_HOLD_DURATION_MS + 200, { meta: false, control: true });
     await harness.send(makeInput({ type: "keyUp", meta: false, control: true }));
     expect(harness.quit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("makeConfirmQuitResolver", () => {
+  it("uses the default only until something has been read", () => {
+    const resolve = makeConfirmQuitResolver(true);
+    expect(resolve(undefined)).toBe(true);
+    expect(resolve(false)).toBe(false);
+  });
+
+  it("keeps the last observed value when a later read comes back absent", () => {
+    // An unreadable or undecodable client-settings.json reads as absent. Falling
+    // back to the default there would re-enable hold-to-quit for a user who
+    // turned it off, flashing the hint on a shortcut meant to quit outright.
+    const resolve = makeConfirmQuitResolver(true);
+    expect(resolve(false)).toBe(false);
+    expect(resolve(undefined)).toBe(false);
+    expect(resolve(undefined)).toBe(false);
+  });
+
+  it("tracks the setting when it is turned back on", () => {
+    const resolve = makeConfirmQuitResolver(true);
+    expect(resolve(false)).toBe(false);
+    expect(resolve(true)).toBe(true);
+    expect(resolve(undefined)).toBe(true);
   });
 });
