@@ -7,13 +7,13 @@
  *
  * Unlike Codex, the Claude snapshot probe may invoke a secondary probe
  * (`probeClaudeCapabilities`) to read Anthropic account + slash-command
- * metadata. That probe is per-instance and keyed by binary + resolved HOME so
- * two concurrent Claude instances don't cross-contaminate account metadata.
+ * metadata. That probe is captured per instance over this instance's own
+ * settings and environment, so two concurrent Claude instances can't
+ * cross-contaminate account metadata.
  *
  * @module provider/Drivers/ClaudeDriver
  */
 import { ClaudeSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import * as Cache from "effect/Cache";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -54,18 +54,11 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
-import { PROVIDER_QUOTA_REFRESH_MIN_INTERVAL } from "../providerQuota.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import { makeClaudeCapabilitiesResolver } from "./ClaudeCapabilitiesResolver.ts";
+import { makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
-/**
- * This cache is what actually decides how often the promptless `get_usage`
- * probe reaches Anthropic, so it is the quota-refresh policy in disguise.
- * Bound to the shared constant rather than restated, so tightening the policy
- * cannot leave a stale five minutes behind here.
- */
-const CAPABILITIES_PROBE_TTL = PROVIDER_QUOTA_REFRESH_MIN_INTERVAL;
 
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
@@ -158,21 +151,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
 
-      // Per-instance capabilities cache: keyed on binary + resolved HOME so
-      // account-specific probes never share auth metadata across instances.
-      const capabilitiesProbeCache = yield* Cache.make({
-        capacity: 1,
-        timeToLive: CAPABILITIES_PROBE_TTL,
-        lookup: () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
-            Effect.provideService(Path.Path, path),
-          ),
+      const hasActiveWork = adapterHasActiveWork(adapter);
+
+      // How a check reads account metadata and usage — subprocess probe or a
+      // control request on a session already running. Never how often: the rate
+      // policy belongs to the callers. There is deliberately no time cache
+      // here, because duplicating the caller-facing floor inside the driver
+      // made the background refresh tick beat against a second clock of the
+      // same period, drifting Claude's effective quota cadence toward double
+      // the configured interval.
+      const resolveCapabilities = yield* makeClaudeCapabilitiesResolver({
+        probe: probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          Effect.provideService(Path.Path, path),
+        ),
+        readPlanUsage: adapter.readPlanUsage,
+        hasActiveWork,
       });
-      const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(effectiveConfig, cwd);
 
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
-        () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
+        () => resolveCapabilities,
         processEnv,
         cwd,
       ).pipe(
@@ -191,7 +189,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         initialSnapshot: (settings) =>
           makePendingClaudeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        hasActiveWork: adapterHasActiveWork(adapter),
+        hasActiveWork,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,

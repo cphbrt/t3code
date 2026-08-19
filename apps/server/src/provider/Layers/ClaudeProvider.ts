@@ -634,7 +634,7 @@ function nonEmptyProbeString(value: string): string | undefined {
   return candidate ? candidate : undefined;
 }
 
-type ClaudeCapabilitiesProbe = {
+export type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
@@ -656,11 +656,13 @@ type ClaudeCapabilitiesProbe = {
   /**
    * When this probe's data was actually read out of the CLI.
    *
-   * Deliberately distinct from the enclosing status check's `checkedAt`: the
-   * driver serves probes from a multi-minute cache, so a cached probe's usage
-   * numbers are as old as this stamp, not as young as the check that returned
-   * them. Anything projecting probe data onto a snapshot must date it from
-   * here, or it claims a freshness the reading does not have.
+   * Deliberately distinct from the enclosing status check's `checkedAt`. The
+   * two usually coincide now that the driver probes live, but a resolver may
+   * legitimately reuse an earlier reading — the live-session usage read keeps
+   * the account fields from the last successful subprocess probe — and then
+   * the usage numbers are as old as this stamp, not as young as the check that
+   * returned them. Anything projecting probe data onto a snapshot must date it
+   * from here, or it claims a freshness the reading does not have.
    */
   readonly probedAt: string;
 };
@@ -1111,9 +1113,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
-  // `probedAt`, not `checkedAt`: the capabilities probe is cached for minutes,
-  // so dating the quota from this status check would claim a freshness the
-  // usage numbers do not have and defeat every staleness check downstream.
+  // `probedAt`, not `checkedAt`: the resolver decides when the usage numbers
+  // were actually read, so dating the quota from this status check would claim
+  // a freshness the numbers may not have and defeat every staleness check
+  // downstream.
   const quota = capabilities.usage
     ? normalizeClaudeProviderQuota(capabilities.usage, capabilities.probedAt)
     : undefined;

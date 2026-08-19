@@ -9,6 +9,9 @@
  *
  * @module ClaudeAdapter
  */
+import type { SDKControlGetUsageResponse } from "@anthropic-ai/claude-agent-sdk";
+import type * as Effect from "effect/Effect";
+
 import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
@@ -16,4 +19,17 @@ import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
  * ClaudeAdapterShape — per-instance Claude adapter contract. Carries
  * a branded driver kind as the nominal discriminant.
  */
-export interface ClaudeAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {}
+export interface ClaudeAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {
+  /**
+   * Read plan usage over the control protocol of a session this instance
+   * already has running, so the provider status check does not have to spawn a
+   * probe subprocess just to ask.
+   *
+   * Resolves `undefined` when no live session can answer — none open, none
+   * whose runtime exposes the call, or the call failed or timed out — and the
+   * caller falls back to the subprocess probe. This is a Claude-only addition
+   * because the shortcut is Claude-shaped: Codex's status probe already reads
+   * rate limits over its existing app-server client.
+   */
+  readonly readPlanUsage: () => Effect.Effect<SDKControlGetUsageResponse | undefined>;
+}
