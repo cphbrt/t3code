@@ -12,6 +12,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopKeepAwake from "../power/DesktopKeepAwake.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
@@ -73,6 +74,7 @@ function makePoolLayer(
           handleControlForSource: () => Effect.void,
           removeControlSource: () => Effect.void,
         }),
+        DesktopKeepAwake.layerTest(),
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
           resolvePrimary: Effect.die("unexpected primary config resolve"),
           resolvePrimaryLabel: Ref.get(labelRef),

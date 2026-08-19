@@ -102,6 +102,7 @@ import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryR
 import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClient.ts";
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinary.ts";
+import * as KeepAwakeReporter from "./resourceTelemetry/KeepAwakeReporter.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as QuotaHistoryStore from "./usage/QuotaHistoryStore.ts";
 import * as UsageService from "./usage/UsageService.ts";
@@ -404,7 +405,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+const RuntimeDependenciesBaseLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
@@ -419,6 +420,13 @@ const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // the file and overwrite each other's observations.
   Layer.provideMerge(QuotaHistoryStore.layer),
   Layer.provide(NetService.layer),
+);
+
+// Outermost, because it is the one consumer that needs both halves at once:
+// `ProviderService` for how many turns are running and the desktop telemetry
+// receiver for the control channel that carries the count to the shell.
+const RuntimeDependenciesLive = KeepAwakeReporter.layer.pipe(
+  Layer.provideMerge(RuntimeDependenciesBaseLive),
 );
 
 const commandReadinessLayer = HttpRouter.middleware(

@@ -17,6 +17,8 @@ const clientSettings: ClientSettings = {
   browserDefaultZoomFactor: 1.25,
   browserDefaultAppearance: "dark",
   browserAutoShowFloatingPreview: false,
+  keepAwakeWhileAgentsRun: true,
+  keepAwakeOnBattery: false,
   confirmQuit: true,
   confirmThreadArchive: true,
   confirmThreadDelete: false,

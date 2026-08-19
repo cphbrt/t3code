@@ -173,6 +173,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "keep-awake-while-agents-run",
+    title: "Keep the Mac awake while agents run",
+    to: "/settings/general",
+    desktopOnly: true,
+  },
+  {
+    id: "keep-awake-on-battery",
+    title: "Also on battery",
+    to: "/settings/general",
+    desktopOnly: true,
+  },
+  {
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/general",

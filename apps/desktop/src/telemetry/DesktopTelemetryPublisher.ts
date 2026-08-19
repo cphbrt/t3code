@@ -53,16 +53,31 @@ interface HostPowerIntervals {
   readonly idle: Duration.Duration;
 }
 
+/**
+ * The control messages this publisher is responsible for.
+ *
+ * `setKeepAwake` travels the same channel but is nothing to do with telemetry
+ * sampling, so the backend manager routes it to `DesktopKeepAwake` instead.
+ * Excluding it here rather than ignoring it in the switch means the router,
+ * not this module, is where TypeScript proves the union is fully handled.
+ */
+export type DesktopTelemetryPublisherControlMessage = Exclude<
+  DesktopTelemetryControlMessage,
+  { readonly type: "setKeepAwake" }
+>;
+
 export class DesktopTelemetryPublisher extends Context.Service<
   DesktopTelemetryPublisher,
   {
     readonly latest: Effect.Effect<Option.Option<DesktopHostTelemetrySnapshot>>;
     readonly changes: Stream.Stream<DesktopHostTelemetrySnapshot>;
     readonly encoded: Stream.Stream<Uint8Array>;
-    readonly handleControl: (message: DesktopTelemetryControlMessage) => Effect.Effect<void>;
+    readonly handleControl: (
+      message: DesktopTelemetryPublisherControlMessage,
+    ) => Effect.Effect<void>;
     readonly handleControlForSource: (
       sourceId: string,
-      message: DesktopTelemetryControlMessage,
+      message: DesktopTelemetryPublisherControlMessage,
     ) => Effect.Effect<void>;
     readonly removeControlSource: (sourceId: string) => Effect.Effect<void>;
   }
