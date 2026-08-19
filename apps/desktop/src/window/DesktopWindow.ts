@@ -573,6 +573,15 @@ export const make = Effect.gen(function* () {
         }
       },
       quit: () => {
+        // Hide before asking the app to quit: this is the only synchronous
+        // moment in the quit path, so it is the only way the window can go
+        // away at the instant the user confirms. Everything after it --
+        // bounds flush, window destroy, backend SIGTERM and grace -- then
+        // runs headless. Nothing downstream cancels a quit that reaches
+        // here, so the window is never left hidden on a live app.
+        if (!window.isDestroyed()) {
+          window.hide();
+        }
         void runPromise(electronApp.quit);
       },
     });
