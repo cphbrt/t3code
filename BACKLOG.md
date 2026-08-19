@@ -436,6 +436,15 @@ registered"` on a repeating PR-lookup cycle. The message is malformed — "No
 
 ## Next fork-series curation pass
 
+- Fold `chore(server): bump @anthropic-ai/claude-agent-sdk to 0.3.236`
+  (`334d33a09`) into the earlier bump `chore(server): bump
+@anthropic-ai/claude-agent-sdk to 0.3.233` (`61b32fbed`). Both express one
+  decision — track the current SDK so its typings match the system Claude CLI
+  actually executing turns (the adapter spawns the settings-configured
+  `claude` from PATH, not the SDK's bundled binary) — and upstream remains on
+  ^0.3.170, so the pair is pure fork-carried maintenance. Appended separately
+  on 2026-08-19 under the same append-only constraint noted below.
+
 - Fold `fix(build): restore the DMG background channel binding` into
   `chore(desktop): remove automatic updates`. That commit dropped
   `const updateChannel = resolveDesktopUpdateChannel(version)` from
