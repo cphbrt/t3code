@@ -25,6 +25,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopKeepAwake from "../power/DesktopKeepAwake.ts";
 
 const decodeDesktopBackendBootstrap = Schema.decodeEffect(
   Schema.fromJsonString(DesktopBackendBootstrap),
@@ -134,6 +135,7 @@ interface MakeInstanceInput {
   readonly desktopTelemetryPublisher?: Partial<
     DesktopTelemetryPublisher.DesktopTelemetryPublisher["Service"]
   >;
+  readonly keepAwake?: Partial<DesktopKeepAwake.DesktopKeepAwake["Service"]>;
 }
 
 // Helper that constructs a primary backend instance using the factory
@@ -169,6 +171,7 @@ function makeTestInstance(input: MakeInstanceInput) {
       removeControlSource: () => Effect.void,
       ...input.desktopTelemetryPublisher,
     }),
+    DesktopKeepAwake.layerTest(input.keepAwake ?? {}),
   );
 
   const instance = DesktopBackendManager.makeBackendInstance({

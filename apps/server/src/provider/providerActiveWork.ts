@@ -18,6 +18,17 @@ export const hasActiveTurn = (sessions: ReadonlyArray<ProviderSession>): boolean
   sessions.some((session) => session.activeTurnId !== undefined);
 
 /**
+ * How many of these sessions have a turn in flight.
+ *
+ * The same authoritative signal as `hasActiveTurn`, kept as a count because
+ * the desktop shell reports "2 agents running" to the user. Deliberately
+ * counts turns only: a thread merely watching something in the background has
+ * no `activeTurnId`, and treating it as work would pin a laptop awake forever.
+ */
+export const countActiveTurns = (sessions: ReadonlyArray<ProviderSession>): number =>
+  sessions.reduce((total, session) => (session.activeTurnId === undefined ? total : total + 1), 0);
+
+/**
  * `hasActiveWork` for `makeManagedServerProvider`, read from the driver's own
  * adapter. Each adapter belongs to exactly one provider instance, so this
  * cannot leak demand from one instance to another.

@@ -53,6 +53,7 @@ import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/http
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
+import { DesktopKeepAwake } from "../power/DesktopKeepAwake.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
@@ -676,6 +677,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   | HttpClient.HttpClient
   | DesktopObservability.DesktopBackendOutputLogFactory
   | DesktopTelemetryPublisher.DesktopTelemetryPublisher
+  | DesktopKeepAwake
   | Scope.Scope
 > {
   const parentScope = yield* Scope.Scope;
@@ -683,6 +685,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const backendOutputLogFactory = yield* DesktopObservability.DesktopBackendOutputLogFactory;
   const backendOutputLog = yield* backendOutputLogFactory.forInstance(spec.id);
   const desktopTelemetryPublisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+  const keepAwake = yield* DesktopKeepAwake;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* Ref.make(initialState);
@@ -917,6 +920,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
               if (isCurrentRun) {
                 yield* desktopTelemetryPublisher.removeControlSource(spec.id);
+                // A backend that is gone cannot still be running turns. Drop
+                // its contribution so a crash mid-turn releases the machine
+                // instead of stranding it awake.
+                yield* keepAwake.removeSource(spec.id);
                 if (Option.isSome(pid)) {
                   if (exitObserved && !stopRequested) {
                     yield* backendOutputLog.persistFailure({
@@ -941,8 +948,16 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const program = runBackendProcess({
           ...config.value,
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
+          // Keep-awake rides the same control channel but answers a
+          // different question, so it is routed to the module that owns the
+          // wake assertion rather than through the telemetry publisher. Only
+          // backends this desktop started have a control channel at all,
+          // which is what makes the assertion local-only by construction: a
+          // window viewing a remote environment reports nothing here.
           onDesktopTelemetryControl: (message) =>
-            desktopTelemetryPublisher.handleControlForSource(spec.id, message),
+            message.type === "setKeepAwake"
+              ? keepAwake.setActiveTurns(spec.id, message.activeTurnCount)
+              : desktopTelemetryPublisher.handleControlForSource(spec.id, message),
           onStarted: Effect.fn("desktop.backendInstance.onStarted")(function* (pid) {
             yield* updateActiveRun(runId, (run) => ({
               ...run,
