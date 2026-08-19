@@ -40,13 +40,3 @@ export const makeClaudeContinuationGroupKey = Effect.fn("makeClaudeContinuationG
     return `claude:home:${resolvedHomePath}`;
   },
 );
-
-export const makeClaudeCapabilitiesCacheKey = Effect.fn("makeClaudeCapabilitiesCacheKey")(
-  function* (
-    config: Pick<ClaudeSettings, "binaryPath" | "homePath">,
-    cwd?: string,
-  ): Effect.fn.Return<string, never, Path.Path> {
-    const resolvedHomePath = yield* resolveClaudeHomePath(config);
-    return `${config.binaryPath}\0${resolvedHomePath}\0${cwd ?? ""}`;
-  },
-);

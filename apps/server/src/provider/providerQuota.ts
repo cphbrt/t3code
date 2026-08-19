@@ -19,19 +19,20 @@ import * as Duration from "effect/Duration";
  * Consumers today:
  *
  * - `mcp/ProviderUsageStatus` throttles the `usage_status` tool's refreshes to
- *   this interval, and treats a reading older than it as stale. That throttle
- *   is what bounds Codex, whose status probe has no cache of its own.
- * - `Drivers/ClaudeDriver` sets its capabilities-probe cache TTL from it, so
- *   the cache that actually serves Claude's usage numbers cannot drift away
- *   from the policy the rest of the system believes it is following.
+ *   this interval, and treats a reading older than it as stale. That is the
+ *   only consumer, and deliberately so: neither driver's status probe caches
+ *   its own quota reading, so this one throttle is what bounds both providers
+ *   on the caller-driven path.
  *
  * What this deliberately does NOT govern, so nobody reads it as a global
  * guarantee:
  *
  * - Background provider-status polling, whose cadence is the user-configurable
- *   `providerHealthRefreshInterval`. Codex's quota rides that probe too, so in
- *   practice its numbers can refresh more often than this interval — this
- *   constant bounds only what we initiate on a caller's behalf.
+ *   `providerHealthRefreshInterval`. Both providers' quotas ride that probe, so
+ *   in practice their numbers can refresh more often than this interval — this
+ *   constant bounds only what we initiate on a caller's behalf. A driver that
+ *   also applies this floor internally does not make the system safer; it just
+ *   adds a second clock of the same period for the tick to beat against.
  * - The web UI's display-staleness threshold in `apps/web/src/providerQuota.ts`,
  *   an independent 20 minutes. That answers "should this look dimmed to a
  *   human", not "may we call the provider", and the two are free to differ.
