@@ -634,6 +634,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           // the gap is too large) should be windowed the same as the HTTP
           // path; without this a resume failure re-downloads the full thread.
           ...(supportsPagination ? { turnLimit: INITIAL_THREAD_USER_TURN_LIMIT } : {}),
+          // Artifact events are opt-in because `OrchestrationEvent` is a closed
+          // union and older clients cannot decode them. This client can, so it
+          // always asks; an older server ignores the unknown key, since struct
+          // decoding drops excess properties rather than rejecting them.
+          includeArtifactEvents: true,
         };
       }),
       {

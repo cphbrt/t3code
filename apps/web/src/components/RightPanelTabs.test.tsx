@@ -109,13 +109,16 @@ function renderTabs(
       onAddDiff={() => undefined}
       onAddFiles={() => undefined}
       onAddAgents={() => undefined}
+      onAddArtifacts={() => undefined}
       liveAgentCount={0}
+      unreadArtifactCount={0}
       browserAvailable
       terminalAvailable={false}
       diffAvailable={false}
       filesAvailable={false}
       pullRequestAvailable={false}
       agentsAvailable={false}
+      artifactsAvailable={false}
     >
       <div>content</div>
     </RightPanelTabs>,
@@ -291,13 +294,16 @@ describe("RightPanelTabs agent transcript tabs", () => {
         onAddDiff={() => undefined}
         onAddFiles={() => undefined}
         onAddAgents={() => undefined}
+        onAddArtifacts={() => undefined}
         liveAgentCount={0}
+        unreadArtifactCount={0}
         browserAvailable={false}
         terminalAvailable={false}
         diffAvailable={false}
         filesAvailable={false}
         pullRequestAvailable={false}
         agentsAvailable
+        artifactsAvailable={false}
       >
         <div>content</div>
       </RightPanelTabs>,

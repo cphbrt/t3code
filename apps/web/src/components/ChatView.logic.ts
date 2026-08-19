@@ -208,6 +208,7 @@ export function buildLocalDraftThread(
     worktreePath: draftThread.worktreePath,
     checkpoints: [],
     activities: [],
+    artifacts: [],
     proposedPlans: [],
   };
 }
@@ -218,6 +219,7 @@ export function buildLoadingThreadFromShell(shell: ThreadShell): Thread {
     messages: [],
     proposedPlans: [],
     activities: [],
+    artifacts: [],
     checkpoints: [],
     deletedAt: null,
   };

@@ -43,6 +43,7 @@ import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
+import * as DesktopPathOpener from "./app/DesktopPathOpener.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
@@ -191,6 +192,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
+  DesktopPathOpener.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
 ).pipe(

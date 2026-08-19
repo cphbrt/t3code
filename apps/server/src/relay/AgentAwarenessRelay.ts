@@ -79,6 +79,12 @@ export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boo
     case "thread.proposed-plan-upserted":
     case "thread.runtime-mode-set":
     case "thread.interaction-mode-set":
+    // Artifacts say nothing about whether the agent is working: recording one
+    // happens mid-turn, and reading or starring one is a user gesture on an
+    // idle thread. Publishing them would re-announce unchanged agent state.
+    case "thread.artifact-recorded":
+    case "thread.artifact-read-set":
+    case "thread.artifact-starred-set":
       return false;
     case "thread.activity-appended":
       return (

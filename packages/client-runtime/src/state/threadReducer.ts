@@ -10,6 +10,7 @@ import type {
   OrchestrationSession,
   OrchestrationThread,
   OrchestrationThreadActivity,
+  OrchestrationThreadArtifact,
   TurnId,
 } from "@t3tools/contracts";
 
@@ -32,6 +33,11 @@ const checkpointOrder = O.mapInput(
 const activityOrder = O.combineAll<OrchestrationThreadActivity>([
   O.mapInput(O.Number, (a) => a.sequence ?? Number.MAX_SAFE_INTEGER),
   O.mapInput(O.String, (a) => a.createdAt),
+  O.mapInput(O.String, (a) => a.id),
+]);
+
+const artifactOrder = O.combineAll<OrchestrationThreadArtifact>([
+  O.mapInput(O.String, (a) => a.recordedAt),
   O.mapInput(O.String, (a) => a.id),
 ]);
 
@@ -99,6 +105,7 @@ export function applyThreadDetailEvent(
           messages: [],
           proposedPlans: [],
           activities: [],
+          artifacts: [],
           checkpoints: [],
           session: null,
         },
@@ -613,6 +620,31 @@ export function applyThreadDetailEvent(
       };
     }
 
+    // ── Artifacts ───────────────────────────────────────────────────
+    // None of the three bump `updatedAt`: a file arriving, or being read or
+    // starred, must not reorder the sidebar. Matches the server projector.
+    case "thread.artifact-recorded": {
+      const artifact = event.payload.artifact;
+      const artifacts = pipe(
+        thread.artifacts,
+        Arr.filter((entry) => entry.id !== artifact.id),
+        Arr.append(artifact),
+        Arr.sort(artifactOrder),
+      );
+
+      return { kind: "updated", thread: { ...thread, artifacts } };
+    }
+
+    case "thread.artifact-read-set":
+      return patchThreadArtifact(thread, event.payload.artifactId, {
+        readAt: event.payload.readAt,
+      });
+
+    case "thread.artifact-starred-set":
+      return patchThreadArtifact(thread, event.payload.artifactId, {
+        starredAt: event.payload.starredAt,
+      });
+
     // ── Events that don't mutate thread state directly ──────────────
     case "thread.approval-response-requested":
     case "thread.user-input-response-requested":
@@ -625,6 +657,31 @@ export function applyThreadDetailEvent(
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Rewrites one artifact in place, leaving order and every other row alone so a
+ * read or a star can never move a row under the user. An id this client has
+ * never seen is "unchanged" rather than an error: the artifact may have been
+ * trimmed by the cap, or the event may have arrived before its recording.
+ */
+function patchThreadArtifact(
+  thread: OrchestrationThread,
+  artifactId: string,
+  patch: Partial<OrchestrationThreadArtifact>,
+): ThreadDetailReducerResult {
+  if (!thread.artifacts.some((artifact) => artifact.id === artifactId)) {
+    return { kind: "unchanged" };
+  }
+  return {
+    kind: "updated",
+    thread: {
+      ...thread,
+      artifacts: thread.artifacts.map((artifact) =>
+        artifact.id === artifactId ? { ...artifact, ...patch } : artifact,
+      ),
+    },
+  };
+}
 
 /**
  * Turn state to settle a still-running latest turn with when its session

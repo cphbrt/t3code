@@ -8,6 +8,7 @@ import {
 
 import { DEFAULT_RUNTIME_MODE } from "../types";
 import {
+  artifactNotificationContent,
   planWaitingNotifications,
   resolveWaitingNotificationKind,
   waitingNotificationContent,
@@ -152,21 +153,27 @@ describe("planWaitingNotifications", () => {
     threadKey: string,
     kind: WaitingNotificationKind | null,
     snoozed = false,
+    unreadArtifactCount = 0,
   ): WaitingNotificationCandidate {
-    return { threadKey, kind, snoozed };
+    return { threadKey, kind, snoozed, unreadArtifactCount };
+  }
+
+  /** Previously-observed record for a thread that has no artifacts yet. */
+  function seen(kind: WaitingNotificationKind | null, unreadArtifactCount = 0) {
+    return { kind, unreadArtifactCount };
   }
 
   it("seeds first-seen threads without notifying", () => {
     const plan = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "completed"), candidate("env:b", "approval")],
-      previousKinds: new Map(),
+      previousObservations: new Map(),
     });
 
     expect(plan.emissions).toEqual([]);
-    expect([...plan.nextKinds]).toEqual([
-      ["env:a", "completed"],
-      ["env:b", "approval"],
+    expect([...plan.nextObservations]).toEqual([
+      ["env:a", { kind: "completed", unreadArtifactCount: 0 }],
+      ["env:b", { kind: "approval", unreadArtifactCount: 0 }],
     ]);
   });
 
@@ -174,17 +181,17 @@ describe("planWaitingNotifications", () => {
     const plan = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: new Map([["env:a", null]]),
+      previousObservations: new Map([["env:a", seen(null)]]),
     });
 
-    expect(plan.emissions).toEqual([{ threadKey: "env:a", kind: "approval" }]);
+    expect(plan.emissions).toEqual([{ threadKey: "env:a", reason: "waiting", kind: "approval" }]);
   });
 
   it("does not repeat a notification while the state holds", () => {
     const plan = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: new Map([["env:a", "approval"]]),
+      previousObservations: new Map([["env:a", seen("approval")]]),
     });
 
     expect(plan.emissions).toEqual([]);
@@ -194,26 +201,28 @@ describe("planWaitingNotifications", () => {
     const resolved = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", null)],
-      previousKinds: new Map([["env:a", "approval"]]),
+      previousObservations: new Map([["env:a", seen("approval")]]),
     });
     expect(resolved.emissions).toEqual([]);
 
     const reoccurred = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: resolved.nextKinds,
+      previousObservations: resolved.nextObservations,
     });
-    expect(reoccurred.emissions).toEqual([{ threadKey: "env:a", kind: "approval" }]);
+    expect(reoccurred.emissions).toEqual([
+      { threadKey: "env:a", reason: "waiting", kind: "approval" },
+    ]);
   });
 
   it("notifies when one waiting state replaces another", () => {
     const plan = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: new Map([["env:a", "completed"]]),
+      previousObservations: new Map([["env:a", seen("completed")]]),
     });
 
-    expect(plan.emissions).toEqual([{ threadKey: "env:a", kind: "approval" }]);
+    expect(plan.emissions).toEqual([{ threadKey: "env:a", reason: "waiting", kind: "approval" }]);
   });
 
   it("stays quiet while the app is focused but still records the state", () => {
@@ -221,7 +230,7 @@ describe("planWaitingNotifications", () => {
       ...base,
       appFocused: true,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: new Map([["env:a", null]]),
+      previousObservations: new Map([["env:a", seen(null)]]),
     });
     expect(focused.emissions).toEqual([]);
 
@@ -229,7 +238,7 @@ describe("planWaitingNotifications", () => {
     const blurred = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: focused.nextKinds,
+      previousObservations: focused.nextObservations,
     });
     expect(blurred.emissions).toEqual([]);
   });
@@ -239,14 +248,14 @@ describe("planWaitingNotifications", () => {
       ...base,
       enabled: false,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: new Map([["env:a", null]]),
+      previousObservations: new Map([["env:a", seen(null)]]),
     });
     expect(disabled.emissions).toEqual([]);
 
     const reenabled = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: disabled.nextKinds,
+      previousObservations: disabled.nextObservations,
     });
     expect(reenabled.emissions).toEqual([]);
   });
@@ -255,14 +264,14 @@ describe("planWaitingNotifications", () => {
     const snoozed = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "completed", true)],
-      previousKinds: new Map([["env:a", null]]),
+      previousObservations: new Map([["env:a", seen(null)]]),
     });
     expect(snoozed.emissions).toEqual([]);
 
     const woke = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "completed", false)],
-      previousKinds: snoozed.nextKinds,
+      previousObservations: snoozed.nextObservations,
     });
     expect(woke.emissions).toEqual([]);
   });
@@ -271,16 +280,183 @@ describe("planWaitingNotifications", () => {
     const gone = planWaitingNotifications({
       ...base,
       candidates: [],
-      previousKinds: new Map([["env:a", null]]),
+      previousObservations: new Map([["env:a", seen(null)]]),
     });
-    expect(gone.nextKinds.has("env:a")).toBe(false);
+    expect(gone.nextObservations.has("env:a")).toBe(false);
 
     const returned = planWaitingNotifications({
       ...base,
       candidates: [candidate("env:a", "approval")],
-      previousKinds: gone.nextKinds,
+      previousObservations: gone.nextObservations,
     });
     expect(returned.emissions).toEqual([]);
+  });
+});
+
+describe("planWaitingNotifications artifacts", () => {
+  const base = { enabled: true, appFocused: false } as const;
+
+  function candidate(
+    threadKey: string,
+    kind: WaitingNotificationKind | null,
+    snoozed = false,
+    unreadArtifactCount = 0,
+  ): WaitingNotificationCandidate {
+    return { threadKey, kind, snoozed, unreadArtifactCount };
+  }
+
+  function seen(kind: WaitingNotificationKind | null, unreadArtifactCount = 0) {
+    return { kind, unreadArtifactCount };
+  }
+
+  it("notifies when a known thread's unread count rises", () => {
+    const plan = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, false, 1)],
+      previousObservations: new Map([["env:a", seen(null, 0)]]),
+    });
+
+    expect(plan.emissions).toEqual([
+      { threadKey: "env:a", reason: "artifacts", newArtifactCount: 1 },
+    ]);
+  });
+
+  it("seeds a first-seen thread's artifacts silently", () => {
+    const plan = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, false, 4)],
+      previousObservations: new Map(),
+    });
+
+    expect(plan.emissions).toEqual([]);
+    expect(plan.nextObservations.get("env:a")).toEqual({ kind: null, unreadArtifactCount: 4 });
+  });
+
+  it("coalesces a burst into one banner carrying the rise", () => {
+    const plan = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, false, 3)],
+      previousObservations: new Map([["env:a", seen(null, 0)]]),
+    });
+
+    expect(plan.emissions).toEqual([
+      { threadKey: "env:a", reason: "artifacts", newArtifactCount: 3 },
+    ]);
+  });
+
+  it("stays quiet while the count holds or falls", () => {
+    const held = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, false, 2)],
+      previousObservations: new Map([["env:a", seen(null, 2)]]),
+    });
+    expect(held.emissions).toEqual([]);
+
+    // Reading one lowers the count; that is the user acting, not news.
+    const read = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, false, 1)],
+      previousObservations: new Map([["env:a", seen(null, 2)]]),
+    });
+    expect(read.emissions).toEqual([]);
+  });
+
+  it("stays quiet for a snoozed thread and does not replay it when the snooze lapses", () => {
+    const snoozed = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, true, 1)],
+      previousObservations: new Map([["env:a", seen(null, 0)]]),
+    });
+    expect(snoozed.emissions).toEqual([]);
+
+    const woke = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, false, 1)],
+      previousObservations: snoozed.nextObservations,
+    });
+    expect(woke.emissions).toEqual([]);
+  });
+
+  it("stays quiet while focused or disabled and does not replay on the next pass", () => {
+    for (const suppressor of [{ appFocused: true }, { enabled: false }]) {
+      const quiet = planWaitingNotifications({
+        ...base,
+        ...suppressor,
+        candidates: [candidate("env:a", null, false, 1)],
+        previousObservations: new Map([["env:a", seen(null, 0)]]),
+      });
+      expect(quiet.emissions).toEqual([]);
+
+      const after = planWaitingNotifications({
+        ...base,
+        candidates: [candidate("env:a", null, false, 1)],
+        previousObservations: quiet.nextObservations,
+      });
+      expect(after.emissions).toEqual([]);
+    }
+  });
+
+  it("lets the waiting state win when both land in one pass, and does not defer the artifact", () => {
+    const collided = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", "approval", false, 1)],
+      previousObservations: new Map([["env:a", seen(null, 0)]]),
+    });
+    // One banner per thread: they share a tag, so a second would replace it.
+    expect(collided.emissions).toEqual([
+      { threadKey: "env:a", reason: "waiting", kind: "approval" },
+    ]);
+    expect(collided.nextObservations.get("env:a")).toEqual({
+      kind: "approval",
+      unreadArtifactCount: 1,
+    });
+
+    // The skipped artifact is dropped, not queued behind the waiting banner.
+    const next = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", "approval", false, 1)],
+      previousObservations: collided.nextObservations,
+    });
+    expect(next.emissions).toEqual([]);
+  });
+
+  it("still announces an artifact when the waiting state is unchanged", () => {
+    const plan = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", "approval", false, 1)],
+      previousObservations: new Map([["env:a", seen("approval", 0)]]),
+    });
+
+    expect(plan.emissions).toEqual([
+      { threadKey: "env:a", reason: "artifacts", newArtifactCount: 1 },
+    ]);
+  });
+
+  it("drops a vanished thread's artifact count so a returning thread reseeds", () => {
+    const gone = planWaitingNotifications({
+      ...base,
+      candidates: [],
+      previousObservations: new Map([["env:a", seen(null, 0)]]),
+    });
+    const returned = planWaitingNotifications({
+      ...base,
+      candidates: [candidate("env:a", null, false, 5)],
+      previousObservations: gone.nextObservations,
+    });
+    expect(returned.emissions).toEqual([]);
+  });
+});
+
+describe("artifactNotificationContent", () => {
+  it("reads naturally for one file and for a coalesced burst", () => {
+    expect(artifactNotificationContent(1, "Rename the widget")).toEqual({
+      title: "New artifact",
+      body: "Rename the widget",
+    });
+    expect(artifactNotificationContent(3, "Rename the widget")).toEqual({
+      title: "3 new artifacts",
+      body: "Rename the widget",
+    });
   });
 });
 

@@ -207,6 +207,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     messages: [],
     proposedPlans: [],
     activities: [],
+    artifacts: [],
     checkpoints: [],
     createdAt: now,
     updatedAt: now,
@@ -310,6 +311,7 @@ describe("buildLoadingThreadFromShell", () => {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      unreadArtifactCount: 0,
     } satisfies ThreadShell;
 
     expect(buildLoadingThreadFromShell(shell)).toMatchObject({

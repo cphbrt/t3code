@@ -364,6 +364,24 @@ export const OrchestrationThreadActivity = Schema.Struct({
 });
 export type OrchestrationThreadActivity = typeof OrchestrationThreadActivity.Type;
 
+export const OrchestrationThreadArtifactId = TrimmedNonEmptyString;
+export type OrchestrationThreadArtifactId = typeof OrchestrationThreadArtifactId.Type;
+
+/**
+ * One file an agent handed to the user. `path` is absolute on the environment
+ * host — the file is opened there, never shipped over the wire — so a client
+ * renders the row and asks the server to open it. `readAt` null means unread,
+ * `starredAt` null means not starred.
+ */
+export const OrchestrationThreadArtifact = Schema.Struct({
+  id: OrchestrationThreadArtifactId,
+  path: TrimmedNonEmptyString,
+  recordedAt: IsoDateTime,
+  readAt: Schema.NullOr(IsoDateTime),
+  starredAt: Schema.NullOr(IsoDateTime),
+});
+export type OrchestrationThreadArtifact = typeof OrchestrationThreadArtifact.Type;
+
 const OrchestrationLatestTurnState = Schema.Literals([
   "running",
   "interrupted",
@@ -491,6 +509,10 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   activities: Schema.Array(OrchestrationThreadActivity),
+  // Defaulted so pre-feature snapshots and payloads from older servers decode.
+  artifacts: Schema.Array(OrchestrationThreadArtifact).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   checkpoints: Schema.Array(OrchestrationCheckpointSummary),
   session: Schema.NullOr(OrchestrationSession),
 });
@@ -571,6 +593,12 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  /**
+   * Unread artifacts on this thread, recomputed with the rest of the shell
+   * summary. Drives the artifact surface badge and the artifact notification.
+   * Defaulted so pre-feature snapshots and older servers decode.
+   */
+  unreadArtifactCount: NonNegativeInt.pipe(Schema.withDecodingDefault(Effect.succeed(0))),
   /**
    * Native background work alive after the turn settles: "working" while
    * subagents/workflows run, "monitoring" when watch loops are the only
@@ -686,6 +714,13 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
    * behavior. Live events are unaffected either way.
    */
   turnLimit: Schema.optionalKey(PositiveInt),
+  /**
+   * Opt-in for the `thread.artifact-*` event types. `OrchestrationEvent` is a
+   * closed union, so a client that predates those types may fail to decode a
+   * frame carrying one — including the released iOS app. Absent means false,
+   * so a subscriber only receives them by asking.
+   */
+  includeArtifactEvents: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
@@ -1060,6 +1095,27 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+/**
+ * Read/unread is a user gesture on an already-recorded artifact, so the command
+ * carries the intent and the decider stamps `readAt` with server time — the same
+ * split thread.archive and thread.pin use.
+ */
+const ThreadArtifactSetReadCommand = Schema.Struct({
+  type: Schema.Literal("thread.artifact.set-read"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  artifactId: OrchestrationThreadArtifactId,
+  read: Schema.Boolean,
+});
+
+const ThreadArtifactSetStarredCommand = Schema.Struct({
+  type: Schema.Literal("thread.artifact.set-starred"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  artifactId: OrchestrationThreadArtifactId,
+  starred: Schema.Boolean,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1087,6 +1143,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadArtifactSetReadCommand,
+  ThreadArtifactSetStarredCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -1118,6 +1176,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadUserInputRespondCommand,
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
+  ThreadArtifactSetReadCommand,
+  ThreadArtifactSetStarredCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1198,6 +1258,20 @@ const ThreadSelfSettleRequestCommand = Schema.Struct({
   threadId: ThreadId,
 });
 
+/**
+ * The thread's own agent handing the user a file. Internal for the same reason
+ * as thread.self-settle.request: it arrives over the per-thread `t3-code` MCP
+ * credential, which already pins the thread, so no client may dispatch it and
+ * no caller may name a thread other than its own. The artifact's id and
+ * `recordedAt` are minted by the decider rather than the caller.
+ */
+const ThreadArtifactRecordCommand = Schema.Struct({
+  type: Schema.Literal("thread.artifact.record"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  path: TrimmedNonEmptyString,
+});
+
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
   type: Schema.Literal("thread.title.regeneration.complete"),
   commandId: CommandId,
@@ -1217,6 +1291,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadTitleRegenerationCompleteCommand,
   ThreadTurnRescheduleCommand,
   ThreadSelfSettleRequestCommand,
+  ThreadArtifactRecordCommand,
 ]);
 export type InternalOrchestrationCommand = typeof InternalOrchestrationCommand.Type;
 
@@ -1260,6 +1335,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.artifact-recorded",
+  "thread.artifact-read-set",
+  "thread.artifact-starred-set",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1538,6 +1616,30 @@ export const OrchestrationClientOrigin = Schema.Struct({
 });
 export type OrchestrationClientOrigin = typeof OrchestrationClientOrigin.Type;
 
+/**
+ * No `updatedAt` on any of the three: an artifact arriving, or being read or
+ * starred, must not bump the thread and churn sidebar ordering. Mirrors
+ * ThreadActivityAppendedPayload.
+ */
+export const ThreadArtifactRecordedPayload = Schema.Struct({
+  threadId: ThreadId,
+  artifact: OrchestrationThreadArtifact,
+});
+
+/** One event covers both directions: `readAt` null is "mark unread". */
+export const ThreadArtifactReadSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  artifactId: OrchestrationThreadArtifactId,
+  readAt: Schema.NullOr(IsoDateTime),
+});
+
+/** One event covers both directions: `starredAt` null is "unstar". */
+export const ThreadArtifactStarredSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  artifactId: OrchestrationThreadArtifactId,
+  starredAt: Schema.NullOr(IsoDateTime),
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1725,6 +1827,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.artifact-recorded"),
+    payload: ThreadArtifactRecordedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.artifact-read-set"),
+    payload: ThreadArtifactReadSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.artifact-starred-set"),
+    payload: ThreadArtifactStarredSetPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

@@ -78,7 +78,7 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import { T3_CODE_SETTLE_TOOL_INSTRUCTIONS } from "../../mcp/toolkits/thread/tools.ts";
+import { T3_CODE_TOOL_INSTRUCTIONS_TEXT } from "../../mcp/toolkits/toolInstructions.ts";
 import { isShutdownRequested } from "../../processShutdown.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -102,6 +102,19 @@ import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.fromJsonString(Schema.Unknown));
+
+/**
+ * Claude has no developer-instructions channel the way Codex does, so the
+ * `t3-code` tool guidance rides on the preset system prompt — and only when
+ * the MCP session that offers those tools actually exists.
+ *
+ * Read at session start, unlike Codex's per-turn developer instructions: an
+ * existing thread keeps the text its session was created with until a new
+ * provider session starts.
+ */
+export function claudeSystemPromptAppend(hasMcpSession: boolean): { append?: string } {
+  return hasMcpSession ? { append: T3_CODE_TOOL_INSTRUCTIONS_TEXT } : {};
+}
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
 
@@ -4981,13 +4994,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        // Claude has no developer-instructions channel the way Codex does, so
-        // the `t3-code` tool guidance rides on the preset system prompt — and
-        // only when the MCP session that offers those tools actually exists.
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          ...(mcpSession ? { append: T3_CODE_SETTLE_TOOL_INSTRUCTIONS } : {}),
+          ...claudeSystemPromptAppend(mcpSession !== undefined),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is

@@ -1099,6 +1099,13 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
   /**
+   * Open a file that lives on THIS machine with the OS launcher, preferring a
+   * browser. Separate from `openExternal`, which takes a URL and deliberately
+   * refuses `file:`. Optional: older desktop builds lack it, and a plain
+   * browser client has no bridge at all, so callers must handle its absence.
+   */
+  openPathInBrowser?: (path: string) => Promise<DesktopOpenPathOutcome>;
+  /**
    * Probe this desktop machine for installed remote-capable editor CLIs
    * (used for remote open-in-editor deep links). Optional: older desktop
    * builds lack it; callers fall back to VS Code only.
@@ -1232,6 +1239,12 @@ export interface LocalApi {
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
+    /**
+     * Open a file on the machine running this client. Resolves to
+     * `unsupported-platform` when there is no desktop bridge, because a
+     * browser tab cannot reach the filesystem.
+     */
+    openPathInBrowser: (path: string) => Promise<DesktopOpenPathOutcome>;
   };
   contextMenu: {
     show: <T extends string>(
@@ -1245,6 +1258,22 @@ export interface LocalApi {
     setClientSettings: (settings: ClientSettings) => Promise<void>;
   };
 }
+
+/**
+ * Result of asking the desktop shell to open a local file.
+ *
+ * Not a boolean: the renderer cannot look at the filesystem, so only this
+ * layer can tell "the file the agent wrote is gone" apart from "nothing on
+ * this machine would open it", and the two need different words to the user.
+ */
+export const DESKTOP_OPEN_PATH_OUTCOMES = [
+  "opened",
+  "missing",
+  "invalid-path",
+  "launch-failed",
+  "unsupported-platform",
+] as const;
+export type DesktopOpenPathOutcome = (typeof DESKTOP_OPEN_PATH_OUTCOMES)[number];
 
 /**
  * APIs bound to a specific backend environment connection.

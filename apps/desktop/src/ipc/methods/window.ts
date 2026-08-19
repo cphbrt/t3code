@@ -1,6 +1,7 @@
 import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
+  DESKTOP_OPEN_PATH_OUTCOMES,
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
   EDITORS,
@@ -24,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopPathOpener from "../../app/DesktopPathOpener.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -315,6 +317,16 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+export const openPathInBrowser = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_PATH_IN_BROWSER_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Literals(DESKTOP_OPEN_PATH_OUTCOMES),
+  handler: Effect.fn("desktop.ipc.window.openPathInBrowser")(function* (path) {
+    const opener = yield* DesktopPathOpener.DesktopPathOpener;
+    return yield* opener.openInBrowser(path);
   }),
 });
 

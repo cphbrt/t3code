@@ -41,6 +41,7 @@ const baseThread: OrchestrationThread = {
   messages: [],
   proposedPlans: [],
   activities: [],
+  artifacts: [],
   checkpoints: [],
   session: null,
 };
@@ -879,6 +880,153 @@ describe("applyThreadDetailEvent", () => {
         expect(result.thread.messages).toHaveLength(2);
         expect(result.thread.latestTurn?.turnId).toBe("turn-1");
       }
+    });
+  });
+
+  describe("artifacts", () => {
+    const artifact = (overrides: { id: string; recordedAt?: string; readAt?: string | null }) => ({
+      id: overrides.id,
+      path: `/srv/work/${overrides.id}.md`,
+      recordedAt: overrides.recordedAt ?? "2026-04-01T12:00:00.000Z",
+      readAt: overrides.readAt ?? null,
+      starredAt: null,
+    });
+
+    const artifactEvent = (type: string, payload: Record<string, unknown>) =>
+      ({
+        ...baseEventFields,
+        sequence: 20,
+        occurredAt: "2026-04-01T14:00:00.000Z",
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type,
+        payload: { threadId: ThreadId.make("thread-1"), ...payload },
+      }) as any;
+
+    const threadWith = (artifacts: ReturnType<typeof artifact>[]): OrchestrationThread => ({
+      ...baseThread,
+      artifacts: artifacts as OrchestrationThread["artifacts"],
+    });
+
+    it("appends a recorded artifact in recordedAt order", () => {
+      const first = applyThreadDetailEvent(
+        baseThread,
+        artifactEvent("thread.artifact-recorded", {
+          artifact: artifact({ id: "b", recordedAt: "2026-04-01T12:00:00.000Z" }),
+        }),
+      );
+      expect(first.kind).toBe("updated");
+      if (first.kind !== "updated") return;
+
+      const second = applyThreadDetailEvent(
+        first.thread,
+        artifactEvent("thread.artifact-recorded", {
+          artifact: artifact({ id: "a", recordedAt: "2026-04-01T11:00:00.000Z" }),
+        }),
+      );
+      expect(second.kind).toBe("updated");
+      if (second.kind !== "updated") return;
+      expect(second.thread.artifacts.map((entry) => entry.id)).toEqual(["a", "b"]);
+    });
+
+    it("replaces a redelivered artifact rather than duplicating it", () => {
+      const result = applyThreadDetailEvent(
+        threadWith([artifact({ id: "a" })]),
+        artifactEvent("thread.artifact-recorded", {
+          artifact: { ...artifact({ id: "a" }), path: "/srv/work/renamed.md" },
+        }),
+      );
+      expect(result.kind).toBe("updated");
+      if (result.kind !== "updated") return;
+      expect(result.thread.artifacts).toHaveLength(1);
+      expect(result.thread.artifacts[0]?.path).toBe("/srv/work/renamed.md");
+    });
+
+    it("never bumps updatedAt, so the sidebar does not reorder", () => {
+      for (const event of [
+        artifactEvent("thread.artifact-recorded", { artifact: artifact({ id: "a" }) }),
+        artifactEvent("thread.artifact-read-set", {
+          artifactId: "a",
+          readAt: "2026-04-01T14:00:00.000Z",
+        }),
+        artifactEvent("thread.artifact-starred-set", {
+          artifactId: "a",
+          starredAt: "2026-04-01T14:00:00.000Z",
+        }),
+      ]) {
+        const result = applyThreadDetailEvent(threadWith([artifact({ id: "a" })]), event);
+        expect(result.kind).toBe("updated");
+        if (result.kind !== "updated") continue;
+        expect(result.thread.updatedAt).toBe(baseThread.updatedAt);
+      }
+    });
+
+    it("sets and clears readAt without moving the row", () => {
+      const thread = threadWith([artifact({ id: "a" }), artifact({ id: "b" })]);
+      const read = applyThreadDetailEvent(
+        thread,
+        artifactEvent("thread.artifact-read-set", {
+          artifactId: "b",
+          readAt: "2026-04-01T14:00:00.000Z",
+        }),
+      );
+      expect(read.kind).toBe("updated");
+      if (read.kind !== "updated") return;
+      expect(read.thread.artifacts.map((entry) => entry.id)).toEqual(["a", "b"]);
+      expect(read.thread.artifacts[1]?.readAt).toBe("2026-04-01T14:00:00.000Z");
+
+      const unread = applyThreadDetailEvent(
+        read.thread,
+        artifactEvent("thread.artifact-read-set", { artifactId: "b", readAt: null }),
+      );
+      expect(unread.kind).toBe("updated");
+      if (unread.kind !== "updated") return;
+      expect(unread.thread.artifacts[1]?.readAt).toBeNull();
+    });
+
+    it("sets and clears starredAt without moving the row", () => {
+      const thread = threadWith([artifact({ id: "a" }), artifact({ id: "b" })]);
+      const starred = applyThreadDetailEvent(
+        thread,
+        artifactEvent("thread.artifact-starred-set", {
+          artifactId: "a",
+          starredAt: "2026-04-01T14:00:00.000Z",
+        }),
+      );
+      expect(starred.kind).toBe("updated");
+      if (starred.kind !== "updated") return;
+      expect(starred.thread.artifacts.map((entry) => entry.id)).toEqual(["a", "b"]);
+      expect(starred.thread.artifacts[0]?.starredAt).toBe("2026-04-01T14:00:00.000Z");
+
+      const unstarred = applyThreadDetailEvent(
+        starred.thread,
+        artifactEvent("thread.artifact-starred-set", { artifactId: "a", starredAt: null }),
+      );
+      expect(unstarred.kind).toBe("updated");
+      if (unstarred.kind !== "updated") return;
+      expect(unstarred.thread.artifacts[0]?.starredAt).toBeNull();
+    });
+
+    it("ignores a read or starred event for an artifact it has never seen", () => {
+      const thread = threadWith([artifact({ id: "a" })]);
+      expect(
+        applyThreadDetailEvent(
+          thread,
+          artifactEvent("thread.artifact-read-set", {
+            artifactId: "missing",
+            readAt: "2026-04-01T14:00:00.000Z",
+          }),
+        ).kind,
+      ).toBe("unchanged");
+      expect(
+        applyThreadDetailEvent(
+          thread,
+          artifactEvent("thread.artifact-starred-set", {
+            artifactId: "missing",
+            starredAt: "2026-04-01T14:00:00.000Z",
+          }),
+        ).kind,
+      ).toBe("unchanged");
     });
   });
 

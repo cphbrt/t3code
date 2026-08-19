@@ -22,6 +22,7 @@ import { ProjectionPendingApprovalRepository } from "../../persistence/Services/
 import { ProjectionProjectRepository } from "../../persistence/Services/ProjectionProjects.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import { ProjectionThreadActivityRepository } from "../../persistence/Services/ProjectionThreadActivities.ts";
+import { ProjectionThreadArtifactRepository } from "../../persistence/Services/ProjectionThreadArtifacts.ts";
 import { type ProjectionThreadActivity } from "../../persistence/Services/ProjectionThreadActivities.ts";
 import {
   type ProjectionThreadMessage,
@@ -41,6 +42,7 @@ import { ProjectionPendingApprovalRepositoryLive } from "../../persistence/Layer
 import { ProjectionProjectRepositoryLive } from "../../persistence/Layers/ProjectionProjects.ts";
 import { ProjectionStateRepositoryLive } from "../../persistence/Layers/ProjectionState.ts";
 import { ProjectionThreadActivityRepositoryLive } from "../../persistence/Layers/ProjectionThreadActivities.ts";
+import { ProjectionThreadArtifactRepositoryLive } from "../../persistence/Layers/ProjectionThreadArtifacts.ts";
 import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { ProjectionThreadProposedPlanRepositoryLive } from "../../persistence/Layers/ProjectionThreadProposedPlans.ts";
 import { ProjectionThreadSessionRepositoryLive } from "../../persistence/Layers/ProjectionThreadSessions.ts";
@@ -64,6 +66,7 @@ export const ORCHESTRATION_PROJECTOR_NAMES = {
   threadMessages: "projection.thread-messages",
   threadProposedPlans: "projection.thread-proposed-plans",
   threadActivities: "projection.thread-activities",
+  threadArtifacts: "projection.thread-artifacts",
   threadSessions: "projection.thread-sessions",
   threadTurns: "projection.thread-turns",
   checkpoints: "projection.checkpoints",
@@ -609,6 +612,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
     const projectionThreadProposedPlanRepository = yield* ProjectionThreadProposedPlanRepository;
     const projectionThreadActivityRepository = yield* ProjectionThreadActivityRepository;
+    const projectionThreadArtifactRepository = yield* ProjectionThreadArtifactRepository;
     const projectionThreadSessionRepository = yield* ProjectionThreadSessionRepository;
     const projectionTurnRepository = yield* ProjectionTurnRepository;
     const projectionPendingApprovalRepository = yield* ProjectionPendingApprovalRepository;
@@ -930,11 +934,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         return;
       }
 
-      const [messages, proposedPlans, activities, pendingApprovals] = yield* Effect.all([
+      const [messages, proposedPlans, activities, pendingApprovals, artifacts] = yield* Effect.all([
         projectionThreadMessageRepository.listByThreadId({ threadId }),
         projectionThreadProposedPlanRepository.listByThreadId({ threadId }),
         projectionThreadActivityRepository.listByThreadId({ threadId }),
         projectionPendingApprovalRepository.listByThreadId({ threadId }),
+        projectionThreadArtifactRepository.listByThreadId({ threadId }),
       ]);
 
       let latestUserMessageAt: string | null = null;
@@ -955,6 +960,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         latestTurnId: existingRow.value.latestTurnId,
         proposedPlans,
       });
+      const unreadArtifactCount = artifacts.filter((artifact) => artifact.readAt === null).length;
 
       yield* projectionThreadRepository.upsert({
         ...existingRow.value,
@@ -962,6 +968,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         pendingApprovalCount,
         pendingUserInputCount,
         hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
+        unreadArtifactCount,
       });
     });
 
@@ -996,6 +1003,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
+            unreadArtifactCount: 0,
             deletedAt: null,
           });
           return;
@@ -1266,6 +1274,15 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        // Refreshes the shell summary (unreadArtifactCount) without touching
+        // updatedAt: an artifact arriving, or being read or starred, must not
+        // reorder the sidebar.
+        case "thread.artifact-recorded":
+        case "thread.artifact-read-set":
+        case "thread.artifact-starred-set":
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+
         case "thread.session-set": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
@@ -1518,6 +1535,43 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }).pipe(Effect.asVoid);
           return;
         }
+
+        default:
+          return;
+      }
+    });
+
+    const applyThreadArtifactsProjection: ProjectorDefinition["apply"] = Effect.fn(
+      "applyThreadArtifactsProjection",
+    )(function* (event, _attachmentSideEffects) {
+      switch (event.type) {
+        case "thread.artifact-recorded":
+          yield* projectionThreadArtifactRepository.upsert({
+            artifactId: event.payload.artifact.id,
+            threadId: event.payload.threadId,
+            path: event.payload.artifact.path,
+            recordedAt: event.payload.artifact.recordedAt,
+            readAt: event.payload.artifact.readAt,
+            starredAt: event.payload.artifact.starredAt,
+            sequence: event.sequence,
+          });
+          return;
+
+        case "thread.artifact-read-set":
+          yield* projectionThreadArtifactRepository.setRead({
+            threadId: event.payload.threadId,
+            artifactId: event.payload.artifactId,
+            readAt: event.payload.readAt,
+          });
+          return;
+
+        case "thread.artifact-starred-set":
+          yield* projectionThreadArtifactRepository.setStarred({
+            threadId: event.payload.threadId,
+            artifactId: event.payload.artifactId,
+            starredAt: event.payload.starredAt,
+          });
+          return;
 
         default:
           return;
@@ -2022,6 +2076,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         apply: applyThreadActivitiesProjection,
       },
       {
+        name: ORCHESTRATION_PROJECTOR_NAMES.threadArtifacts,
+        apply: applyThreadArtifactsProjection,
+      },
+      {
         name: ORCHESTRATION_PROJECTOR_NAMES.threadSessions,
         apply: applyThreadSessionsProjection,
       },
@@ -2144,6 +2202,7 @@ export const OrchestrationProjectionPipelineLive = Layer.effect(
   Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
   Layer.provideMerge(ProjectionThreadProposedPlanRepositoryLive),
   Layer.provideMerge(ProjectionThreadActivityRepositoryLive),
+  Layer.provideMerge(ProjectionThreadArtifactRepositoryLive),
   Layer.provideMerge(ProjectionThreadSessionRepositoryLive),
   Layer.provideMerge(ProjectionTurnRepositoryLive),
   Layer.provideMerge(ProjectionPendingApprovalRepositoryLive),

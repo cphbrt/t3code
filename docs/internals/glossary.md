@@ -46,6 +46,10 @@ A thread's own agent asking, mid-turn, for the thread to settle once that turn c
 
 A user-visible log item attached to a thread. In [the contracts][1], activities cover important non-message events like approvals, tool actions, and failures. They are projected into thread state in [projector.ts][4].
 
+#### Artifact
+
+A file an agent made for the user, recorded against a thread by the `show_chris` MCP tool ([tools.ts][25]). Only the absolute path is recorded — the file itself stays where the agent wrote it and is never served or copied. In [the contracts][1] an artifact carries `path`, `recordedAt`, and nullable `readAt`/`starredAt`. Recording, reading, and starring never bump the thread's `updatedAt`, so an artifact cannot reorder the sidebar. Nothing auto-opens: the user opens one from the Artifacts right-panel surface, and opening is a client-side action the agent is deliberately told nothing about. See [decider.ts][8], [projector.ts][4], and [show-chris-artifacts.md][26].
+
 ### Orchestration
 
 Orchestration is the server-side domain layer that turns runtime activity into stable app state. The main entry point is [OrchestrationEngine.ts][7], with core logic in [decider.ts][8] and [projector.ts][4].
@@ -183,3 +187,5 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [22]: ../../apps/server/src/checkpointing/Utils.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
+[25]: ../../apps/server/src/mcp/toolkits/artifact/tools.ts
+[26]: ./show-chris-artifacts.md
