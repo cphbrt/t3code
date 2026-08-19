@@ -1,6 +1,6 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
-import { T3_CODE_SETTLE_TOOL_INSTRUCTIONS } from "../mcp/toolkits/thread/tools.ts";
+import { T3_CODE_TOOL_INSTRUCTIONS_TEXT } from "../mcp/toolkits/toolInstructions.ts";
 
 const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 
@@ -16,7 +16,7 @@ Do not switch to global browser skills, Chrome, Node REPL browser automation, st
 /** Guidance for the non-browser tools the `t3-code` MCP server exposes. */
 const T3_CODE_SHARED_TOOL_INSTRUCTIONS = `
 
-${T3_CODE_SETTLE_TOOL_INSTRUCTIONS}
+${T3_CODE_TOOL_INSTRUCTIONS_TEXT}
 `;
 
 /**

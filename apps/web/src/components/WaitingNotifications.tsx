@@ -8,12 +8,14 @@ import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettin
 import { useThreadShells } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
+import { useRightPanelStore } from "../rightPanelStore";
 import {
+  artifactNotificationContent,
   planWaitingNotifications,
   resolveWaitingNotificationKind,
   waitingNotificationContent,
   type WaitingNotificationCandidate,
-  type WaitingNotificationKind,
+  type WaitingNotificationObservation,
 } from "./WaitingNotifications.logic";
 
 /**
@@ -83,7 +85,7 @@ export function WaitingNotifications() {
   const threads = useThreadShells();
   const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const navigate = useNavigate();
-  const observedKindsRef = useRef<ReadonlyMap<string, WaitingNotificationKind | null>>(new Map());
+  const observedRef = useRef<ReadonlyMap<string, WaitingNotificationObservation>>(new Map());
   const requestedPermissionRef = useRef(false);
 
   useEffect(() => {
@@ -115,16 +117,17 @@ export function WaitingNotifications() {
         // effectiveSnoozed already reports false once a snoozed thread raises
         // its hand, so a break-through state still notifies.
         snoozed: effectiveSnoozed(thread, { now }),
+        unreadArtifactCount: thread.unreadArtifactCount,
       });
     }
 
     const plan = planWaitingNotifications({
       candidates,
-      previousKinds: observedKindsRef.current,
+      previousObservations: observedRef.current,
       enabled,
       appFocused: document.hasFocus(),
     });
-    observedKindsRef.current = plan.nextKinds;
+    observedRef.current = plan.nextObservations;
 
     if (plan.emissions.length === 0) {
       return;
@@ -145,7 +148,10 @@ export function WaitingNotifications() {
       if (!threadRef || threadTitle === undefined) {
         continue;
       }
-      const content = waitingNotificationContent(emission.kind, threadTitle);
+      const content =
+        emission.reason === "waiting"
+          ? waitingNotificationContent(emission.kind, threadTitle)
+          : artifactNotificationContent(emission.newArtifactCount, threadTitle);
       showWaitingNotification({
         tag: emission.threadKey,
         title: content.title,
@@ -153,6 +159,11 @@ export function WaitingNotifications() {
         onActivate: () => {
           window.focus();
           void window.desktopBridge?.revealWindow?.();
+          // Land on what the banner was about: an artifact banner opens the
+          // surface holding it, so the click finishes the errand.
+          if (emission.reason === "artifacts") {
+            useRightPanelStore.getState().open(threadRef, "artifacts");
+          }
           void navigate({
             to: "/$environmentId/$threadId",
             params: buildThreadRouteParams(threadRef),

@@ -30,6 +30,14 @@ function createBrowserLocalApi(): LocalApi {
 
         window.open(url, "_blank", "noopener,noreferrer");
       },
+      openPathInBrowser: async (path) => {
+        // No bridge (a plain browser tab) or an older desktop build without
+        // the capability: there is nothing on this side that can reach a file.
+        if (!window.desktopBridge?.openPathInBrowser) {
+          return "unsupported-platform";
+        }
+        return window.desktopBridge.openPathInBrowser(path);
+      },
     },
     contextMenu: {
       show: async <T extends string>(

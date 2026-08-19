@@ -53,6 +53,7 @@ function makeReadModel(input: {
         messages: input.messages ?? [],
         proposedPlans: [],
         activities: input.activities ?? [],
+        artifacts: [],
         checkpoints: [],
         session: null,
       },

@@ -255,6 +255,28 @@ const makeSettleEvents = Effect.fn("makeSettleEvents")(function* ({
   return companionEvents.length > 0 ? [settledEvent, ...companionEvents] : [settledEvent];
 });
 
+/**
+ * Rejects a read/star command naming an artifact this thread does not have.
+ * The projected read model is authoritative here: an id that is not in it
+ * either never existed or belongs to another thread, and both are the
+ * client sending us something we must not silently no-op on.
+ */
+function requireThreadArtifact(input: {
+  readonly command: OrchestrationCommand;
+  readonly thread: OrchestrationThread;
+  readonly artifactId: string;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.thread.artifacts.some((artifact) => artifact.id === input.artifactId)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    new OrchestrationCommandInvariantError({
+      commandType: input.command.type,
+      detail: `Artifact '${input.artifactId}' does not exist on thread '${input.thread.id}'.`,
+    }),
+  );
+}
+
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
     readonly aggregateKind: OrchestrationEvent["aggregateKind"];
@@ -1782,6 +1804,88 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
       return [unsettledEvent, activityAppendedEvent];
+    }
+
+    case "thread.artifact.record": {
+      // Not archived-guarded on purpose: this arrives from the thread's own
+      // running agent over its MCP credential, and losing the file it just
+      // made for the user because the thread was archived mid-turn would be
+      // worse than recording it on an archived thread.
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      const occurredAt = yield* nowIso;
+      const base = yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: command.threadId,
+        occurredAt,
+        commandId: command.commandId,
+      });
+      return {
+        ...base,
+        type: "thread.artifact-recorded",
+        payload: {
+          threadId: command.threadId,
+          artifact: {
+            // The event's own id is the artifact's id: unique by construction,
+            // and it saves the MCP caller minting one it cannot deduplicate.
+            id: base.eventId,
+            path: command.path,
+            recordedAt: occurredAt,
+            readAt: null,
+            starredAt: null,
+          },
+        },
+      };
+    }
+
+    case "thread.artifact.set-read": {
+      // requireThread, not requireThreadNotArchived, matching record: you can
+      // still tidy an archived thread's artifacts, and an archived thread with
+      // a permanently stuck unread count is the worse outcome.
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      yield* requireThreadArtifact({ command, thread, artifactId: command.artifactId });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.artifact-read-set",
+        payload: {
+          threadId: command.threadId,
+          artifactId: command.artifactId,
+          readAt: command.read ? occurredAt : null,
+        },
+      };
+    }
+
+    case "thread.artifact.set-starred": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      yield* requireThreadArtifact({ command, thread, artifactId: command.artifactId });
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.artifact-starred-set",
+        payload: {
+          threadId: command.threadId,
+          artifactId: command.artifactId,
+          starredAt: command.starred ? occurredAt : null,
+        },
+      };
     }
 
     default: {

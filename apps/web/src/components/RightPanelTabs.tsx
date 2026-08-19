@@ -6,6 +6,7 @@ import {
   Files,
   GitPullRequest,
   Globe2,
+  Inbox,
   Plus,
   ScrollText,
   TerminalSquare,
@@ -75,15 +76,22 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddArtifacts: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  artifactsAvailable: boolean;
   pullRequestStatuses?: Readonly<Record<string, PullRequestTabStatus>>;
   /** Running + waiting subagents; badges the Agents card in the empty state. */
   liveAgentCount: number;
+  /**
+   * Unread artifacts on this thread; badges the Artifacts card in the empty
+   * state and lights the Artifacts tab's pending dot.
+   */
+  unreadArtifactCount: number;
   children: ReactNode;
 }
 
@@ -102,6 +110,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   agents: "Agents are only available from a thread.",
+  artifacts: "Artifacts are only available from a thread.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -124,6 +133,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   agents: "Available from a thread.",
+  artifacts: "Available from a thread.",
 } as const;
 
 type TabContextMenuAction =
@@ -236,13 +246,16 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddAgents: () => void;
+  onAddArtifacts: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   agentsAvailable: boolean;
+  artifactsAvailable: boolean;
   liveAgentCount: number;
+  unreadArtifactCount: number;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -307,6 +320,16 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
       onClick: props.onAddAgents,
       badgeCount: props.liveAgentCount,
+    },
+    {
+      label: "Artifacts",
+      description: "Files agents made for you.",
+      icon: Inbox,
+      shortcut: "R",
+      available: props.artifactsAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.artifacts,
+      onClick: props.onAddArtifacts,
+      badgeCount: props.unreadArtifactCount,
     },
   ] as const;
 
@@ -498,6 +521,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "agents":
       return "Agents";
+    case "artifacts":
+      return "Artifacts";
     case "agent-transcript":
       // The agent's own title, so several open transcripts are tellable apart
       // (the tab itself truncates). Older persisted surfaces have no title.
@@ -587,6 +612,8 @@ function SurfaceIcon({
     }
     case "agents":
       return <Bot className="size-3 shrink-0" />;
+    case "artifacts":
+      return <Inbox className="size-3 shrink-0" />;
     case "agent-transcript":
       return <ScrollText className="size-3 shrink-0" />;
   }
@@ -646,6 +673,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.agentsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.agents,
       onClick: props.onAddAgents,
+    },
+    {
+      label: "Artifacts",
+      icon: Inbox,
+      shortcut: "R",
+      available: props.artifactsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.artifacts,
+      onClick: props.onAddArtifacts,
     },
   ] as const;
 
@@ -794,7 +829,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           <div className="flex h-full w-max min-w-full items-center gap-1">
             {props.surfaces.map((surface) => {
               const active = surface.id === props.activeSurfaceId;
-              const pending = props.pendingSurfaceIds.has(surface.id);
+              // Unread artifacts reuse the generic tab dot rather than a second
+              // badge idiom; the surface itself has no other "needs you" state.
+              const pending =
+                props.pendingSurfaceIds.has(surface.id) ||
+                (surface.kind === "artifacts" && props.unreadArtifactCount > 0);
               const title = surfaceTitle(surface, props.previewSessions, props.terminalLabelsById);
               const previewTabId = previewTabIdOf(surface, props.previewSessions);
               // Desktop state is keyed by the session id, but desktop actions
@@ -939,13 +978,16 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddAgents={props.onAddAgents}
+            onAddArtifacts={props.onAddArtifacts}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             agentsAvailable={props.agentsAvailable}
+            artifactsAvailable={props.artifactsAvailable}
             liveAgentCount={props.liveAgentCount}
+            unreadArtifactCount={props.unreadArtifactCount}
           />
         ) : (
           props.children

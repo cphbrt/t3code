@@ -360,6 +360,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               createdAt: "2026-02-24T00:00:06.000Z",
             },
           ],
+          artifacts: [],
           checkpoints: [
             {
               turnId: asTurnId("turn-1"),
@@ -458,6 +459,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          unreadArtifactCount: 0,
           backgroundLiveness: null,
           planProgress: null,
         },
@@ -572,6 +574,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadArtifacts}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 4, '2026-04-06T00:00:07.000Z')
       `;
@@ -676,6 +679,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 4, '2026-04-06T00:00:07.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadArtifacts}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 4, '2026-04-06T00:00:07.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 4, '2026-04-06T00:00:07.000Z')
       `;
@@ -1425,6 +1429,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (${ORCHESTRATION_PROJECTOR_NAMES.threadMessages}, 3, '2026-04-03T00:00:40.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadProposedPlans}, 3, '2026-04-03T00:00:40.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadActivities}, 3, '2026-04-03T00:00:40.000Z'),
+          (${ORCHESTRATION_PROJECTOR_NAMES.threadArtifacts}, 3, '2026-04-03T00:00:40.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}, 3, '2026-04-03T00:00:40.000Z'),
           (${ORCHESTRATION_PROJECTOR_NAMES.checkpoints}, 3, '2026-04-03T00:00:40.000Z')
       `;

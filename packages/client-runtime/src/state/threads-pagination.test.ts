@@ -108,6 +108,7 @@ const BASE_THREAD: OrchestrationThread = {
   messages: [RECENT_MESSAGE],
   proposedPlans: [],
   activities: [],
+  artifacts: [],
   checkpoints: [checkpoint("turn-2", 2)],
   session: null,
 };
@@ -313,6 +314,25 @@ describe("thread pagination state", () => {
       expect(windows[0]).toBeUndefined();
       const subscribeInput = yield* Ref.get(harness.lastSubscribeInput);
       expect(subscribeInput?.turnLimit).toBeUndefined();
+    }),
+  );
+
+  it.effect("always opts in to artifact events, regardless of server capabilities", () =>
+    Effect.gen(function* () {
+      // Opt-in because `OrchestrationEvent` is a closed union and an older
+      // client cannot decode the artifact types. This client can, so it asks
+      // unconditionally — including against a server too old to advertise
+      // pagination, which simply drops the unknown key.
+      const windowed = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+      yield* windowed.awaitState((value) => Option.isSome(value.page));
+      expect((yield* Ref.get(windowed.lastSubscribeInput))?.includeArtifactEvents).toBe(true);
+
+      const legacy = yield* makeHarness({
+        paginationCapability: false,
+        initialResponse: Option.some({ snapshotSequence: 10, thread: BASE_THREAD }),
+      });
+      yield* legacy.awaitState((value) => Option.isSome(value.data));
+      expect((yield* Ref.get(legacy.lastSubscribeInput))?.includeArtifactEvents).toBe(true);
     }),
   );
 

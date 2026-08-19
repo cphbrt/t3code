@@ -38,6 +38,7 @@ const readModel: OrchestrationReadModel = {
       messages: [],
       proposedPlans: [],
       activities: [],
+      artifacts: [],
       checkpoints: [],
       session: null,
     },

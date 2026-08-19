@@ -156,6 +156,7 @@ describe("OrchestrationEngine", () => {
           messages: [],
           proposedPlans: [],
           activities: [],
+          artifacts: [],
           checkpoints: [],
           session: null,
         },
@@ -168,6 +169,7 @@ describe("OrchestrationEngine", () => {
         messages: [],
         proposedPlans: [],
         activities: [],
+        artifacts: [],
         checkpoints: [],
       })),
     };

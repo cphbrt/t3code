@@ -62,6 +62,7 @@ function makeReadModel(pending: ScheduledThreadTurn | null): OrchestrationReadMo
         messages: [],
         proposedPlans: [],
         activities: [],
+        artifacts: [],
         checkpoints: [],
         session: null,
       },

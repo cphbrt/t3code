@@ -54,6 +54,8 @@ export type RespondToThreadApprovalInput = CommandInput<"thread.approval.respond
 export type RespondToThreadUserInputInput = CommandInput<"thread.user-input.respond">;
 export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert">;
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type SetThreadArtifactReadInput = CommandInput<"thread.artifact.set-read">;
+export type SetThreadArtifactStarredInput = CommandInput<"thread.artifact.set-starred">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -222,6 +224,29 @@ export const unpinThread: (input: UnpinThreadInput) => CommandEffect = Effect.fn
     commandId: yield* commandId(input),
   });
 });
+
+/**
+ * Read and starred are user gestures on an already-recorded artifact: the
+ * command carries only the intent and the decider stamps the timestamp, the
+ * same split thread.pin uses.
+ */
+export const setThreadArtifactRead: (input: SetThreadArtifactReadInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.setThreadArtifactRead")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.artifact.set-read",
+      commandId: yield* commandId(input),
+    });
+  });
+
+export const setThreadArtifactStarred: (input: SetThreadArtifactStarredInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.setThreadArtifactStarred")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.artifact.set-starred",
+      commandId: yield* commandId(input),
+    });
+  });
 
 export const reorderPinnedThread: (input: ReorderPinnedThreadInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.reorderPinnedThread",

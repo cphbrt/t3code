@@ -22,6 +22,8 @@ import {
   PreviewSnapshotToolkit,
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
+import { ArtifactToolkitHandlersLive } from "./toolkits/artifact/handlers.ts";
+import { ArtifactToolkit } from "./toolkits/artifact/tools.ts";
 import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import { UsageToolkitHandlersLive } from "./toolkits/usage/handlers.ts";
@@ -231,6 +233,10 @@ export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pi
  * server, shared by every credential. Its own `ProviderRegistry` requirement
  * bubbles out to `makeRoutesLayer`, where `RuntimeDependenciesLive` satisfies it.
  */
+export const ArtifactToolkitRegistrationLive = McpServer.toolkit(ArtifactToolkit).pipe(
+  Layer.provide(ArtifactToolkitHandlersLive),
+);
+
 export const UsageToolkitRegistrationLive = McpServer.toolkit(UsageToolkit).pipe(
   Layer.provide(UsageToolkitHandlersLive.pipe(Layer.provide(ProviderUsageStatus.layer))),
 );
@@ -246,4 +252,5 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   ThreadToolkitRegistrationLive,
   UsageToolkitRegistrationLive,
+  ArtifactToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));

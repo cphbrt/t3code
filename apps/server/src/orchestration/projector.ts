@@ -16,6 +16,9 @@ import {
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
+  ThreadArtifactReadSetPayload,
+  ThreadArtifactRecordedPayload,
+  ThreadArtifactStarredSetPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
@@ -169,6 +172,27 @@ function retainThreadProposedPlansAfterRevert(
 ): ReadonlyArray<OrchestrationThread["proposedPlans"][number]> {
   return proposedPlans.filter(
     (proposedPlan) => proposedPlan.turnId === null || retainedTurnIds.has(proposedPlan.turnId),
+  );
+}
+
+function compareThreadArtifacts(
+  left: OrchestrationThread["artifacts"][number],
+  right: OrchestrationThread["artifacts"][number],
+): number {
+  return left.recordedAt.localeCompare(right.recordedAt) || left.id.localeCompare(right.id);
+}
+
+/**
+ * Rewrites one artifact in place. Ordering and the rest of the list are
+ * untouched: a read or star must never move a row under the user.
+ */
+function patchThreadArtifact(
+  artifacts: OrchestrationThread["artifacts"],
+  artifactId: string,
+  patch: Partial<OrchestrationThread["artifacts"][number]>,
+): OrchestrationThread["artifacts"] {
+  return artifacts.map((artifact) =>
+    artifact.id === artifactId ? { ...artifact, ...patch } : artifact,
   );
 }
 
@@ -863,6 +887,78 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
               updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.artifact-recorded":
+      return decodeForEvent(
+        ThreadArtifactRecordedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          const artifacts = [
+            ...thread.artifacts.filter((entry) => entry.id !== payload.artifact.id),
+            payload.artifact,
+          ].toSorted(compareThreadArtifacts);
+
+          // No updatedAt bump: recording a file must not reorder the sidebar.
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, { artifacts }),
+          };
+        }),
+      );
+
+    case "thread.artifact-read-set":
+      return decodeForEvent(
+        ThreadArtifactReadSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              artifacts: patchThreadArtifact(thread.artifacts, payload.artifactId, {
+                readAt: payload.readAt,
+              }),
+            }),
+          };
+        }),
+      );
+
+    case "thread.artifact-starred-set":
+      return decodeForEvent(
+        ThreadArtifactStarredSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              artifacts: patchThreadArtifact(thread.artifacts, payload.artifactId, {
+                starredAt: payload.starredAt,
+              }),
             }),
           };
         }),
