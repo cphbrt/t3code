@@ -18,6 +18,7 @@ import {
 import {
   DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE,
   DEFAULT_UNIFIED_SETTINGS,
+  DEFAULT_USAGE_PACE_SCHEDULE,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
@@ -40,6 +41,8 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION } from "../../branding";
+import { UsagePaceScheduleControl } from "../usagePace/UsagePaceScheduleControl";
+import { usagePaceSchedulesEqual } from "../usagePace/usagePaceSchedule.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
@@ -1653,6 +1656,10 @@ export function GeneralSettingsPanel() {
   // Dictation needs the desktop bridge and a macOS host; hiding the whole
   // section elsewhere beats showing paths that could never be used.
   const showDictationSettings = dictationBridge() !== null;
+  const usagePaceScheduleIsDefault = usagePaceSchedulesEqual(
+    settings.usagePaceSchedule,
+    DEFAULT_USAGE_PACE_SCHEDULE,
+  );
 
   return (
     <SettingsPageContainer>
@@ -1835,6 +1842,23 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+
+        <SettingsRow
+          {...searchableSetting("usage-pace-schedule")}
+          description="Choose which hours count when judging whether a provider allowance is ahead of or behind schedule. Off by default, which measures plain wall-clock time."
+          resetAction={
+            usagePaceScheduleIsDefault ? null : (
+              <SettingResetButton
+                label="usage pace schedule"
+                onClick={() => updateSettings({ usagePaceSchedule: DEFAULT_USAGE_PACE_SCHEDULE })}
+              />
+            )
+          }
+        >
+          <div className="pt-1 pb-2">
+            <UsagePaceScheduleControl className="sm:max-w-md" />
+          </div>
+        </SettingsRow>
 
         <SettingsRow
           {...searchableSetting("hide-whitespace-changes")}

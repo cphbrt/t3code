@@ -162,6 +162,64 @@ export const DictationLanguage = Schema.String.check(
 export type DictationLanguage = typeof DictationLanguage.Type;
 export const DEFAULT_DICTATION_LANGUAGE = "en";
 
+export const MIN_USAGE_PACE_START_HOUR = 0;
+export const MAX_USAGE_PACE_START_HOUR = 23;
+export const UsagePaceStartHour = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_USAGE_PACE_START_HOUR, maximum: MAX_USAGE_PACE_START_HOUR }),
+);
+export type UsagePaceStartHour = typeof UsagePaceStartHour.Type;
+export const DEFAULT_USAGE_PACE_START_HOUR: UsagePaceStartHour = 9;
+
+export const MIN_USAGE_PACE_END_HOUR = 1;
+export const MAX_USAGE_PACE_END_HOUR = 24;
+export const UsagePaceEndHour = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_USAGE_PACE_END_HOUR, maximum: MAX_USAGE_PACE_END_HOUR }),
+);
+export type UsagePaceEndHour = typeof UsagePaceEndHour.Type;
+export const DEFAULT_USAGE_PACE_END_HOUR: UsagePaceEndHour = 18;
+
+/**
+ * Which instants count as time spent when judging usage pace.
+ *
+ * A quota percentage only means something next to how far through its window
+ * you are, and for someone who works office hours "how far through" is not
+ * wall-clock: a five-hour allowance that opened at 6am has burned two of its
+ * hours before the day starts. So the elapsed fraction is measured in
+ * *scheduled* minutes, and this is the predicate that decides which minutes
+ * those are.
+ *
+ * The two switches are deliberately independent rather than one three-way
+ * choice, because all four combinations are useful — in particular "hours
+ * restricted, every day" (7am to 10pm including evenings and weekends), which
+ * an enum could not express.
+ *
+ * There is no timezone field. The schedule is read in whatever zone the
+ * device is in right now, matching how reset times are already presented; a
+ * persisted zone would silently disagree with the clock in the menu bar after
+ * a flight.
+ *
+ * Both switches default off, so the out-of-the-box behaviour is plain
+ * wall-clock elapsed time and nobody acquires an opinion they did not ask for.
+ */
+export const UsagePaceSchedule = Schema.Struct({
+  /** Count only Monday through Friday. */
+  workdaysOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Count only the hours between `startHour` and `endHour`. */
+  workHoursOnly: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Local hour the counted day opens, inclusive. */
+  startHour: UsagePaceStartHour.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_USAGE_PACE_START_HOUR)),
+  ),
+  /** Local hour the counted day closes, exclusive; 24 means midnight. */
+  endHour: UsagePaceEndHour.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_USAGE_PACE_END_HOUR)),
+  ),
+});
+export type UsagePaceSchedule = typeof UsagePaceSchedule.Type;
+export const DEFAULT_USAGE_PACE_SCHEDULE: UsagePaceSchedule = Schema.decodeSync(UsagePaceSchedule)(
+  {},
+);
+
 export const ClientSettingsSchema = Schema.Struct({
   appearanceContrast: AppearanceContrast.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_APPEARANCE_CONTRAST)),
@@ -286,6 +344,11 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  // Which minutes count as elapsed when judging how far through a provider
+  // quota window you are. See `UsagePaceSchedule`.
+  usagePaceSchedule: UsagePaceSchedule.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_USAGE_PACE_SCHEDULE)),
   ),
   // Ephemeral OS notifications when a thread starts waiting on the user and
   // the app is not focused. On by default: the whole point is to be told
@@ -969,6 +1032,10 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  // Whole-object replacement, as with `providerModelPreferences`: the four
+  // fields are read together by every consumer, so a partial patch could
+  // leave an incoherent schedule (hours restricted to a range nobody set).
+  usagePaceSchedule: Schema.optionalKey(UsagePaceSchedule),
   waitingNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
 });

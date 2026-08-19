@@ -38,6 +38,7 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
 import { ProviderQuotaDetails } from "../providerQuota/ProviderQuotaPresentation";
+import { UsagePaceScheduleControl } from "../usagePace/UsagePaceScheduleControl";
 import { QuotaLimitsSection } from "./QuotaLimitsSection";
 import { useBackgroundScopes } from "../../hooks/useBackgroundScopes";
 
@@ -268,15 +269,24 @@ export function UsagePage() {
           <WorkspacePageContainer width="wide">
             {quotaProviders.length > 0 ? (
               <section className="grid gap-4" aria-labelledby="plan-limits-heading">
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div>
+                <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
+                  <div className="min-w-0">
                     <h1 id="plan-limits-heading" className="text-lg font-semibold text-foreground">
                       Plan limits
                     </h1>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="max-w-xl text-xs text-muted-foreground">
                       Provider-reported subscription allowances. These are separate from transcript
-                      token totals.
+                      token totals. Each window is judged against an even spend of its own cycle,
+                      measured in the hours you count below.
                     </p>
+                  </div>
+                  {/* Chris asked for the schedule here, next to the numbers it
+                      changes; Settings → General holds the same control. */}
+                  <div className="w-full max-w-sm rounded-xl border border-border bg-card/40 p-3 shadow-xs">
+                    <h2 className="pb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                      Counted hours
+                    </h2>
+                    <UsagePaceScheduleControl />
                   </div>
                 </div>
                 <div className="grid gap-3 md:grid-cols-2">
