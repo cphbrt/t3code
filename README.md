@@ -64,6 +64,8 @@ An idle existing thread can also hold one prompt until that provider reset. CPH 
 
 When that option is available, the composer presents **Send after reset** as a direct warm yellow/orange alternate send button beside the normal send action, rather than hiding it inside a popover.
 
+Every quota window is also shown against a pace: a tick marks where an even spend would have reached by now, and the gap is written beside it, so a percentage reads against how far through its window you are. Being behind that mark is good news. Absolute fill still decides the colour whenever it is the more urgent signal, so a nearly full window never looks calm for having filled slowly. Elapsed time can be counted in working hours instead of wall-clock hours — weekdays only, an hour range, or both — under **Settings → General → Usage pace schedule**, off by default. A window that rolls continuously rather than resetting on a cycle shows no pace at all, and an unknown pace is never drawn as zero. There is deliberately no thread-header pace readout; the composer, model picker, and Usage page carry it.
+
 CPH Code also makes prompt-cache cost risk visible. A thread's sidebar glow cools from ember through violet to blue as its likely provider cache expires, while a composer meter shows the estimated cache life, idle time, remaining warmth, evidence behind the estimate, and the approximate context exposed to an uncached resubmit. Estimates begin at each provider's documented cache lifetime — one hour for Claude, five minutes otherwise — and learn separately for each provider account and model from a rolling history of observed cache hits and misses; they are risk indicators, not provider guarantees.
 
 Agents can hand Chris a finished file rather than pasting it into the conversation. Asking one to show you something records the file against the thread and leaves it in the **Artifacts** panel — a right-panel surface opened with **R** — where rows carry an unread dot, a star that highlights without reordering, and a newest-or-oldest-first sort. Nothing opens by itself and nothing interrupts the agent; one notification arrives when files land in a thread while the app is in the background. Clicking a row opens the file on your own machine, which works in the desktop app for threads running on that machine; a browser tab or a thread on another machine still lists, marks, and stars everything and explains why opening is unavailable. The file stays where the agent wrote it — CPH Code records its path, never serves or copies it.
@@ -161,6 +163,7 @@ Full docs live in [docs/](./docs). There's no docs site yet.
 - [Keeping app and server in sync](./docs/user/updating.md)
 - [Source control integrations](./docs/user/source-control.md)
 - [Prompt-cache warmth and cold-submit risk](./docs/user/prompt-cache-warmth.md)
+- [Usage pace against provider quota windows](./docs/user/usage-pace.md)
 - Multiple accounts: [Codex](./docs/user/providers-codex.md) · [Claude](./docs/user/providers-claude.md)
 - Linux: [run T3 Code as a background service](./docs/user/background-service.md)
 

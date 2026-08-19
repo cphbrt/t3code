@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  combinedQuotaSeverity,
   primaryProviderQuotaWindow,
   providerQuotaFreshness,
   providerQuotaResetCountdown,
@@ -47,6 +48,27 @@ describe("provider quota presentation", () => {
       "warning",
       "critical",
     ]);
+  });
+
+  it("takes the worse of how full a window is and how fast it is filling", () => {
+    // Pace can only ever raise the alarm. Neither input excuses the other: a
+    // window at 97% is not calm because it got there slowly, and one at 30%
+    // is not calm because it still has room.
+    expect(combinedQuotaSeverity(30, "behind")).toBe("normal");
+    expect(combinedQuotaSeverity(30, "on-pace")).toBe("normal");
+    expect(combinedQuotaSeverity(30, "ahead")).toBe("warning");
+    expect(combinedQuotaSeverity(30, "well-ahead")).toBe("critical");
+    expect(combinedQuotaSeverity(85, "behind")).toBe("warning");
+    expect(combinedQuotaSeverity(97, "behind")).toBe("critical");
+    expect(combinedQuotaSeverity(85, "well-ahead")).toBe("critical");
+  });
+
+  it("falls back to the fill level alone when pace is unknown", () => {
+    for (const usedPercent of [10, 80, 95]) {
+      expect(combinedQuotaSeverity(usedPercent, undefined)).toBe(
+        providerQuotaSeverity(usedPercent),
+      );
+    }
   });
 
   it("labels scoped windows and stale snapshots honestly", () => {

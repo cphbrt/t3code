@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
+import { deriveUsagePace, WALL_CLOCK_SCHEDULE, type UsagePaceSchedule } from "../../lib/usagePace";
 import {
   buildCycleOverlay,
   buildQuotaPolyline,
@@ -25,7 +26,30 @@ import {
   type QuotaHistoryWindow,
 } from "./quotaHistory.logic";
 
+/**
+ * Cycle boundaries and counted-hour schedules are local-calendar questions, so
+ * the whole file runs in one zone rather than asserting different numbers on a
+ * developer's machine than in a UTC runner.
+ */
+const TEST_TIME_ZONE = "America/New_York";
+let originalTimeZone: string | undefined;
+
+beforeAll(() => {
+  originalTimeZone = process.env.TZ;
+  process.env.TZ = TEST_TIME_ZONE;
+});
+
+afterAll(() => {
+  if (originalTimeZone === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTimeZone;
+});
+
 const ORIGIN_MS = Date.parse("2026-08-01T00:00:00.000Z");
+
+/** Local wall-clock instant in the test zone. */
+function local(year: number, month: number, day: number, hour = 0): number {
+  return new Date(year, month - 1, day, hour).getTime();
+}
 
 function iso(hoursFromOrigin: number): string {
   return new Date(ORIGIN_MS + hoursFromOrigin * HOUR_MS).toISOString();
@@ -474,11 +498,30 @@ describe("buildCycleOverlay", () => {
       samples,
     });
 
+  const OFFICE_HOURS: UsagePaceSchedule = {
+    workdaysOnly: true,
+    workHoursOnly: true,
+    startHour: 9,
+    endHour: 18,
+  };
+
+  const overlayOf = (
+    samples: readonly QuotaHistorySample[],
+    nowMs: number,
+    schedule: UsagePaceSchedule = WALL_CLOCK_SCHEDULE,
+  ) => buildCycleOverlay(weekly(samples), quotaRange(30, nowMs), nowMs, schedule);
+
+  const lastPoint = (overlay: ReturnType<typeof buildCycleOverlay>) => {
+    const points = overlay.projection?.points ?? [];
+    return points[points.length - 1];
+  };
+
   it("normalises every cycle onto hours-into-the-cycle", () => {
     const overlay = buildCycleOverlay(
       weekly([sample(0, 10, 168), sample(24, 30, 168), sample(170, 5, 336), sample(200, 20, 336)]),
       quotaRange(30, ORIGIN_MS + 200 * HOUR_MS),
       ORIGIN_MS + 200 * HOUR_MS,
+      WALL_CLOCK_SCHEDULE,
     );
 
     expect(overlay.cycleHours).toBe(168);
@@ -494,6 +537,7 @@ describe("buildCycleOverlay", () => {
       weekly([sample(0, 10, 168), sample(170, 5, 336), sample(200, 20, 336)]),
       quotaRange(30, nowMs),
       nowMs,
+      WALL_CLOCK_SCHEDULE,
     );
 
     expect(overlay.cycles.map((cycle) => cycle.isCurrent)).toEqual([false, true]);
@@ -501,32 +545,36 @@ describe("buildCycleOverlay", () => {
 
   it("projects the average burn rate to the cap and dates the crossing", () => {
     const nowMs = ORIGIN_MS + 40 * HOUR_MS;
-    // Cycle began at the origin; 40h in at 20% is 0.5 points per hour, so the
-    // cap arrives at 200h — beyond the 168h cycle, hence no cap-hit time.
-    const slow = buildCycleOverlay(weekly([sample(40, 20, 168)]), quotaRange(30, nowMs), nowMs);
-    expect(slow.projection?.percentPerHour).toBeCloseTo(0.5);
+    // Cycle began at the origin; 40h of a 168h cycle at 20% projects to 84% at
+    // the reset, so the cap never arrives and the line ends at the reset.
+    const slow = overlayOf([sample(40, 20, 168)], nowMs);
     expect(slow.projection?.capHoursIn).toBeUndefined();
-    expect(slow.projection?.toHoursIn).toBe(168);
-    expect(slow.projection?.toPercent).toBeCloseTo(84);
+    expect(slow.projection?.pace.projectedFinalPercent).toBeCloseTo(84);
+    expect(lastPoint(slow)).toEqual({ hoursIn: 168, usedPercent: 84 });
 
-    // 40h in at 50% is 1.25 points per hour: the cap lands at 80h, inside the cycle.
-    const fast = buildCycleOverlay(weekly([sample(40, 50, 168)]), quotaRange(30, nowMs), nowMs);
+    // 40h in at 50% projects to 210%: the cap lands at 80h, inside the cycle.
+    const fast = overlayOf([sample(40, 50, 168)], nowMs);
     expect(fast.projection?.capHoursIn).toBeCloseTo(80);
     expect(fast.projection?.capAtMs).toBe(ORIGIN_MS + 80 * HOUR_MS);
-    expect(fast.projection?.toPercent).toBeCloseTo(100);
+    expect(lastPoint(fast)).toEqual({ hoursIn: 80, usedPercent: 100 });
   });
 
   it("continues the observed line without a kink", () => {
-    const nowMs = ORIGIN_MS + 40 * HOUR_MS;
-    const overlay = buildCycleOverlay(weekly([sample(40, 50, 168)]), quotaRange(30, nowMs), nowMs);
+    const overlay = overlayOf([sample(40, 50, 168)], ORIGIN_MS + 40 * HOUR_MS);
 
-    expect(overlay.projection?.fromHoursIn).toBe(40);
-    expect(overlay.projection?.fromPercent).toBe(50);
+    expect(overlay.projection?.points[0]).toEqual({ hoursIn: 40, usedPercent: 50 });
+  });
+
+  it("draws a straight line under the default wall-clock schedule", () => {
+    // No counted-hour boundaries to bend around, so two points is the whole
+    // projection and the SVG stays as cheap as it was.
+    const overlay = overlayOf([sample(40, 50, 168)], ORIGIN_MS + 40 * HOUR_MS);
+
+    expect(overlay.projection?.points).toHaveLength(2);
   });
 
   it("offers no projection once the cycle is already full", () => {
-    const nowMs = ORIGIN_MS + 40 * HOUR_MS;
-    const overlay = buildCycleOverlay(weekly([sample(40, 100, 168)]), quotaRange(30, nowMs), nowMs);
+    const overlay = overlayOf([sample(40, 100, 168)], ORIGIN_MS + 40 * HOUR_MS);
 
     expect(overlay.projection).toBeUndefined();
   });
@@ -534,24 +582,165 @@ describe("buildCycleOverlay", () => {
   it("offers no projection when no cycle is in progress", () => {
     // Now sits well past the end of the only observed cycle.
     const nowMs = ORIGIN_MS + 400 * HOUR_MS;
-    const overlay = buildCycleOverlay(weekly([sample(40, 50, 168)]), quotaRange(30, nowMs), nowMs);
+    const overlay = overlayOf([sample(40, 50, 168)], nowMs);
 
     expect(overlay.cycles.every((cycle) => !cycle.isCurrent)).toBe(true);
+    expect(overlay.pace).toBeUndefined();
     expect(overlay.projection).toBeUndefined();
   });
 
-  it("falls back to the longest observed span when no duration is reported", () => {
+  it("still draws an axis without a reported duration, but stays quiet about pace", () => {
+    // The longest observed span is a lower bound on the cycle, which is fine
+    // for placing a line on an axis and useless as a denominator: it would
+    // overstate the burn rate and cry wolf. The old projection extended it
+    // anyway; this one says why it will not.
     const nowMs = ORIGIN_MS + 100 * HOUR_MS;
     const overlay = buildCycleOverlay(
       windowOf({
         durationMinutes: undefined,
-        samples: [sample(0, 10), sample(50, 90), sample(60, 5), sample(100, 40)],
+        // Resets are reported; only the window's length is missing, so this
+        // isolates the duration fallback from the reset one.
+        samples: [sample(0, 10, 50), sample(50, 90, 50), sample(60, 5, 110), sample(100, 40, 110)],
       }),
       quotaRange(30, nowMs),
       nowMs,
+      WALL_CLOCK_SCHEDULE,
     );
 
     expect(overlay.cycleHours).toBe(50);
+    expect(overlay.cycles.length).toBeGreaterThan(0);
+    expect(overlay.pace).toEqual({ available: false, reason: "no-duration" });
+    expect(overlay.projection).toBeUndefined();
+  });
+
+  it("stays quiet when the provider stated no reset for the cycle", () => {
+    // Without a reset the cycle's start is only the first observation, which
+    // is a lower bound for the same reason.
+    const nowMs = ORIGIN_MS + 40 * HOUR_MS;
+    const overlay = buildCycleOverlay(
+      weekly([sample(20, 30), sample(40, 50)]),
+      quotaRange(30, nowMs),
+      nowMs,
+      WALL_CLOCK_SCHEDULE,
+    );
+
+    expect(overlay.pace).toEqual({ available: false, reason: "no-reset" });
+    expect(overlay.projection).toBeUndefined();
+  });
+
+  describe("under a counted-hours schedule", () => {
+    // A Monday-to-Monday weekly cycle in the test zone, observed at the end of
+    // its first counted day.
+    const CYCLE_START = local(2026, 8, 3);
+    const RESETS_AT = local(2026, 8, 10);
+    const OBSERVED_AT = local(2026, 8, 3, 18);
+
+    const mondayWeekly = (usedPercent: number): QuotaHistoryWindow =>
+      windowOf({
+        windowId: "weekly",
+        label: "Weekly",
+        durationMinutes: 7 * 24 * 60,
+        samples: [
+          {
+            observedAt: new Date(OBSERVED_AT).toISOString(),
+            usedPercent,
+            resetsAt: new Date(RESETS_AT).toISOString(),
+          },
+        ],
+      });
+
+    it("flattens the projection through uncounted hours instead of sloping", () => {
+      // 9 counted hours of the week's 45 are spent, at 25%, so the pace burns
+      // a quarter of the allowance per counted day and caps after four of
+      // them — Thursday at 6pm, not Thursday at midnight.
+      const overlay = buildCycleOverlay(
+        mondayWeekly(25),
+        quotaRange(30, OBSERVED_AT),
+        OBSERVED_AT,
+        OFFICE_HOURS,
+      );
+
+      const hoursIn = (atMs: number) => (atMs - CYCLE_START) / HOUR_MS;
+      expect(overlay.projection?.points).toEqual([
+        { hoursIn: hoursIn(local(2026, 8, 3, 18)), usedPercent: 25 },
+        { hoursIn: hoursIn(local(2026, 8, 4, 9)), usedPercent: 25 },
+        { hoursIn: hoursIn(local(2026, 8, 4, 18)), usedPercent: 50 },
+        { hoursIn: hoursIn(local(2026, 8, 5, 9)), usedPercent: 50 },
+        { hoursIn: hoursIn(local(2026, 8, 5, 18)), usedPercent: 75 },
+        { hoursIn: hoursIn(local(2026, 8, 6, 9)), usedPercent: 75 },
+        { hoursIn: hoursIn(local(2026, 8, 6, 18)), usedPercent: 100 },
+      ]);
+      expect(overlay.projection?.capAtMs).toBe(local(2026, 8, 6, 18));
+    });
+
+    it("states the same cap instant as the shared pace derivation", () => {
+      // The point of routing the projection through `deriveUsagePace`: this
+      // chart and every other quota surface cannot disagree about when the
+      // window runs out, because there is only one calculation.
+      const overlay = buildCycleOverlay(
+        mondayWeekly(25),
+        quotaRange(30, OBSERVED_AT),
+        OBSERVED_AT,
+        OFFICE_HOURS,
+      );
+      const pace = deriveUsagePace({
+        usedPercent: 25,
+        resetsAtMs: RESETS_AT,
+        durationMinutes: 7 * 24 * 60,
+        nowMs: OBSERVED_AT,
+        schedule: OFFICE_HOURS,
+      });
+
+      expect(pace.available).toBe(true);
+      expect(overlay.projection?.capAtMs).toBe(pace.available ? pace.projectedCapAtMs : undefined);
+      expect(overlay.pace).toEqual(pace);
+    });
+
+    it("reaches the limit later than wall-clock time would claim", () => {
+      const scheduled = buildCycleOverlay(
+        mondayWeekly(25),
+        quotaRange(30, OBSERVED_AT),
+        OBSERVED_AT,
+        OFFICE_HOURS,
+      );
+      const wallClock = buildCycleOverlay(
+        mondayWeekly(25),
+        quotaRange(30, OBSERVED_AT),
+        OBSERVED_AT,
+        WALL_CLOCK_SCHEDULE,
+      );
+
+      // Wall clock counts the 18 hours since midnight, including the night, so
+      // it reads the same spend as far faster and dates the cap 18 hours early.
+      expect(wallClock.projection?.capAtMs).toBe(local(2026, 8, 6));
+      expect(scheduled.projection?.capAtMs).toBeGreaterThan(wallClock.projection?.capAtMs ?? 0);
+    });
+
+    it("says so rather than guessing when the schedule has counted nothing yet", () => {
+      // 2026-08-08 is a Saturday: a cycle observed entirely outside counted
+      // time has no elapsed fraction to be ahead or behind of.
+      const saturday = windowOf({
+        windowId: "five_hour",
+        durationMinutes: 300,
+        samples: [
+          {
+            observedAt: new Date(local(2026, 8, 8, 12)).toISOString(),
+            usedPercent: 40,
+            resetsAt: new Date(local(2026, 8, 8, 14)).toISOString(),
+          },
+        ],
+      });
+
+      const overlay = buildCycleOverlay(
+        saturday,
+        quotaRange(30, local(2026, 8, 8, 12)),
+        local(2026, 8, 8, 12),
+        OFFICE_HOURS,
+      );
+
+      expect(overlay.pace).toEqual({ available: false, reason: "no-scheduled-time" });
+      expect(overlay.projection).toBeUndefined();
+    });
   });
 });
 

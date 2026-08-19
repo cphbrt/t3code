@@ -11,6 +11,10 @@ the percentage used, and the next reset time. These values come from the provide
 estimated from local transcripts. A missing window means the provider did not report it; it does not
 mean the window is unused.
 
+Each window also carries a tick at the level an even spend would have reached by now, so a
+percentage reads against how far through its window you are. See
+[Usage pace](./usage-pace.md), which also covers counting only your working hours.
+
 Token totals come from the session history in each provider's configured home directory, so a
 custom Codex or Claude Code home is included. When a directory is present but holds no sessions for
 the selected range, the page names it above the totals instead of quietly reporting nothing — which

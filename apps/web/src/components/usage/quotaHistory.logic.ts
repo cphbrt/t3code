@@ -5,7 +5,9 @@
  * allowance window it reports, an ordered list of `usedPercent` observations.
  * Everything the charts draw — sawtooth polylines, cap plateaus, lockout
  * bands, per-cycle overlays and the pace projection — is derived here so the
- * components stay presentational and the derivations stay testable.
+ * components stay presentational and the derivations stay testable. The one
+ * exception is pace itself: the projection defers to `lib/usagePace` so the
+ * chart and every other quota surface state one rate, not two.
  *
  * Nothing in this module touches the DOM, React, or the clock; callers pass
  * `nowMs` explicitly.
@@ -17,6 +19,14 @@ import {
   quotaWindowStartMs,
   type QuotaWindowCycleKind,
 } from "@t3tools/shared/quotaWindowCycle";
+
+import {
+  deriveUsagePace,
+  scheduledMinutesBetween,
+  type UsagePace,
+  type UsagePaceAvailable,
+  type UsagePaceSchedule,
+} from "../../lib/usagePace";
 
 /**
  * One observation of a window's fill level.
@@ -603,13 +613,27 @@ export interface QuotaOverlayCycle {
   readonly points: readonly { readonly hoursIn: number; readonly usedPercent: number }[];
 }
 
-/** Where the current cycle's average burn rate lands if nothing changes. */
+/**
+ * Where the current cycle's pace lands if nothing changes.
+ *
+ * The rate is not computed here. It is a `UsagePaceAvailable` — the same
+ * derivation every other pace surface reads — so "at this pace, hits the limit
+ * on Thursday" under this chart and a pace verdict beside a plan-limit bar are
+ * two renderings of one number rather than two models that happen to agree.
+ */
 export interface QuotaPaceProjection {
-  readonly percentPerHour: number;
-  readonly fromHoursIn: number;
-  readonly fromPercent: number;
-  readonly toHoursIn: number;
-  readonly toPercent: number;
+  /** The pace this line draws. `projectedFinalPercent > 100` is the cap case. */
+  readonly pace: UsagePaceAvailable;
+  /**
+   * The projected line, on the same hours-into-the-cycle axis as the observed
+   * series.
+   *
+   * A polyline rather than two endpoints because pace advances in *scheduled*
+   * minutes: under a restricted schedule the projection is flat through every
+   * evening and weekend and climbs only during counted hours. The vertices are
+   * the schedule's own transitions, so the line is exact rather than sampled.
+   */
+  readonly points: readonly { readonly hoursIn: number; readonly usedPercent: number }[];
   /** Hours into the cycle at which the pace reaches 100%, when that is inside the cycle. */
   readonly capHoursIn: number | undefined;
   readonly capAtMs: number | undefined;
@@ -618,6 +642,14 @@ export interface QuotaPaceProjection {
 export interface QuotaCycleOverlay {
   readonly cycleHours: number;
   readonly cycles: readonly QuotaOverlayCycle[];
+  /**
+   * Pace of the in-progress cycle, or undefined when no cycle is in progress.
+   *
+   * Carried even when unavailable so the chart can say *why* there is no
+   * dotted line rather than silently drawing nothing, which reads as "nothing
+   * to worry about".
+   */
+  readonly pace: UsagePace | undefined;
   readonly projection: QuotaPaceProjection | undefined;
 }
 
@@ -644,25 +676,128 @@ function resolveCycleHours(window: QuotaHistoryWindow, cycles: readonly QuotaCyc
 }
 
 /**
+ * Days the projection's boundary walk steps through before giving up. A cycle
+ * is at most a week, so this only exists so a nonsensical input cannot spin.
+ */
+const PROJECTION_MAX_DAYS = 10;
+
+/**
+ * The instants at which the schedule opens or closes, strictly inside a span.
+ *
+ * These are the projection's vertices. Between two neighbouring boundaries the
+ * schedule is either wholly counting or wholly not, so percent against
+ * wall-clock is a straight line on each segment and a polyline through the
+ * boundaries is exact — no sampling density to tune, and no rounded corner
+ * where a weekend should be a flat shelf.
+ */
+function scheduleBoundariesBetween(
+  fromMs: number,
+  toMs: number,
+  schedule: UsagePaceSchedule,
+): readonly number[] {
+  if (!schedule.workdaysOnly && !schedule.workHoursOnly) return [];
+  if (toMs <= fromMs) return [];
+
+  const origin = new Date(fromMs);
+  const year = origin.getFullYear();
+  const month = origin.getMonth();
+  const dayOfMonth = origin.getDate();
+
+  const boundaries: number[] = [];
+  for (let offset = 0; offset <= PROJECTION_MAX_DAYS; offset += 1) {
+    const dayStartMs = new Date(year, month, dayOfMonth + offset).getTime();
+    // Without an hour restriction the only transitions are midnights, where a
+    // weekday becomes a weekend or the reverse.
+    const candidates = schedule.workHoursOnly
+      ? [
+          new Date(year, month, dayOfMonth + offset, schedule.startHour).getTime(),
+          new Date(year, month, dayOfMonth + offset, schedule.endHour).getTime(),
+        ]
+      : [dayStartMs];
+    for (const candidate of candidates) {
+      if (candidate > fromMs && candidate < toMs) boundaries.push(candidate);
+    }
+    if (dayStartMs >= toMs) break;
+  }
+  return boundaries.sort((left, right) => left - right);
+}
+
+/**
+ * The dotted continuation of one cycle, drawn from a pace.
+ *
+ * The line starts at the last observation rather than at the earliest instant
+ * holding the same scheduled elapsed time. Those differ whenever a snapshot
+ * lands in an uncounted hour — a Saturday reading under a weekdays-only
+ * schedule carries Friday evening's scheduled total — and anchoring on the
+ * scheduled figure would start the dashes to the left of the solid line they
+ * are supposed to continue.
+ */
+function buildPaceProjection(
+  pace: UsagePace,
+  cycleStartMs: number,
+  latestAtMs: number,
+  schedule: UsagePaceSchedule,
+): QuotaPaceProjection | undefined {
+  if (!pace.available) return undefined;
+  // Nothing spent has no rate to extend, and a full window has nothing left to
+  // project toward.
+  if (pace.usedPercent <= 0 || pace.usedPercent >= 100) return undefined;
+
+  const capAtMs = pace.projectedCapAtMs;
+  // `projectedCapAtMs` is set exactly when the rate exhausts the window early,
+  // so the line ends either at the cap or at the reset.
+  const endMs = pace.projectedFinalPercent > 100 ? capAtMs : pace.windowEndMs;
+  if (endMs === undefined || endMs <= latestAtMs) return undefined;
+
+  const toHoursIn = (atMs: number) => (atMs - cycleStartMs) / HOUR_MS;
+  const percentAt = (atMs: number) =>
+    (pace.usedPercent * scheduledMinutesBetween(pace.windowStartMs, atMs, schedule)) /
+    pace.scheduledElapsedMinutes;
+
+  return {
+    pace,
+    points: [
+      { hoursIn: toHoursIn(latestAtMs), usedPercent: pace.usedPercent },
+      ...scheduleBoundariesBetween(latestAtMs, endMs, schedule).map((atMs) => ({
+        hoursIn: toHoursIn(atMs),
+        usedPercent: Math.min(100, percentAt(atMs)),
+      })),
+      { hoursIn: toHoursIn(endMs), usedPercent: Math.min(100, pace.projectedFinalPercent) },
+    ],
+    capHoursIn: capAtMs === undefined ? undefined : toHoursIn(capAtMs),
+    capAtMs,
+  };
+}
+
+/**
  * Replots every cycle of one window on a shared "hours into the cycle" axis,
- * and projects the in-progress cycle forward at its average burn rate.
+ * and carries the in-progress cycle's pace forward.
  *
- * The projection deliberately uses the average since the cycle began
- * (`usedPercent / hoursIn`) rather than a recent-window rate. The question the
- * view answers is "am I burning faster than my past weeks", which is a
- * statement about the whole cycle; a trailing rate would swing wildly between
- * an idle hour and a busy one and would promise a cap-hit time that moves every
- * time the page refreshes.
+ * The projection is `deriveUsagePace` rather than a rate worked out here. The
+ * two were algebraically the same linear model — average spend since the cycle
+ * opened, extended to the reset — so keeping both would only have created two
+ * numbers on one screen that could disagree after any change to either.
  *
- * Because that average rate is by construction the slope of the line from the
- * cycle's origin through the latest point, the projection also passes exactly
- * through the last observation, so the dotted line continues the solid one
- * without a visible kink.
+ * That unification tightens the projection's preconditions, deliberately.
+ * Where the old rate would extend any two points, pace needs the provider's
+ * own reset and window length: without them the cycle's start is only a lower
+ * bound (usage may have begun before anyone was watching), which overstates
+ * the burn rate and makes the projection alarmist in exactly the case where
+ * nothing is actually known. The axis keeps its fallbacks — a cycle still has
+ * to be drawn somewhere — but the dotted line now stays away, and `pace`
+ * carries the reason so the chart can say so.
+ *
+ * The projection deliberately uses the average since the cycle began rather
+ * than a recent-window rate. The question the view answers is "am I burning
+ * faster than my past weeks", which is a statement about the whole cycle; a
+ * trailing rate would swing between an idle hour and a busy one and promise a
+ * cap-hit time that moved on every refresh.
  */
 export function buildCycleOverlay(
   window: QuotaHistoryWindow,
   range: QuotaRange,
   nowMs: number,
+  schedule: UsagePaceSchedule,
 ): QuotaCycleOverlay {
   const allCycles = splitQuotaCycles(window);
   const cycleHours = resolveCycleHours(window, allCycles);
@@ -672,39 +807,41 @@ export function buildCycleOverlay(
     (cycle) => cycle.startMs + cycleMs > range.startMs && cycle.startMs <= range.endMs,
   );
 
-  const cycles = visible.map((cycle, index) => ({
+  const newest = visible[visible.length - 1];
+  const currentCycle =
+    newest !== undefined && newest.startMs + cycleMs > nowMs ? newest : undefined;
+
+  const cycles = visible.map((cycle) => ({
     key: cycle.key,
     startMs: cycle.startMs,
-    isCurrent: index === visible.length - 1 && cycle.startMs + cycleMs > nowMs,
+    isCurrent: cycle === currentCycle,
     points: cycle.samples.map((sample) => ({
       hoursIn: (sample.atMs - cycle.startMs) / HOUR_MS,
       usedPercent: sample.usedPercent,
     })),
   }));
 
-  const currentCycle = cycles.find((cycle) => cycle.isCurrent);
-  const latest = currentCycle?.points[currentCycle.points.length - 1];
+  const latest = currentCycle?.samples[currentCycle.samples.length - 1];
+  const pace =
+    currentCycle === undefined || latest === undefined
+      ? undefined
+      : deriveUsagePace({
+          usedPercent: latest.usedPercent,
+          resetsAtMs: currentCycle.endMs,
+          durationMinutes: window.durationMinutes,
+          cycleKind: quotaWindowCycleKind(window),
+          // The observation's own instant, not the wall clock: the percentage
+          // is frozen at the moment the provider reported it.
+          nowMs: latest.atMs,
+          schedule,
+        });
 
-  let projection: QuotaPaceProjection | undefined;
-  if (currentCycle !== undefined && latest !== undefined && latest.hoursIn > 0) {
-    const percentPerHour = latest.usedPercent / latest.hoursIn;
-    if (percentPerHour > 0 && latest.usedPercent < 100) {
-      const capHoursIn = 100 / percentPerHour;
-      const withinCycle = capHoursIn <= cycleHours;
-      const toHoursIn = Math.min(capHoursIn, cycleHours);
-      projection = {
-        percentPerHour,
-        fromHoursIn: latest.hoursIn,
-        fromPercent: latest.usedPercent,
-        toHoursIn,
-        toPercent: Math.min(100, percentPerHour * toHoursIn),
-        capHoursIn: withinCycle ? capHoursIn : undefined,
-        capAtMs: withinCycle ? currentCycle.startMs + capHoursIn * HOUR_MS : undefined,
-      };
-    }
-  }
+  const projection =
+    pace === undefined || currentCycle === undefined || latest === undefined
+      ? undefined
+      : buildPaceProjection(pace, currentCycle.startMs, latest.atMs, schedule);
 
-  return { cycleHours, cycles, projection };
+  return { cycleHours, cycles, pace, projection };
 }
 
 /** Human-facing name for a window, e.g. `Claude · Opus Weekly`. */
