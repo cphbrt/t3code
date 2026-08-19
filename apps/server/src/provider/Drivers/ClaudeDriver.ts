@@ -54,6 +54,7 @@ import {
   makeProviderSnapshotSettingsSource,
   type ProviderSnapshotSettings,
 } from "../providerUpdateSettings.ts";
+import { makeClaudeCapabilitiesResolver } from "./ClaudeCapabilitiesResolver.ts";
 import { makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -150,19 +151,26 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
       const textGeneration = yield* makeClaudeTextGeneration(effectiveConfig, processEnv);
 
-      // Probed live on every status check, exactly like Codex's rate-limit
-      // read. There is deliberately no time cache here: the policy floor on
-      // demand-driven quota probes belongs to the caller-facing path
-      // (`mcp/ProviderUsageStatus`), and duplicating it inside the driver made
-      // the background refresh tick beat against a second clock of the same
-      // period, drifting Claude's effective quota cadence toward double the
-      // configured interval.
+      const hasActiveWork = adapterHasActiveWork(adapter);
+
+      // How a check reads account metadata and usage — subprocess probe or a
+      // control request on a session already running. Never how often: the rate
+      // policy belongs to the callers. There is deliberately no time cache
+      // here, because duplicating the caller-facing floor inside the driver
+      // made the background refresh tick beat against a second clock of the
+      // same period, drifting Claude's effective quota cadence toward double
+      // the configured interval.
+      const resolveCapabilities = yield* makeClaudeCapabilitiesResolver({
+        probe: probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
+          Effect.provideService(Path.Path, path),
+        ),
+        readPlanUsage: adapter.readPlanUsage,
+        hasActiveWork,
+      });
+
       const checkProvider = checkClaudeProviderStatus(
         effectiveConfig,
-        () =>
-          probeClaudeCapabilities(effectiveConfig, processEnv, cwd).pipe(
-            Effect.provideService(Path.Path, path),
-          ),
+        () => resolveCapabilities,
         processEnv,
         cwd,
       ).pipe(
@@ -181,7 +189,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         initialSnapshot: (settings) =>
           makePendingClaudeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider,
-        hasActiveWork: adapterHasActiveWork(adapter),
+        hasActiveWork,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
             enableProviderUpdateChecks: settings.enableProviderUpdateChecks,

@@ -15,6 +15,7 @@ import {
   type PermissionUpdate,
   type SDKMessage,
   type SDKControlGetContextUsageResponse,
+  type SDKControlGetUsageResponse,
   type SDKResultMessage,
   type SDKRateLimitEvent,
   type SettingSource,
@@ -359,6 +360,13 @@ interface ClaudeSessionContext {
   stopped: boolean;
 }
 
+/**
+ * Ceiling on a live-session plan-usage read. The CLI gives its own
+ * `GET /api/oauth/usage` five seconds, so anything shorter would abandon calls
+ * that were about to succeed; anything longer just parks the refresh tick.
+ */
+const PLAN_USAGE_READ_TIMEOUT_MS = 6_000;
+
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly interrupt: () => Promise<void>;
   /** SDK Query.stopTask — present on real queries; optional for test doubles. */
@@ -367,6 +375,14 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+  /**
+   * SDK `Query.usage_EXPERIMENTAL_...` — the structured data behind `/usage`,
+   * including plan rate-limit windows. Optional for the same reason as
+   * `getContextUsage`: test doubles need not implement it. Reading it costs one
+   * `GET /api/oauth/usage` against Anthropic, so it is not free, only cheaper
+   * than spawning a probe subprocess that would make the very same call.
+   */
+  readonly usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<SDKControlGetUsageResponse>;
   readonly close: () => void;
 }
 
@@ -5391,6 +5407,29 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   const listSessions: ClaudeAdapterShape["listSessions"] = () =>
     Effect.sync(() => Array.from(sessions.values(), ({ session }) => ({ ...session })));
 
+  const readPlanUsage: ClaudeAdapterShape["readPlanUsage"] = Effect.fn("readPlanUsage")(
+    function* () {
+      // First live session that can answer, not all of them: every session of
+      // this instance shares one account, so asking a second would spend a
+      // second `GET /api/oauth/usage` for the same numbers.
+      for (const context of sessions.values()) {
+        if (context.stopped) continue;
+        const readUsage = context.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+        if (!readUsage) continue;
+        const usage = yield* Effect.tryPromise(() => readUsage.call(context.query)).pipe(
+          Effect.timeoutOption(PLAN_USAGE_READ_TIMEOUT_MS),
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        );
+        // A session that failed to answer does not get replaced by another
+        // attempt on a sibling session, for the same one-request reason. The
+        // caller falls back to the subprocess probe.
+        return usage;
+      }
+      return undefined;
+    },
+  );
+
   const hasSession: ClaudeAdapterShape["hasSession"] = (threadId) =>
     Effect.sync(() => {
       const context = sessions.get(threadId);
@@ -5438,6 +5477,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     respondToUserInput,
     stopSession,
     listSessions,
+    readPlanUsage,
     hasSession,
     stopAll,
     get streamEvents() {

@@ -43,6 +43,7 @@ const fakeCodexAdapter: CodexAdapter.CodexAdapterShape = {
 const fakeClaudeAdapter: ClaudeAdapter.ClaudeAdapterShape = {
   provider: CLAUDE_AGENT_DRIVER,
   capabilities: { sessionModelSwitch: "in-session" },
+  readPlanUsage: vi.fn(),
   startSession: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),

@@ -93,6 +93,13 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   public readonly setPermissionModeCalls: Array<string> = [];
   public readonly setMaxThinkingTokensCalls: Array<number | null> = [];
   public closeCalls = 0;
+  public usageCalls = 0;
+  public usageFails = false;
+  public usageResponse: unknown = {
+    subscription_type: "max",
+    rate_limits_available: true,
+    rate_limits: { five_hour: { utilization: 31, resets_at: "2026-01-01T00:00:00.000Z" } },
+  };
 
   emit(message: SDKMessage): void {
     if (this.done) {
@@ -146,6 +153,14 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
 
   readonly setMaxThinkingTokens = async (maxThinkingTokens: number | null): Promise<void> => {
     this.setMaxThinkingTokensCalls.push(maxThinkingTokens);
+  };
+
+  readonly usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET = async (): Promise<never> => {
+    this.usageCalls += 1;
+    if (this.usageFails) {
+      throw new Error("usage control request failed");
+    }
+    return this.usageResponse as never;
   };
 
   readonly close = (): void => {
@@ -308,6 +323,46 @@ const THREAD_ID = ThreadId.make("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("reads plan usage over a live session rather than spawning a probe", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      // Nothing running yet: the caller learns it must probe instead, and we
+      // have not spent an Anthropic usage request finding that out.
+      assert.isUndefined(yield* adapter.readPlanUsage());
+      assert.equal(harness.query.usageCalls, 0);
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const usage = yield* adapter.readPlanUsage();
+      assert.equal(usage?.rate_limits?.five_hour?.utilization, 31);
+      // Exactly one control request, which is exactly one GET /api/oauth/usage.
+      assert.equal(harness.query.usageCalls, 1);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("reports no plan usage when the live session cannot answer", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      harness.query.usageFails = true;
+
+      assert.isUndefined(yield* adapter.readPlanUsage());
+      // One attempt, not a retry loop: the caller falls back to the probe.
+      assert.equal(harness.query.usageCalls, 1);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("normalizes applied Edit patches from the structured tool result", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
