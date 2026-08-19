@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 
+import { useUsagePaceSchedule } from "../../hooks/useProviderQuotaWindows";
 import { cn } from "../../lib/utils";
+import { usagePaceUnavailableDescription } from "../../usagePacePresentation";
 import {
   buildCycleOverlay,
   decimateSeries,
@@ -46,9 +48,15 @@ function polylinePath(points: readonly CyclePoint[], cycleHours: number): string
  * than usual", which needs the weeks laid on top of each other rather than
  * beside each other. Past cycles recede to a ghost so they read as the envelope
  * of normal behaviour, and the cycle in progress is the only bold line. The
- * dotted continuation carries the current cycle's average burn rate forward;
- * where it crosses the limit inside the cycle, that crossing is dated, because
- * "caps Thursday afternoon" is the actionable form of the number.
+ * dotted continuation carries the current cycle's pace forward; where it
+ * crosses the limit inside the cycle, that crossing is dated, because "caps
+ * Thursday afternoon" is the actionable form of the number.
+ *
+ * The pace is the shared `usagePace` derivation, so that date is the same
+ * statement as a plan-limit card's "projected to exceed" rather than a second
+ * opinion. Under a counted-hours schedule it is no longer a straight line on
+ * this wall-clock axis: it climbs during counted hours and lies flat through
+ * evenings and weekends, which is what the burn actually looks like.
  */
 export function QuotaCycleOverlayChart({
   windows,
@@ -64,6 +72,7 @@ export function QuotaCycleOverlayChart({
   readonly nowMs: number;
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const schedule = useUsagePaceSchedule();
 
   const options = useMemo(
     () =>
@@ -79,8 +88,11 @@ export function QuotaCycleOverlayChart({
   const selected = options.find((option) => option.key === selectedKey) ?? options[0];
 
   const overlay = useMemo(
-    () => (selected === undefined ? undefined : buildCycleOverlay(selected.window, range, nowMs)),
-    [nowMs, range, selected],
+    () =>
+      selected === undefined
+        ? undefined
+        : buildCycleOverlay(selected.window, range, nowMs, schedule),
+    [nowMs, range, schedule, selected],
   );
 
   const formatCapMoment = useMemo(() => {
@@ -113,7 +125,14 @@ export function QuotaCycleOverlayChart({
     );
   }
 
-  const { cycleHours, projection } = overlay;
+  const { cycleHours, pace, projection } = overlay;
+  // An empty chart reads as "nothing to worry about", which is the one thing a
+  // missing projection never means. The wording is the shared one, said about
+  // the line rather than about the verdict.
+  const noProjectionDetail =
+    projection !== undefined || pace === undefined || pace.available
+      ? null
+      : usagePaceUnavailableDescription(pace.reason, "projection");
   const axisTicks = Array.from(
     { length: AXIS_TICK_COUNT + 1 },
     (_, index) => (cycleHours / AXIS_TICK_COUNT) * index,
@@ -152,6 +171,9 @@ export function QuotaCycleOverlayChart({
           <span className="text-[10px] text-destructive-foreground">
             At this pace, hits the limit {formatCapMoment(projection.capAtMs)}
           </span>
+        )}
+        {noProjectionDetail === null ? null : (
+          <span className="text-[10px] text-muted-foreground">{noProjectionDetail}</span>
         )}
       </div>
 
@@ -220,11 +242,12 @@ export function QuotaCycleOverlayChart({
 
             {projection === undefined ? null : (
               <path
-                d={`M${((projection.fromHoursIn / cycleHours) * VIEW_WIDTH).toFixed(2)},${toY(projection.fromPercent).toFixed(2)} L${((projection.toHoursIn / cycleHours) * VIEW_WIDTH).toFixed(2)},${toY(projection.toPercent).toFixed(2)}`}
+                d={polylinePath(projection.points, cycleHours)}
                 fill="none"
                 stroke={projectionColor}
                 strokeWidth={1.5}
                 strokeDasharray="3 4"
+                strokeLinejoin="round"
                 vectorEffect="non-scaling-stroke"
               />
             )}
@@ -285,7 +308,9 @@ export function QuotaCycleOverlayChart({
             className="h-0 w-3 shrink-0 border-t border-dashed"
             style={{ borderColor: projectionColor }}
           />
-          Projected at average pace
+          {schedule.workdaysOnly || schedule.workHoursOnly
+            ? "Projected at average pace, flat outside your counted hours"
+            : "Projected at average pace"}
         </span>
       </div>
     </div>

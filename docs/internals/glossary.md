@@ -120,6 +120,22 @@ The agent interaction style for a thread. In [the contracts][1], the values are 
 
 Controls how assistant text reaches the thread timeline. In [the contracts][1], `streaming` updates incrementally and `buffered` accumulates text. Buffered delivery is not held until the turn completes: it spills once accumulated text would exceed 24,000 characters, and flushes at approval and user-input boundaries. See [ProviderRuntimeIngestion.ts][5].
 
+#### Allowance window
+
+One subscription quota the provider reports for an account — Claude's five-hour, a weekly, a model-scoped weekly, or a Codex equivalent. Descriptive telemetry, not proof that a provider is unavailable; hard exhaustion is a separate signal. Defined as `ServerProviderQuotaWindow` in [the server contracts][27], and recorded over time by [QuotaHistoryStore.ts][28].
+
+#### Cycle kind
+
+Whether an allowance window renews on a cycle (`fixed`) or rolls continuously (`rolling`), or is not yet known (`unknown`). A single snapshot cannot tell them apart, so it is classified from recorded history by [quotaWindowCycle.ts][29] and published as an additive optional field. A rolling window's derived start is always approximately now, so elapsed fraction is meaningless for it.
+
+#### Usage pace
+
+Whether an allowance window is ahead of or behind a linear budget for its own cycle, expressed as `usedPercent - expectedPercent`. Derived in [usagePace.ts][30] and rendered by [usagePacePresentation.ts][31]. Judged at the snapshot's `observedAt` rather than the wall clock, so a stale snapshot does not drift toward a false verdict.
+
+#### Usage pace schedule
+
+The predicate deciding which instants count as elapsed time for pace — optionally weekdays only, optionally an hour range, in the device's local zone. Elapsed fraction is measured in _scheduled_ minutes, so the default (both off) is plain wall-clock time. Defined as `UsagePaceSchedule` in [the settings contracts][32].
+
 #### Snapshot
 
 A point-in-time view of state. The word is used in multiple layers, including orchestration, provider, and checkpointing. See [ProjectionSnapshotQuery.ts][10], [ProviderAdapter.ts][15], and [CheckpointStore.ts][19].
@@ -189,3 +205,9 @@ The file patch and changed-file summary for one turn. It is usually computed in 
 [24]: ./overview.md
 [25]: ../../apps/server/src/mcp/toolkits/artifact/tools.ts
 [26]: ./show-chris-artifacts.md
+[27]: ../../packages/contracts/src/server.ts
+[28]: ../../apps/server/src/usage/QuotaHistoryStore.ts
+[29]: ../../packages/shared/src/quotaWindowCycle.ts
+[30]: ../../apps/web/src/lib/usagePace.ts
+[31]: ../../apps/web/src/usagePacePresentation.ts
+[32]: ../../packages/contracts/src/settings.ts

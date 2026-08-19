@@ -50,6 +50,7 @@ const clientSettings: ClientSettings = {
   sidebarThreadPreviewCount: 6,
   legacySidebarEnabled: false,
   timestampFormat: "24-hour",
+  usagePaceSchedule: { workdaysOnly: true, workHoursOnly: true, startHour: 9, endHour: 18 },
   waitingNotificationsEnabled: true,
   wordWrap: true,
 };
