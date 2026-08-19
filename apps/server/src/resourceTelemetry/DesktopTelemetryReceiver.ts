@@ -171,6 +171,14 @@ export class DesktopTelemetryReceiver extends Context.Service<
     readonly setDiagnosticsDemand: (
       enabled: boolean,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
+    /**
+     * Tell the desktop shell how many agent turns are running here, so it can
+     * decide whether to hold the machine awake. Level-triggered: callers send
+     * the current count, not a delta.
+     */
+    readonly setKeepAwake: (
+      activeTurnCount: number,
+    ) => Effect.Effect<void, DesktopTelemetryControlError>;
   }
 >()("t3/resourceTelemetry/DesktopTelemetryReceiver") {}
 
@@ -382,6 +390,13 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
       version: 1,
       type: "setDiagnosticsDemand",
       enabled,
+    });
+
+  const setKeepAwake: DesktopTelemetryReceiver["Service"]["setKeepAwake"] = (activeTurnCount) =>
+    sendControlMessage({
+      version: 1,
+      type: "setKeepAwake",
+      activeTurnCount: Math.max(0, Math.round(activeTurnCount)),
     });
 
   const sendHostPowerIntervals = (
@@ -616,6 +631,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     health: Ref.get(health),
     subscribeHealth: subscribeBeforeSnapshotWithoutMutex(healthChanges, Ref.get(health)),
     setDiagnosticsDemand,
+    setKeepAwake,
   });
 });
 
@@ -656,6 +672,7 @@ export const layerTest = (
           })),
         ),
       setDiagnosticsDemand: () => Effect.void,
+      setKeepAwake: () => Effect.void,
       ...overrides,
     }),
   );

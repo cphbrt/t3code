@@ -2201,6 +2201,64 @@ export function GeneralSettingsPanel() {
           />
         ) : null}
 
+        {isElectron ? (
+          <>
+            <SettingsRow
+              {...searchableSetting("keep-awake-while-agents-run")}
+              description="Prevent idle sleep while agents are working here. The display still sleeps and locks as usual."
+              resetAction={
+                settings.keepAwakeWhileAgentsRun !==
+                DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsRun ? (
+                  <SettingResetButton
+                    label="keep awake"
+                    onClick={() =>
+                      updateSettings({
+                        keepAwakeWhileAgentsRun: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsRun,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  checked={settings.keepAwakeWhileAgentsRun}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ keepAwakeWhileAgentsRun: Boolean(checked) })
+                  }
+                  aria-label="Keep the Mac awake while agents run"
+                />
+              }
+            />
+            <SettingsRow
+              {...searchableSetting("keep-awake-on-battery")}
+              description="Off by default, to save battery."
+              status={settings.keepAwakeWhileAgentsRun ? undefined : "Needs keep awake turned on"}
+              resetAction={
+                settings.keepAwakeOnBattery !== DEFAULT_UNIFIED_SETTINGS.keepAwakeOnBattery ? (
+                  <SettingResetButton
+                    label="keep awake on battery"
+                    onClick={() =>
+                      updateSettings({
+                        keepAwakeOnBattery: DEFAULT_UNIFIED_SETTINGS.keepAwakeOnBattery,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  checked={settings.keepAwakeOnBattery}
+                  disabled={!settings.keepAwakeWhileAgentsRun}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ keepAwakeOnBattery: Boolean(checked) })
+                  }
+                  aria-label="Also on battery"
+                />
+              }
+            />
+          </>
+        ) : null}
+
         <SettingsRow
           {...searchableSetting("text-generation-model")}
           description="Default model for generated text like thread titles and source control content. Source control settings can override it with a dedicated source control writer model."

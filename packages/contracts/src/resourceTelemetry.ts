@@ -266,9 +266,26 @@ export const DesktopTelemetrySetHostPowerIntervals = Schema.Struct({
 export type DesktopTelemetrySetHostPowerIntervals =
   typeof DesktopTelemetrySetHostPowerIntervals.Type;
 
+/**
+ * How many agent turns are running right now on the backend that sent this.
+ *
+ * The desktop shell uses it to decide whether to hold an idle-sleep
+ * assertion while agents work. It carries the count rather than a boolean so
+ * the shell can say "2 agents running" without tracking turns a second time,
+ * and it is level-triggered: every message states the current count, so a
+ * dropped one cannot strand an assertion or lose one.
+ */
+export const DesktopTelemetrySetKeepAwake = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("setKeepAwake"),
+  activeTurnCount: NonNegativeInt,
+});
+export type DesktopTelemetrySetKeepAwake = typeof DesktopTelemetrySetKeepAwake.Type;
+
 export const DesktopTelemetryControlMessage = Schema.Union([
   DesktopTelemetrySetDiagnosticsDemand,
   DesktopTelemetrySetHostPowerIntervals,
+  DesktopTelemetrySetKeepAwake,
 ]);
 export type DesktopTelemetryControlMessage = typeof DesktopTelemetryControlMessage.Type;
 

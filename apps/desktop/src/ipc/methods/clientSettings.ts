@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { DesktopKeepAwake } from "../../power/DesktopKeepAwake.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -24,5 +25,10 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     yield* clientSettings.set(settings);
+    // Turning keep-awake off has to release an assertion that is already
+    // held, not just stop the next one from being taken. This is the only
+    // moment the main process learns the settings changed.
+    const keepAwake = yield* DesktopKeepAwake;
+    yield* keepAwake.settingsChanged;
   }),
 });

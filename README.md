@@ -45,6 +45,8 @@ Long user messages likewise remain fully visible, without controls to collapse o
 
 Dictation on the macOS desktop app is entirely local. The composer's microphone button transcribes through a whisper.cpp binary and ggml model you point CPH Code at yourself, so your audio never leaves the machine. Nothing is bundled and there is no network transcription path — **Settings → General → Dictation** is where you set both paths.
 
+Your Mac stays awake while its own agents are working, so a long turn is not killed halfway through by idle sleep. Only idle system sleep is held off — the display still dims, sleeps and locks as usual, and closing the lid still sleeps the machine. It applies to agents running on this computer only, not to a window viewing another environment, and a thread that is merely monitoring in the background does not count. It is on by default while plugged in, with an optional extension to battery. The behaviour is silent, with no indicator to watch. See [Keeping your computer awake](./docs/user/keep-awake.md).
+
 CPH Code keeps an append-only local SQLite history of semantic actions performed in its own UI,
 including whether each action came from the keyboard—a handled application shortcut or keyboard
 activation of a control—or a mouse activation. It

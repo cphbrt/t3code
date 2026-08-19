@@ -7,6 +7,7 @@
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Browser previews](./user/browser-previews.md)
 - [Dictation (macOS)](./user/dictation.md)
+- [Keeping your computer awake](./user/keep-awake.md)
 - [Organizing threads](./user/thread-sidebar.md)
 - [Background work after a turn settles](./user/background-tasks.md)
 - [Notifications when a thread needs you](./user/waiting-notifications.md)

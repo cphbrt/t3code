@@ -317,6 +317,18 @@ export const ClientSettingsSchema = Schema.Struct({
   // commands) for users who still rely on the old workflow.
   planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Desktop-only: hold an idle-sleep assertion while this machine's own
+  // agents are mid-turn, so a long turn is not killed by the Mac going to
+  // sleep. Only idle *system* sleep is held off — the display still dims,
+  // sleeps and locks on its usual schedule, and closing the lid still sleeps
+  // the machine. Browser clients and desktop windows viewing a remote
+  // environment ignore it, because the agents are running elsewhere. The
+  // behaviour is silent: this toggle is the only control.
+  keepAwakeWhileAgentsRun: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Whether the above also applies on battery. Off by default: silently
+  // draining a laptop that is not plugged in is a worse surprise than a
+  // sleeping one.
+  keepAwakeOnBattery: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Legacy sidebar (the original per-project tree). Deliberately a fresh key
   // (was `sidebarV2Enabled` + `sidebarV2ConfiguredByUser`): decoding drops the
   // old keys, so everyone, including prior beta opt-outs, resets to the new
@@ -989,6 +1001,8 @@ export const ClientSettingsPatch = Schema.Struct({
   dictationLanguage: Schema.optionalKey(DictationLanguage),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
+  keepAwakeWhileAgentsRun: Schema.optionalKey(Schema.Boolean),
+  keepAwakeOnBattery: Schema.optionalKey(Schema.Boolean),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
   fontSizeCode: Schema.optionalKey(CodeFontSize),
