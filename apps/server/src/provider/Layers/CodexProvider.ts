@@ -173,6 +173,164 @@ export function normalizeCodexProviderQuota(
   };
 }
 
+type CodexRollingRateLimitSnapshot =
+  CodexSchema.V2AccountRateLimitsUpdatedNotification["rateLimits"];
+type CodexRollingRateLimitWindow = NonNullable<CodexRollingRateLimitSnapshot["primary"]>;
+
+const isCodexRateLimitsNotification = Schema.is(CodexSchema.V2AccountRateLimitsUpdatedNotification);
+
+/**
+ * Read an `account.rate-limits.updated` runtime-event payload back as the
+ * Codex notification it came from. The payload crosses the wire as `unknown`,
+ * so orchestration re-validates rather than trusting the shape.
+ */
+export function readCodexRollingRateLimits(
+  payload: unknown,
+): CodexRollingRateLimitSnapshot | undefined {
+  return isCodexRateLimitsNotification(payload) ? payload.rateLimits : undefined;
+}
+
+/**
+ * Resolve which limit a sparse rolling update refers to.
+ *
+ * `account/rateLimits/updated` carries the account's default rate-limit
+ * snapshot, the same one `account/rateLimits/read` reports at
+ * `rateLimits` (as opposed to the model-scoped entries under
+ * `rateLimitsByLimitId`). It may omit `limitId`, so fall back to the
+ * limit that produced the previous snapshot's first window:
+ * `normalizeCodexProviderQuota` appends the default snapshot's windows
+ * before any per-limit ones, and window ids are `"<limitId>:<kind>"`.
+ */
+function resolveRollingUpdateLimitId(
+  snapshot: CodexRollingRateLimitSnapshot,
+  previousQuota: ServerProviderQuota | undefined,
+): string {
+  const explicitLimitId = snapshot.limitId?.trim();
+  if (explicitLimitId) return explicitLimitId;
+  const firstWindowId = previousQuota?.windows[0]?.id;
+  const separatorIndex = firstWindowId?.lastIndexOf(":") ?? -1;
+  if (firstWindowId && separatorIndex > 0) {
+    return firstWindowId.slice(0, separatorIndex);
+  }
+  return "default";
+}
+
+/**
+ * Merge one sparse rolling window into the window previously observed by a
+ * full read. `usedPercent` is required by the notification and always wins;
+ * every other field is optional there and an absent or null value means
+ * "unchanged", never zero and never cleared. `cycleKind` rides along from the
+ * previous window because merged snapshots deliberately never reach quota
+ * history, so nothing re-derives it here.
+ */
+function mergeCodexRollingQuotaWindow(input: {
+  readonly id: string;
+  readonly scopeLabel: string | undefined;
+  readonly window: CodexRollingRateLimitWindow;
+  readonly previousWindow: ServerProviderQuotaWindow | undefined;
+}): ServerProviderQuotaWindow | undefined {
+  const { window, previousWindow } = input;
+  if (!Number.isFinite(window.usedPercent)) return previousWindow;
+
+  const durationMinutes =
+    window.windowDurationMins && window.windowDurationMins > 0
+      ? window.windowDurationMins
+      : previousWindow?.durationMinutes;
+  const resetsAt =
+    window.resetsAt && Number.isFinite(window.resetsAt)
+      ? DateTime.formatIso(DateTime.makeUnsafe(window.resetsAt * 1_000))
+      : previousWindow?.resetsAt;
+  const scopeLabel = input.scopeLabel ?? previousWindow?.scopeLabel;
+  const cycleKind = previousWindow?.cycleKind;
+
+  return {
+    id: input.id,
+    label: codexQuotaWindowLabel(durationMinutes),
+    usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
+    ...(durationMinutes ? { durationMinutes } : {}),
+    ...(resetsAt ? { resetsAt } : {}),
+    ...(scopeLabel ? { scopeLabel } : {}),
+    ...(cycleKind ? { cycleKind } : {}),
+  };
+}
+
+/**
+ * Fold an `account/rateLimits/updated` notification into the quota snapshot a
+ * full `account/rateLimits/read` produced, so the gauge moves during a turn
+ * without probing the provider.
+ *
+ * OpenAI documents this notification as a sparse rolling update whose values
+ * should be merged into the most recent read response: an absent or null field
+ * is unchanged, not zero, and nullable account metadata in a rolling update
+ * never clears a previously observed value. Only the account's default limit
+ * is carried, so model-scoped windows from the last read pass through
+ * untouched.
+ *
+ * Returns `undefined` when there is nothing to report — unknown rather than a
+ * fabricated empty snapshot.
+ */
+export function mergeCodexRollingQuotaUpdate(input: {
+  readonly previousQuota: ServerProviderQuota | undefined;
+  readonly snapshot: CodexRollingRateLimitSnapshot;
+  readonly observedAt: string;
+}): ServerProviderQuota | undefined {
+  const { previousQuota, snapshot } = input;
+  const limitId = resolveRollingUpdateLimitId(snapshot, previousQuota);
+  const scopeLabel = snapshot.limitName?.trim() || undefined;
+
+  const previousWindowsById = new Map(
+    (previousQuota?.windows ?? []).map((window) => [window.id, window] as const),
+  );
+  const mergedWindowsById = new Map(previousWindowsById);
+  let changedWindow = false;
+
+  for (const [kind, window] of [
+    ["primary", snapshot.primary],
+    ["secondary", snapshot.secondary],
+  ] as const) {
+    const id = `${limitId}:${kind}`;
+    // Absent and explicit null both mean "no new observation for this
+    // window"; the previously observed window stands.
+    if (window === undefined || window === null) continue;
+    const merged = mergeCodexRollingQuotaWindow({
+      id,
+      scopeLabel,
+      window,
+      previousWindow: previousWindowsById.get(id),
+    });
+    if (!merged) continue;
+    mergedWindowsById.set(id, merged);
+    changedWindow = true;
+  }
+
+  const planLabel = codexPlanLabel(snapshot.planType) ?? previousQuota?.planLabel;
+  const notificationCredits = snapshot.credits;
+  const credits = notificationCredits
+    ? {
+        ...(notificationCredits.balance?.trim()
+          ? { balance: notificationCredits.balance.trim() }
+          : {}),
+        hasCredits: notificationCredits.hasCredits,
+        unlimited: notificationCredits.unlimited,
+      }
+    : previousQuota?.credits;
+
+  const windows = [...mergedWindowsById.values()];
+  const changedCredits = notificationCredits !== undefined && notificationCredits !== null;
+  if (!changedWindow && !changedCredits) return previousQuota;
+  if (windows.length === 0 && !credits) return previousQuota;
+
+  return {
+    observedAt: input.observedAt,
+    ...(planLabel ? { planLabel } : {}),
+    windows,
+    ...(credits ? { credits } : {}),
+    // Not carried by Codex telemetry at all; preserved so a merge never
+    // silently drops a field a full read established.
+    ...(previousQuota?.extraUsage ? { extraUsage: previousQuota.extraUsage } : {}),
+  };
+}
+
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",

@@ -29,6 +29,7 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimit,
   type ServerProviderUpdateState,
+  type ServerProviderQuota,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -352,6 +353,17 @@ export const ProviderRegistryLive = Layer.effect(
         readonly publish?: boolean;
         readonly persist?: boolean;
         readonly replace?: boolean;
+        /**
+         * Whether the arriving quota snapshots are new observations.
+         *
+         * `"probe"` (the default) records them in quota history and annotates
+         * their cycles. `"partial"` is for snapshots merged from a provider's
+         * own mid-turn telemetry: they are real enough to render, but they are
+         * not independent observations of a window, so they must never reach
+         * history — the cycle classifier and the charts read history and would
+         * be shredded by partial points.
+         */
+        readonly quotaObservation?: "probe" | "partial";
       },
     ) {
       const nextProvidersWithRuntimeState = yield* Effect.forEach(
@@ -379,7 +391,7 @@ export const ProviderRegistryLive = Layer.effect(
         nextProvidersWithRuntimeState,
         Effect.fn("annotateProviderQuotaCycles")(function* (provider) {
           const quota = provider.quota;
-          if (quota === undefined) return provider;
+          if (quota === undefined || options?.quotaObservation === "partial") return provider;
           yield* quotaHistory.record({
             instanceId: provider.instanceId,
             observedAt: quota.observedAt,
@@ -518,6 +530,37 @@ export const ProviderRegistryLive = Layer.effect(
 
       const nextProvider = yield* applyProviderRuntimeState(matchingProvider);
       return yield* upsertProviders([nextProvider]);
+    });
+
+    // Provider-pushed partial quota refresh. Deliberately routed through
+    // `upsertProviders` with `quotaObservation: "partial"` so the merged
+    // snapshot renders and persists like any other, while bypassing quota
+    // history: a partial observation is not a probe, and history is what the
+    // cycle classifier and the usage charts read.
+    const mergeProviderQuota = Effect.fn("mergeProviderQuota")(function* (input: {
+      readonly instanceId: ProviderInstanceId;
+      readonly merge: (
+        previousQuota: ServerProviderQuota | undefined,
+      ) => ServerProviderQuota | undefined;
+    }) {
+      const existingProviders = yield* Ref.get(providersRef);
+      const matchingProvider = existingProviders.find(
+        (candidate) => candidate.instanceId === input.instanceId,
+      );
+      if (!matchingProvider) {
+        return existingProviders;
+      }
+
+      const nextQuota = input.merge(matchingProvider.quota);
+      if (nextQuota === undefined || nextQuota === matchingProvider.quota) {
+        return existingProviders;
+      }
+
+      const nextProvider = yield* applyProviderRuntimeState({
+        ...matchingProvider,
+        quota: nextQuota,
+      });
+      return yield* upsertProviders([nextProvider], { quotaObservation: "partial" });
     });
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (
@@ -793,6 +836,7 @@ export const ProviderRegistryLive = Layer.effect(
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       setProviderUsageLimitState,
+      mergeProviderQuota,
       get streamChanges() {
         return Stream.fromPubSub(changesPubSub);
       },

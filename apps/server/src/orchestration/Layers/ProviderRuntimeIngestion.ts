@@ -19,6 +19,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadActivity,
   type ProviderRuntimeEvent,
+  ProviderDriverKind,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -32,6 +33,10 @@ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
+import {
+  mergeCodexRollingQuotaUpdate,
+  readCodexRollingRateLimits,
+} from "../../provider/Layers/CodexProvider.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { isGitRepository } from "../../git/Utils.ts";
@@ -48,6 +53,8 @@ import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { interruptThreadRuntime } from "../reconcileInterruptedSessions.ts";
 import { canReplaceThreadTitle } from "../threadTitles.ts";
+
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerTaskKey = (threadId: ThreadId, taskId: string) => `${threadId}:${taskId}`;
@@ -1676,6 +1683,30 @@ const make = Effect.gen(function* () {
               ? { resetsAt: event.payload.usageLimit.resetsAt }
               : null,
         });
+      }
+
+      // Codex pushes rolling rate-limit telemetry mid-turn. Folding it into
+      // the instance's quota snapshot keeps the gauge moving while an agent
+      // is spending the allowance, without probing the provider. Codex-only:
+      // Claude's `rate_limit_event` payload is a different shape with no
+      // equivalent rolling-window semantics, and is left alone.
+      if (
+        event.type === "account.rate-limits.updated" &&
+        event.providerInstanceId !== undefined &&
+        event.provider === CODEX_DRIVER_KIND
+      ) {
+        const snapshot = readCodexRollingRateLimits(event.payload.rateLimits);
+        if (snapshot !== undefined) {
+          yield* providerRegistry.mergeProviderQuota({
+            instanceId: event.providerInstanceId,
+            merge: (previousQuota) =>
+              mergeCodexRollingQuotaUpdate({
+                previousQuota,
+                snapshot,
+                observedAt: event.createdAt,
+              }),
+          });
+        }
       }
 
       const thread = yield* resolveThreadShell(event.threadId);
