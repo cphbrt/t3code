@@ -242,8 +242,12 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
   ```bash
   mkdir -p .t3/userdata
   rm -f .t3/userdata/state.sqlite*  # VACUUM INTO refuses to overwrite
-  bun -e "new (require('bun:sqlite').Database)(process.env.HOME + '/.t3/userdata/state.sqlite', { readonly: true }).run(\"VACUUM INTO '.t3/userdata/state.sqlite'\")"
+  sqlite3 -readonly "$HOME/.t3/userdata/state.sqlite" "VACUUM INTO '.t3/userdata/state.sqlite'"
   ```
+
+  The guarantee comes from `VACUUM INTO` over a read-only connection, not from
+  the tool that opens it; any SQLite client that can do both is equivalent.
+  `sqlite3` ships with macOS. `bun` is not installed on this machine.
 
   A plain `cp` is only safe when no server has the source open, and must bring the `-wal` and `-shm` siblings along. A live file copy is a corrupt copy.
 
