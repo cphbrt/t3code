@@ -103,6 +103,42 @@ work itself. Keep entries publishable: technical facts only, no private data.
   captures semantic activations, so these ratios describe control usage, not
   keystrokes.
 
+## Planned work
+
+- **Split application storage across the XDG base directories.** The Linux
+  desktop honors `XDG_CONFIG_HOME` for Electron user data and `XDG_DATA_HOME`
+  for desktop integration, but desktop and server runtime storage still share
+  the monolithic `~/.t3/userdata` tree. Route configuration, durable data,
+  state/logs, and disposable caches through `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+  `XDG_STATE_HOME`, and `XDG_CACHE_HOME` respectively, while preserving an
+  explicit `T3CODE_HOME` override and providing a safe migration path for
+  existing installations.
+
+- **Write `docs/operations/screenshot-capture.md`.** Capturing review
+  screenshots through the vendored `playwright-core` has accumulated enough
+  non-obvious constraints to be worth a runbook. The facts below were reported
+  by the lanes that hit them on 2026-08-18 and have not been independently
+  re-verified; confirm each before enshrining it.
+  - Pass an explicit `executablePath`. Playwright 1.60 otherwise selects
+    `chrome-headless-shell` silently, which is a different binary from the
+    Chromium in the browser cache and has different behavior.
+  - `fullPage: true` is inert for this app: the scrolling container is an inner
+    element, not the document, so a full-page request still captures one
+    viewport. Size the viewport, or screenshot the element.
+  - The Usage page needs roughly fifteen seconds to settle before its charts
+    are stable enough to photograph.
+  - Select light or dark through the emulated `colorScheme` rather than by
+    driving the in-app theme control.
+
+- **Verify dev-server cleanup by process, not only by port.** After a session
+  with several restarts, a reparented `node --watch src/bin.ts` backend orphan
+  (PPID 1, holding no port) survived a full PID-tree kill and was invisible to
+  a port check. Confirm teardown with both port ownership and a sweep of node
+  processes whose `cwd` lies inside the worktree, and kill only PIDs whose
+  `cwd` is confirmed — never by matching a command-line pattern, which would
+  also match the agent's own process. Worth folding into the dev-server
+  guidance in `AGENTS.md` once confirmed a second time.
+
 ## Known defects
 
 - **The legacy sidebar does not get the selection treatment.** The routed-row
@@ -157,6 +193,27 @@ work itself. Keep entries publishable: technical facts only, no private data.
   to a `setTimeout` shim to emulate a compositing browser; or verify in a real
   window. Treat "the app never called X" as unproven until rAF is known to be
   live.
+  `ResizeObserver` is dead on that surface for the same reason, confirmed
+  2026-08-17: an observed element resized from 10px to 50px never delivered a
+  callback. This is the more dangerous half, because a missed measurement is
+  silent rather than merely absent. `@legendapp/list` happens to survive it —
+  `useOnLayoutSync` defaults `measureInLayoutEffect` to true and takes a
+  `getBoundingClientRect()` reading in a layout effect, using the observer only
+  for later resizes — but any component that measures purely through
+  `ResizeObserver` reads zero there and renders a convincing false defect.
+  `preview_snapshot` also fails outright on that surface, so it cannot produce
+  screenshots at all.
+  Preferred screenshot and verification path for this repo: drive a real
+  Chromium through the `playwright-core` already vendored by `apps/desktop`,
+  using the Chromium in the local Playwright browser cache. It composites, so
+  rAF and `ResizeObserver` both work and screenshots are reliable. Assert that
+  both actually fire inside the page before trusting any pixel or measurement.
+  Scope this defect precisely: it belongs to the in-app agent preview surface,
+  not to headless Chromium in general. Confirmed 2026-08-17 that Playwright's
+  bundled `chrome-headless-shell` 148 schedules `requestAnimationFrame` and
+  delivers real `ResizeObserver` callbacks, so "headless" is not the cause and
+  a headless run is not automatically suspect. Assert which behavior a given
+  surface has rather than assuming it in either direction.
   For the record, the following observations from that investigation were all
   artifacts of this and should not be treated as findings:
   - "The reveal path produces no `focus()` call anywhere in the document, so
