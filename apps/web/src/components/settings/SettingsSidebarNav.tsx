@@ -284,6 +284,15 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     <SidebarMenuItem key={item.to}>
                       <SidebarMenuButton
                         isActive={isActive}
+                        // The current section is the settings-side counterpart
+                        // of a routed thread row, and takes the same selection
+                        // treatment. `relative` is the pill's own missing half
+                        // of that: it already clips with `overflow-hidden`, but
+                        // without a positioned ancestor the treatment's
+                        // absolutely positioned pseudo-element would resolve
+                        // against the sidebar shell instead of the pill.
+                        className="relative"
+                        data-row-state={isActive ? "active" : undefined}
                         onClick={() => handleSectionClick(item.to)}
                       >
                         <Icon />

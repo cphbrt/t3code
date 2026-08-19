@@ -1997,3 +1997,132 @@ code {
 .ultrathink-chroma {
   animation: ultrathink-chroma-shift 10s linear infinite;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Sidebar selection: the routed row, and multi-selected rows.
+
+   Fill alone cannot carry this state. In light mode the sidebar field is
+   --color-zinc-50 (#fafafa) and the routed row --color-white (#ffffff), a
+   1.044:1 step against the 3:1 a non-text state indicator needs, and
+   --sidebar-row-selected is the identical white so multi-select showed
+   nothing at all. Unselected rows are fully transparent, so this is one card
+   on a near-white field rather than cards on gray, and a light field leaves
+   only 4.4% of luminance headroom below white -- no fill value is available.
+   So the state is carried by the row's perimeter and by light inside it,
+   never by the fill.
+
+   The two cues are mechanically independent and neither can take the other
+   down: the ring is an inset box-shadow painting at the element's own border
+   step, the sunburst is a z-index:-1 pseudo-element painting at Appendix E
+   step 2.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* The ring. An INSET box-shadow, not a border and not an outer shadow. A
+   border would inset the fixed-height row's content by 2px the moment it is
+   selected; an inset shadow costs no layout, and painting order within a box
+   (background-color, background-image, inset shadow, border) guarantees it
+   lands above the prompt-cache bloom described below. Multi-select takes the
+   same ring at 35% so the two states differ in weight along one axis rather
+   than in kind. */
+[data-app-sidebar] {
+  --sidebar-row-ring: var(--primary);
+}
+
+[data-app-sidebar] [data-row-state="active"] {
+  box-shadow: inset 0 0 0 2px var(--sidebar-row-ring);
+}
+
+[data-app-sidebar] [data-row-state="selected"] {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--sidebar-row-ring) 35%, transparent);
+}
+
+/* The sunburst, deliberately the mirror of the prompt-cache warmth bloom:
+   same `ellipse <reach>% 170%` geometry and same three-stop ramp, anchored at
+   106% 50% instead of -6% 50%, so warmth reads in from the left edge and
+   selection in from the right and one row can carry both at once.
+
+   It has to be a pseudo-element. The warmth bloom is an INLINE
+   background-image on this same row element (promptCacheSidebarStyle in
+   lib/promptCacheWarmth.ts), and an element has exactly one background-image,
+   so a selection gradient declared here would either lose to the inline style
+   or clobber it. Painting the selection light on ::after keeps warmth and
+   selection completely independent concerns.
+
+   Stacking is the part that needs care, and it is not the obvious positive
+   z-index. `isolation: isolate` makes the row a stacking context (it is
+   position:relative with z-index:auto, which is not one, so the pseudo would
+   otherwise escape to an ancestor and paint behind the row's own background).
+   Inside it, z-index -1 is CSS 2.1 Appendix E step 2: above the row's
+   background-color AND its inline bloom background-image, below every
+   descendant. The card row wraps its content in a `relative z-10` div, but
+   the slim row's children are bare inline spans and icons at step 5, so any
+   positive or auto z-index pseudo would paint on top of the slim row's text.
+
+   Reach is fixed, because selection is binary while warmth is a scalar, and
+   deliberately short. Both gradients fade out at 82% of their ellipse radius,
+   so even at full warmth (reach 102%) the ember is gone by x = 77.6% of the
+   row while a routed sunburst is gone by x = 68.3%. The two barely meet, and
+   where they do the ember is already in its own near-neutral tail, which is
+   why the overlap does not go muddy. */
+[data-app-sidebar] {
+  --sidebar-selection-color: var(--primary);
+
+  @variant dark {
+    /* --primary is dark enough that it disappears into the dark sidebar
+       field; lift the sunburst into the same brightness band the ember
+       occupies there. */
+    --sidebar-selection-color: oklch(0.63 0.19 264);
+  }
+}
+
+[data-app-sidebar] [data-row-state] {
+  isolation: isolate;
+}
+
+[data-app-sidebar] [data-row-state="active"] {
+  --sidebar-selection-reach: 46%;
+  --sidebar-selection-peak: 50%;
+  --sidebar-selection-body: 22%;
+
+  /* The relative timestamp sits in the top-right corner, which is exactly
+     where the sunburst is strongest. It was already thin on white (4.83:1 for
+     a 12px label) and the sunburst takes it to 2.72:1; darkening the one
+     token those labels resolve through restores 4.99:1. Light only -- in dark
+     mode the sunburst composites over black and the label is already clear. */
+  @variant light {
+    --secondary-label: oklch(0.42 0.016 285.938);
+  }
+}
+
+/* Multi-select is the same light at roughly a third of the energy and two
+   thirds of the reach, so a marked row reads as a dimmer sibling of the
+   routed one rather than a different mechanism. */
+[data-app-sidebar] [data-row-state="selected"] {
+  --sidebar-selection-reach: 36%;
+  --sidebar-selection-peak: 24%;
+  --sidebar-selection-body: 11%;
+
+  /* Same correction as the routed row, at the strength this fainter sunburst
+     needs: measured, the marked row's timestamp backdrop takes the label to
+     3.90:1, and this restores 4.86:1 -- parity with the 4.83:1 it has on a
+     plain row, and deliberately lighter than the routed row's token so the
+     two states stay ordered. */
+  @variant light {
+    --secondary-label: oklch(0.5 0.016 285.938);
+  }
+}
+
+[data-app-sidebar] [data-row-state]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(
+    ellipse var(--sidebar-selection-reach) 170% at 106% 50%,
+    color-mix(in oklab, var(--sidebar-selection-color) var(--sidebar-selection-peak), transparent),
+    color-mix(in oklab, var(--sidebar-selection-color) var(--sidebar-selection-body), transparent)
+      52%,
+    transparent 82%
+  );
+}

@@ -1257,6 +1257,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       "opacity-70 transition-opacity hover:opacity-100",
   );
 
+  // Selection state is exposed on the row element so the selected-row
+  // treatment can live in CSS beside the sidebar surface tokens instead of
+  // being reassembled from booleans at every call site.
+  const rowState = props.isActive ? "active" : isSelected ? "selected" : undefined;
+
   const title = isRenaming ? (
     <input
       autoFocus
@@ -1352,6 +1357,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 data-testid="sidebar-row-slim"
                 data-app-action="thread.open"
                 data-app-action-target={`${thread.environmentId}/${thread.id}`}
+                data-row-state={rowState}
                 data-cache-temperature={promptCacheWarmth?.temperature}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
@@ -1512,6 +1518,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               data-testid="sidebar-row-card"
               data-app-action="thread.open"
               data-app-action-target={`${thread.environmentId}/${thread.id}`}
+              data-row-state={rowState}
               data-cache-temperature={promptCacheWarmth?.temperature}
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
