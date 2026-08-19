@@ -146,6 +146,33 @@ subject, never as the entry's identifier.
 
 ## Known defects
 
+- **The legacy sidebar does not get the selection treatment.** The routed-row
+  accent ring and right-edge accent sunburst key off `data-row-state`, which
+  `LegacySidebar.tsx` never emits: it builds its rows from className strings
+  (`bg-sidebar-row-active` / `bg-sidebar-row-selected` at
+  `Sidebar.logic.ts:447, 454, 461`) and carries no `data-row-state` at all. So
+  under `useLegacySidebarEnabled()` the original defect is still there — in
+  light mode the routed row is `#ffffff` on a `#fafafa` field, 1.044:1, and
+  multi-select is the identical white. Fixing it means emitting `data-row-state`
+  from that component; it was left alone because the surface is opt-in.
+
+- **`T3_CODE_LIGHT_THEME_COLORS` bakes the invisible-selection defect into a
+  selectable theme.** `apps/web/src/themePalette.ts:362-364` declares both
+  `sidebarRowActive` and `sidebarRowSelected` as `"#ffffff"`, so the "T3 Code"
+  light theme reproduces the 1.044:1 routed row and the indistinguishable
+  multi-select regardless of the CSS treatment, which changes the row's
+  perimeter and light rather than its fill.
+
+- **Generated themes invert the active/selected ladder.** `themePalette.ts`
+  derives `sidebarRowSelected` one step stronger than `sidebarRowActive` in
+  both generators — `surfaceAt(0.12)` vs `surfaceAt(0.14)` at
+  `themePalette.ts:945-946`, and `mix(sidebar, accent, 0.20)` vs `0.24` at
+  `:1203-1204` (and again at `:1376-1377`) — making a
+  multi-selected row _stronger_ than the routed one. Everything shipped does
+  the reverse: routed takes the full-strength ring and sunburst, marked takes
+  the 35%/24% counterpart. Pick one convention and reconcile the generator
+  with it.
+
 - **The agent browser surface never fires `requestAnimationFrame`.** A page
   driven through the agent preview tools does not composite, so rAF callbacks
   are never scheduled — while `document.visibilityState` still reports
