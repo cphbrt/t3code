@@ -362,7 +362,7 @@ function AgentBrowserAccessSetting() {
   return (
     <SettingsRow
       {...searchableSetting("agent-browser-access")}
-      description="Let agents open and drive the preview browser. When off, the browser tools and the instructions describing them are withheld from agent sessions. Your own browser panel is unaffected."
+      description="Let agents use CPH Code's own tools: driving the preview browser, settling a thread, sharing a file with you, and reading usage status. This is all or nothing — when off, every one of those tools and the instructions describing them are withheld from agent sessions. Your own browser panel is unaffected."
       status={
         settings.enableAgentBrowserAccess
           ? undefined
@@ -371,7 +371,7 @@ function AgentBrowserAccessSetting() {
       resetAction={
         settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess ? (
           <SettingResetButton
-            label="agent browser access"
+            label="agent app tools"
             onClick={() =>
               updateSettings({
                 enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
@@ -386,7 +386,7 @@ function AgentBrowserAccessSetting() {
           onCheckedChange={(checked) =>
             updateSettings({ enableAgentBrowserAccess: Boolean(checked) })
           }
-          aria-label="Allow agent browser access"
+          aria-label="Allow agent app tools"
         />
       }
     />

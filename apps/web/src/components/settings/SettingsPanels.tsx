@@ -303,7 +303,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
       ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
-        ? ["Agent browser access"]
+        ? ["Agent app tools"]
         : []),
     ],
     [
