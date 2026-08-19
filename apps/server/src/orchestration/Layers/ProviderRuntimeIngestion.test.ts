@@ -244,6 +244,7 @@ describe("ProviderRuntimeIngestion", () => {
     const usageLimitUpdates: Array<
       Parameters<typeof providerRegistry.setProviderUsageLimitState>[0]
     > = [];
+    const quotaMerges: Array<Parameters<typeof providerRegistry.mergeProviderQuota>[0]> = [];
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -270,6 +271,10 @@ describe("ProviderRuntimeIngestion", () => {
           ...providerRegistry,
           setProviderUsageLimitState: (input) => {
             usageLimitUpdates.push(input);
+            return Effect.succeed([]);
+          },
+          mergeProviderQuota: (input) => {
+            quotaMerges.push(input);
             return Effect.succeed([]);
           },
         }),
@@ -351,6 +356,7 @@ describe("ProviderRuntimeIngestion", () => {
         runtime!.runPromise(reconcileInterruptedProviderSessions()),
       drain,
       usageLimitUpdates,
+      quotaMerges,
     };
   }
 
@@ -380,6 +386,52 @@ describe("ProviderRuntimeIngestion", () => {
         state: { resetsAt: "2026-08-14T20:14:00.000Z" },
       },
     ]);
+  });
+
+  it("folds Codex mid-turn rate-limit telemetry into the instance quota", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "account.rate-limits.updated",
+      eventId: asEventId("evt-codex-rate-limits"),
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-08-14T17:00:00.000Z",
+      payload: {
+        rateLimits: { rateLimits: { limitId: "codex", primary: { usedPercent: 71 } } },
+      },
+    });
+    await harness.drain();
+
+    expect(harness.quotaMerges).toHaveLength(1);
+    const merge = harness.quotaMerges[0];
+    expect(merge?.instanceId).toBe("codex");
+    // The merge closure carries the notification's values and the arrival time.
+    expect(
+      merge?.merge({
+        observedAt: "2026-08-14T16:00:00.000Z",
+        windows: [{ id: "codex:primary", label: "5-hour", usedPercent: 40, durationMinutes: 300 }],
+      }),
+    ).toEqual({
+      observedAt: "2026-08-14T17:00:00.000Z",
+      windows: [{ id: "codex:primary", label: "5-hour", usedPercent: 71, durationMinutes: 300 }],
+    });
+  });
+
+  it("leaves Claude rate-limit telemetry out of the Codex quota merge path", async () => {
+    const harness = await createHarness();
+    harness.emit({
+      type: "account.rate-limits.updated",
+      eventId: asEventId("evt-claude-rate-limits"),
+      provider: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: ProviderInstanceId.make("claude_personal"),
+      threadId: asThreadId("thread-1"),
+      createdAt: "2026-08-14T17:00:00.000Z",
+      payload: { rateLimits: { rateLimits: { primary: { usedPercent: 71 } } } },
+    });
+    await harness.drain();
+
+    expect(harness.quotaMerges).toEqual([]);
   });
 
   it("maps turn started/completed events into thread session updates", async () => {

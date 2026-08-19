@@ -32,3 +32,8 @@ keeps refreshing even with the app in the background or closed to the tray; the 
 that turn finishes. With no agent running and nothing on screen, environments stop checking
 allowances until you look again, so a snapshot you return to may be a few minutes old before its
 first refresh lands.
+
+Codex also reports its own allowance mid-turn, and those reports are folded straight into its
+snapshot, so the gauge can move during a turn between checks. Such a report only refreshes the
+figures it actually carries; anything it leaves out keeps its last checked value rather than
+dropping to zero, and it does not add a point to the usage-history chart.

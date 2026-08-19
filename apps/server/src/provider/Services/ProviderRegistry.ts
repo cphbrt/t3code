@@ -12,6 +12,7 @@ import type {
   ServerProvider,
   ServerProviderUsageLimit,
   ServerProviderUpdateState,
+  ServerProviderQuota,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -79,6 +80,25 @@ export interface ProviderRegistryShape {
     readonly instanceId: ProviderInstanceId;
     readonly observedAt: ServerProviderUsageLimit["observedAt"];
     readonly state: Omit<ServerProviderUsageLimit, "observedAt"> | null;
+  }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+  /**
+   * Apply a provider-pushed partial quota refresh to one instance.
+   *
+   * `merge` receives the instance's current quota (the last full probe result,
+   * or a previous merge of one) and returns the updated snapshot, or
+   * `undefined` to leave the instance's quota alone. Returning the same
+   * reference is a no-op.
+   *
+   * Unlike a probe result, the merged snapshot never enters quota history:
+   * partial observations would corrupt the cycle classifier and the charts,
+   * which must only ever see probe-derived points.
+   */
+  readonly mergeProviderQuota: (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly merge: (
+      previousQuota: ServerProviderQuota | undefined,
+    ) => ServerProviderQuota | undefined;
   }) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
   /**
