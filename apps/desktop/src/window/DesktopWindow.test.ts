@@ -38,6 +38,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
@@ -89,6 +90,7 @@ function makeFakeBrowserWindow() {
     focus: vi.fn(),
     getBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
     getNormalBounds: vi.fn(() => ({ x: 0, y: 0, width: 1100, height: 780 })),
+    hide: vi.fn(),
     isDestroyed: vi.fn(() => false),
     isFullScreen: vi.fn(() => false),
     isMaximized: vi.fn(() => false),
@@ -115,6 +117,7 @@ function makeFakeBrowserWindow() {
     window: window as unknown as Electron.BrowserWindow,
     getBounds: window.getBounds,
     getNormalBounds: window.getNormalBounds,
+    hide: window.hide,
     isDestroyed: window.isDestroyed,
     isFullScreen: window.isFullScreen,
     isMaximized: window.isMaximized,
@@ -205,6 +208,8 @@ function makeTestLayer(input: {
   ) => Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
   readonly previewZoomReapplies?: number[];
+  readonly clientSettings?: ClientSettings;
+  readonly quitRequests?: number[];
 }) {
   let desktopSettings = input.desktopSettings ?? DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS;
   const desktopAppSettingsLayer = Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
@@ -265,10 +270,18 @@ function makeTestLayer(input: {
         desktopAssetsLayer,
         desktopEnvironmentLayer,
         desktopAppSettingsLayer,
-        desktopClientSettingsLayer,
+        input.clientSettings === undefined
+          ? desktopClientSettingsLayer
+          : DesktopClientSettings.layerTest(Option.some(input.clientSettings)),
         desktopServerExposureLayer,
         DesktopState.layer,
-        electronAppLayer,
+        input.quitRequests === undefined
+          ? electronAppLayer
+          : Layer.mock(ElectronApp.ElectronApp)({
+              quit: Effect.sync(() => {
+                input.quitRequests?.push(1);
+              }),
+            }),
         electronMenuLayer,
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
@@ -513,6 +526,57 @@ describe("DesktopWindow", () => {
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.
+  // Two separate promises from the Cmd+Q gate: the settings read and the app
+  // quit. Both are awaited so the assertions see the settled decision.
+  const settleQuitGate = Effect.promise(() => Promise.resolve().then(() => undefined));
+
+  it.effect("quits without the hint and hides the window at once when hold-to-quit is off", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const quitRequests: number[] = [];
+      const layer = makeTestLayer({
+        window: fakeWindow.window,
+        createCount,
+        mainWindow,
+        clientSettings: { ...DEFAULT_CLIENT_SETTINGS, confirmQuit: false },
+        quitRequests,
+      });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+        if (!beforeInput) {
+          return yield* Effect.die("before-input-event listener was not registered");
+        }
+
+        beforeInput(
+          { preventDefault: () => {} },
+          {
+            type: "keyDown",
+            isAutoRepeat: false,
+            key: "q",
+            meta: true,
+            control: false,
+            alt: false,
+            shift: false,
+          },
+        );
+        yield* settleQuitGate;
+        yield* settleQuitGate;
+
+        assert.equal(quitRequests.length, 1);
+        assert.equal(fakeWindow.hide.mock.calls.length, 1);
+        assert.isFalse(
+          fakeWindow.send.mock.calls.some(([channel]) => channel === "desktop:quit-shortcut"),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("restores the preview browser's own zoom after zooming the app", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
