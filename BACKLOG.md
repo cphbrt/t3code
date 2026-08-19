@@ -22,18 +22,6 @@ work itself. Keep entries publishable: technical facts only, no private data.
   5-minute tick reliably misses the cache; probes still cannot exceed the
   policy rate because ticks alone trigger them. Decide: accept the desync, or
   live with the beat.
-- **Codex mid-turn rate-limit telemetry is dropped instead of refreshing the
-  quota gauge.** `account/rateLimits/updated` notifications already arrive on
-  `payload.rateLimits` mid-turn (`CodexAdapter.ts:1476-1492`), but
-  `ProviderRuntimeIngestion.ts` reads only `payload.usageLimit`. Ingesting
-  them would make the quota gauge move during turns for free probes-wise, but
-  it is a real feature, not a ride-along: the notification is a sparse rolling
-  update with no `rateLimitsByLimitId`, OpenAI's schema annotation requires
-  merging into the last `account/rateLimits/read` response (absent means
-  unchanged, never zero), there is no `setProviderQuota` write path on the
-  registry, and a partial snapshot must not enter quota history where it
-  would feed the `cycleKind` classifier. Needs a merge-against-last-read
-  design and a decision on history admission before implementation.
 - **WebSocket transfer-budget regression (unowned).** The measured-turn
   budgets in `TransferBudgetReport.integration.ts` fail on clean main:
   roughly 11k wire bytes against the 8k cap and 71,446 decoded bytes against
@@ -195,6 +183,18 @@ work itself. Keep entries publishable: technical facts only, no private data.
   guidance in `AGENTS.md` once confirmed a second time.
 
 ## Known defects
+
+- **Codex mid-turn quota merging is unverified against a live Codex account.**
+  The sparse-merge path (`mergeCodexRollingQuotaUpdate` in `CodexProvider.ts`)
+  was built and tested from OpenAI's schema annotation, not from captured
+  traffic: this machine's provider event logs contain only `claudeAgent`
+  events, so no real `account/rateLimits/updated` payload was available. The
+  one behavior that depends on unobserved data is the fallback when a
+  notification omits `limitId` — the merge then targets the limit that
+  produced the previous snapshot's first window, which relies on
+  `normalizeCodexProviderQuota` emitting the default limit's windows before
+  any per-limit ones. Confirm against a real Codex turn, and if notifications
+  do carry `limitId` consistently, the fallback can be simplified away.
 
 - **The legacy sidebar does not get the selection treatment.** The routed-row
   accent ring and right-edge accent sunburst key off `data-row-state`, which

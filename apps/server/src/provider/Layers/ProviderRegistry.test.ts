@@ -690,6 +690,151 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         ]);
       });
 
+      it.effect("merges a partial quota update without recording it in history", () =>
+        Effect.gen(function* () {
+          const codexDriver = ProviderDriverKind.make("codex");
+          const codexInstanceId = ProviderInstanceId.make("codex");
+          const probedQuota = {
+            observedAt: "2026-08-15T12:00:00.000Z",
+            windows: [
+              { id: "codex:primary", label: "5-hour", usedPercent: 40, durationMinutes: 300 },
+            ],
+          } as const;
+          const probedProvider = {
+            instanceId: codexInstanceId,
+            driver: codexDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-08-15T12:00:00.000Z",
+            version: null,
+            models: [],
+            slashCommands: [],
+            skills: [],
+            quota: probedQuota,
+          } as const satisfies ServerProvider;
+
+          const instance = {
+            instanceId: codexInstanceId,
+            driverKind: codexDriver,
+            continuationIdentity: {
+              driverKind: codexDriver,
+              continuationKey: "codex:instance:codex",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: codexDriver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(probedProvider),
+              refresh: Effect.succeed(probedProvider),
+              streamChanges: Stream.empty,
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (instanceId) =>
+                Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+                PubSub.subscribe(pubsub),
+              ),
+            },
+          );
+
+          // Spy on the store rather than asserting on persisted history: the
+          // point under test is that the partial path never calls it.
+          const recordedRef = yield* Ref.make<ReadonlyArray<string>>([]);
+          const quotaHistorySpyLayer = Layer.effect(
+            QuotaHistoryStore.QuotaHistoryStore,
+            Effect.succeed(
+              QuotaHistoryStore.QuotaHistoryStore.of({
+                record: (input) =>
+                  Ref.update(recordedRef, (recorded) => [...recorded, input.observedAt]),
+                read: () => Effect.succeed([]),
+                annotateCycles: (input) =>
+                  Effect.succeed(
+                    input.windows.map((window) => ({ ...window, cycleKind: "fixed" as const })),
+                  ),
+              }),
+            ),
+          );
+
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(quotaHistorySpyLayer),
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-partial-quota-",
+                }),
+              ),
+              Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+
+            // A probe result is a real observation: recorded, and annotated.
+            const probed = yield* registry.refreshInstance(codexInstanceId);
+            const recordedAfterProbe = yield* Ref.get(recordedRef);
+            assert.ok(recordedAfterProbe.length > 0);
+            assert.deepStrictEqual(
+              new Set(recordedAfterProbe),
+              new Set(["2026-08-15T12:00:00.000Z"]),
+            );
+            assert.deepStrictEqual(probed[0]?.quota?.windows[0]?.cycleKind, "fixed");
+
+            const merged = yield* registry.mergeProviderQuota({
+              instanceId: codexInstanceId,
+              merge: (previousQuota) => ({
+                observedAt: "2026-08-15T12:04:00.000Z",
+                windows: (previousQuota?.windows ?? []).map((window) => ({
+                  ...window,
+                  usedPercent: 55,
+                })),
+              }),
+            });
+
+            assert.deepStrictEqual(merged[0]?.quota, {
+              observedAt: "2026-08-15T12:04:00.000Z",
+              windows: [
+                {
+                  id: "codex:primary",
+                  label: "5-hour",
+                  usedPercent: 55,
+                  durationMinutes: 300,
+                  // Carried by the merge, not re-derived: history was not consulted.
+                  cycleKind: "fixed",
+                },
+              ],
+            });
+            // No new history point: the merged partial never reaches the store.
+            assert.deepStrictEqual(yield* Ref.get(recordedRef), recordedAfterProbe);
+
+            // A merge that declines to produce a snapshot leaves the quota alone.
+            const unchanged = yield* registry.mergeProviderQuota({
+              instanceId: codexInstanceId,
+              merge: () => undefined,
+            });
+            assert.deepStrictEqual(unchanged[0]?.quota?.observedAt, "2026-08-15T12:04:00.000Z");
+            assert.deepStrictEqual(yield* Ref.get(recordedRef), recordedAfterProbe);
+          }).pipe(Effect.provide(runtimeServices));
+        }).pipe(Effect.scoped),
+      );
+
       it.effect("does not run provider probes during layer construction", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
