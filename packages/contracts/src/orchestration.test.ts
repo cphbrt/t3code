@@ -481,6 +481,191 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
   }),
 );
 
+it.effect("defaults artifact fields when decoding pre-feature thread payloads", () =>
+  Effect.gen(function* () {
+    const common = {
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Pre-artifact thread",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+    };
+    const thread = yield* decodeOrchestrationThread({
+      ...common,
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+    });
+    const shell = yield* decodeOrchestrationThreadShell({
+      ...common,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    });
+
+    assert.deepEqual(thread.artifacts, []);
+    assert.strictEqual(shell.unreadArtifactCount, 0);
+  }),
+);
+
+it.effect("decodes a recorded artifact on the thread detail", () =>
+  Effect.gen(function* () {
+    const thread = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Artifact thread",
+      modelSelection: { provider: "codex", model: "gpt-5.4" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+      session: null,
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      artifacts: [
+        {
+          id: "artifact-1",
+          path: "/workspace/example/review.md",
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          readAt: null,
+          starredAt: null,
+        },
+      ],
+    });
+
+    assert.strictEqual(thread.artifacts.length, 1);
+    assert.strictEqual(thread.artifacts[0]?.readAt, null);
+  }),
+);
+
+it.effect("decodes the three artifact events", () =>
+  Effect.gen(function* () {
+    const base = {
+      sequence: 1,
+      eventId: "event-artifact-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-artifact-1",
+      causationEventId: null,
+      correlationId: "cmd-artifact-1",
+      metadata: {},
+    };
+    const recorded = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.artifact-recorded",
+      payload: {
+        threadId: "thread-1",
+        artifact: {
+          id: "artifact-1",
+          path: "/workspace/example/review.md",
+          recordedAt: "2026-01-01T00:00:00.000Z",
+          readAt: null,
+          starredAt: null,
+        },
+      },
+    });
+    const readSet = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.artifact-read-set",
+      payload: {
+        threadId: "thread-1",
+        artifactId: "artifact-1",
+        readAt: "2026-01-01T00:01:00.000Z",
+      },
+    });
+    const unreadSet = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.artifact-read-set",
+      payload: { threadId: "thread-1", artifactId: "artifact-1", readAt: null },
+    });
+    const starredSet = yield* decodeOrchestrationEvent({
+      ...base,
+      type: "thread.artifact-starred-set",
+      payload: {
+        threadId: "thread-1",
+        artifactId: "artifact-1",
+        starredAt: "2026-01-01T00:02:00.000Z",
+      },
+    });
+
+    if (recorded.type !== "thread.artifact-recorded") {
+      assert.fail(`Expected thread.artifact-recorded event, received ${recorded.type}.`);
+    }
+    assert.strictEqual(recorded.payload.artifact.path, "/workspace/example/review.md");
+    if (readSet.type !== "thread.artifact-read-set") {
+      assert.fail(`Expected thread.artifact-read-set event, received ${readSet.type}.`);
+    }
+    assert.strictEqual(readSet.payload.readAt, "2026-01-01T00:01:00.000Z");
+    if (unreadSet.type !== "thread.artifact-read-set") {
+      assert.fail(`Expected thread.artifact-read-set event, received ${unreadSet.type}.`);
+    }
+    assert.strictEqual(unreadSet.payload.readAt, null);
+    if (starredSet.type !== "thread.artifact-starred-set") {
+      assert.fail(`Expected thread.artifact-starred-set event, received ${starredSet.type}.`);
+    }
+    assert.strictEqual(starredSet.payload.starredAt, "2026-01-01T00:02:00.000Z");
+  }),
+);
+
+it.effect("accepts artifact read and star commands from clients", () =>
+  Effect.gen(function* () {
+    const read = yield* decodeClientOrchestrationCommand({
+      type: "thread.artifact.set-read",
+      commandId: "cmd-1",
+      threadId: "thread-1",
+      artifactId: "artifact-1",
+      read: true,
+    });
+    const starred = yield* decodeClientOrchestrationCommand({
+      type: "thread.artifact.set-starred",
+      commandId: "cmd-2",
+      threadId: "thread-1",
+      artifactId: "artifact-1",
+      starred: false,
+    });
+
+    assert.strictEqual(read.type, "thread.artifact.set-read");
+    assert.strictEqual(starred.type, "thread.artifact.set-starred");
+  }),
+);
+
+it.effect("keeps artifact recording off the client command surface", () =>
+  Effect.gen(function* () {
+    const record = {
+      type: "thread.artifact.record",
+      commandId: "cmd-3",
+      threadId: "thread-1",
+      path: "/workspace/example/review.md",
+      kind: "markdown",
+    };
+
+    const internal = yield* decodeOrchestrationCommand(record);
+    assert.strictEqual(internal.type, "thread.artifact.record");
+
+    const rejected = yield* decodeClientOrchestrationCommand(record).pipe(Effect.flip);
+    assert.ok(rejected);
+  }),
+);
+
 it.effect("decodes thread archived and unarchived events", () =>
   Effect.gen(function* () {
     const archived = yield* decodeOrchestrationEvent({

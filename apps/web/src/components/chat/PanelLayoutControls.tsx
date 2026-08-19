@@ -23,6 +23,13 @@ interface PanelLayoutControlsProps {
   rightPanelShortcutLabel: string | null;
   /** Running + waiting subagents in this thread; badges the right panel toggle. */
   liveAgentCount: number;
+  /**
+   * Unread artifacts in this thread. Shares the right panel toggle's badge:
+   * both mean "the right panel has something for you", and the badge is the
+   * only way to see a new artifact while the panel is closed and the app is
+   * focused (which suppresses the OS notification).
+   */
+  unreadArtifactCount: number;
   onToggleReadingFocus?: () => void;
   onToggleTerminal: () => void;
   onToggleRightPanel: () => void;
@@ -40,10 +47,23 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelOpen,
   rightPanelShortcutLabel,
   liveAgentCount,
+  unreadArtifactCount,
   onToggleReadingFocus,
   onToggleTerminal,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
+  // One badge for the whole affordance: it counts everything in the right
+  // panel wanting attention. The number alone cannot say which kind, so the
+  // label and tooltip always enumerate the signals separately.
+  const badgeCount = liveAgentCount + unreadArtifactCount;
+  const badgeDetail = [
+    liveAgentCount > 0
+      ? `${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+      : null,
+    unreadArtifactCount > 0
+      ? `${unreadArtifactCount} new ${unreadArtifactCount === 1 ? "file" : "files"}`
+      : null,
+  ].filter((entry): entry is string => entry !== null);
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
@@ -110,8 +130,8 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
               aria-label={
-                liveAgentCount > 0
-                  ? `Toggle right panel, ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
+                badgeDetail.length > 0
+                  ? `Toggle right panel, ${badgeDetail.join(", ")}`
                   : "Toggle right panel"
               }
               variant="ghost"
@@ -120,12 +140,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               data-app-action="rightPanel.toggle"
             >
               <PanelRightIcon className="size-4" />
-              {liveAgentCount > 0 ? (
+              {badgeCount > 0 ? (
                 <span
                   aria-hidden
                   className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-info px-1 text-[9px] font-semibold tabular-nums text-white"
                 >
-                  {liveAgentCount}
+                  {badgeCount}
                 </span>
               ) : null}
             </Toggle>
@@ -134,9 +154,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         <TooltipPopup side="bottom">
           {rightPanelAvailable
             ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}${
-                liveAgentCount > 0
-                  ? ` · ${liveAgentCount} ${liveAgentCount === 1 ? "agent" : "agents"} working`
-                  : ""
+                badgeDetail.length > 0 ? ` · ${badgeDetail.join(" · ")}` : ""
               }`
             : "Right panel is unavailable"}
         </TooltipPopup>

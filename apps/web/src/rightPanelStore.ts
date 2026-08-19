@@ -23,6 +23,7 @@ export const RIGHT_PANEL_KINDS = [
   "pull-request",
   "agents",
   "agent-transcript",
+  "artifacts",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -80,13 +81,15 @@ export type RightPanelSurface =
        * were stored, and refreshed whenever the agent is reopened.
        */
       title?: string;
-    };
+    }
+  | { id: "artifacts"; kind: "artifacts" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
-const RIGHT_PANEL_STORAGE_VERSION = 11;
+// v12 adds the "artifacts" singleton surface.
+const RIGHT_PANEL_STORAGE_VERSION = 12;
 
 /**
  * The pull-request list's shared panel (see PULL_REQUESTS_PANEL_ID in the route) is session
@@ -158,6 +161,8 @@ const singletonSurface = (
       return { id: "files", kind };
     case "agents":
       return { id: "agents", kind };
+    case "artifacts":
+      return { id: "artifacts", kind };
   }
 };
 

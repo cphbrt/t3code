@@ -10,6 +10,7 @@
 - [Organizing threads](./user/thread-sidebar.md)
 - [Background work after a turn settles](./user/background-tasks.md)
 - [Notifications when a thread needs you](./user/waiting-notifications.md)
+- [Files an agent makes for you](./user/artifacts.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
 - [Mobile appearance](./user/mobile-appearance.md)
@@ -35,6 +36,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
+- [show_chris and the Artifacts surface](./internals/show-chris-artifacts.md)
 - [CI gates](./internals/ci.md)
 
 ### Runbooks

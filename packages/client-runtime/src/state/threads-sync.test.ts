@@ -75,6 +75,7 @@ const BASE_THREAD: OrchestrationThread = {
   messages: [],
   proposedPlans: [],
   activities: [],
+  artifacts: [],
   checkpoints: [],
   session: null,
 };

@@ -56,6 +56,7 @@ function makeReadModel(
         messages,
         proposedPlans: [],
         activities,
+        artifacts: [],
         checkpoints: [],
         session,
       },

@@ -74,6 +74,7 @@ import {
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { isThreadArtifactEvent, isThreadDetailEvent } from "./orchestration/threadDetailEvents.ts";
 import {
   observeRpcEffect as instrumentRpcEffect,
   observeRpcStream as instrumentRpcStream,
@@ -271,27 +272,7 @@ function projectSetupScriptCompatibilityDetail(
   }
 }
 
-export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
-  OrchestrationEvent,
-  {
-    type:
-      | "thread.message-sent"
-      | "thread.proposed-plan-upserted"
-      | "thread.activity-appended"
-      | "thread.turn-diff-completed"
-      | "thread.reverted"
-      | "thread.session-set";
-  }
-> {
-  return (
-    event.type === "thread.message-sent" ||
-    event.type === "thread.proposed-plan-upserted" ||
-    event.type === "thread.activity-appended" ||
-    event.type === "thread.turn-diff-completed" ||
-    event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
-  );
-}
+export { isThreadDetailEvent } from "./orchestration/threadDetailEvents.ts";
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
@@ -1319,10 +1300,16 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
+              // Artifact events ship only to a subscriber that opted in: the
+              // event union is closed, and a client that predates these types
+              // may not tolerate the frame. Gating here covers both the live
+              // stream and the catch-up replay, which share this predicate.
+              const includeArtifactEvents = input.includeArtifactEvents === true;
               const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
                 event.aggregateKind === "thread" &&
                 event.aggregateId === input.threadId &&
-                isThreadDetailEvent(event);
+                isThreadDetailEvent(event) &&
+                (includeArtifactEvents || !isThreadArtifactEvent(event));
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
                 Stream.filter(isThisThreadDetailEvent),

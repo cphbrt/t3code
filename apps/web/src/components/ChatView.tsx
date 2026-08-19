@@ -17,6 +17,8 @@ import {
   type TurnId,
   type KeybindingCommand,
   OrchestrationThreadActivity,
+  OrchestrationThreadArtifact,
+  OrchestrationThreadArtifactId,
   ProviderInteractionMode,
   ProviderDriverKind,
   RuntimeMode,
@@ -146,6 +148,11 @@ import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs, type PullRequestTabStatus } from "./RightPanelTabs";
 import { AgentsPanel } from "./AgentsPanel";
+import {
+  ArtifactsPanel,
+  artifactOpenFailureMessage,
+  resolveArtifactReachability,
+} from "./ArtifactsPanel";
 import { AgentTranscriptPanel } from "./AgentTranscript";
 import {
   deriveAgentPanelModel,
@@ -364,6 +371,7 @@ import { useAssetUrls } from "../assets/assetUrls";
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
+const EMPTY_ARTIFACTS: OrchestrationThreadArtifact[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
@@ -2218,6 +2226,27 @@ function ChatViewContent(props: ChatViewProps) {
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
+  const setArtifactReadMutation = useAtomCommand(threadEnvironment.setArtifactRead, {
+    reportFailure: false,
+  });
+  const setArtifactStarredMutation = useAtomCommand(threadEnvironment.setArtifactStarred, {
+    reportFailure: false,
+  });
+  // A failed open stays on its row until that row opens successfully, rather
+  // than in a toast that disappears before the user reads it.
+  const [artifactOpenErrors, setArtifactOpenErrors] = useState<Readonly<Record<string, string>>>(
+    {},
+  );
+  // Rides the thread detail already in scope; no extra subscription.
+  const threadArtifacts = activeThread?.artifacts ?? EMPTY_ARTIFACTS;
+  const unreadArtifactCount = useMemo(
+    () =>
+      threadArtifacts.reduce(
+        (count, artifact) => (artifact.readAt === null ? count + 1 : count),
+        0,
+      ),
+    [threadArtifacts],
+  );
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
   const turnPlans = useMemo(() => deriveTurnPlans(threadActivities), [threadActivities]);
   // Native subagent fold: memoized by activity-list identity, shared by the
@@ -3423,6 +3452,77 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const addArtifactsSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "artifacts");
+  }, [activeThreadRef]);
+  // An artifact's path is on the environment host, so it is openable only from
+  // a desktop client whose primary backend is that same host.
+  const artifactReachability = resolveArtifactReachability({
+    isDesktopClient: isElectron,
+    isPrimaryEnvironment:
+      activeThreadRef !== null && activeThreadRef.environmentId === primaryEnvironmentId,
+  });
+  const setArtifactRead = useCallback(
+    (artifactId: string, read: boolean) => {
+      if (!activeThreadRef) return;
+      void setArtifactReadMutation({
+        environmentId: activeThreadRef.environmentId,
+        input: {
+          threadId: activeThreadRef.threadId,
+          artifactId: OrchestrationThreadArtifactId.make(artifactId),
+          read,
+        },
+      });
+    },
+    [activeThreadRef, setArtifactReadMutation],
+  );
+  const setArtifactStarred = useCallback(
+    (artifactId: string, starred: boolean) => {
+      if (!activeThreadRef) return;
+      void setArtifactStarredMutation({
+        environmentId: activeThreadRef.environmentId,
+        input: {
+          threadId: activeThreadRef.threadId,
+          artifactId: OrchestrationThreadArtifactId.make(artifactId),
+          starred,
+        },
+      });
+    },
+    [activeThreadRef, setArtifactStarredMutation],
+  );
+  const openArtifact = useCallback(
+    (artifact: OrchestrationThreadArtifact) => {
+      if (!activeThreadRef) return;
+      void (async () => {
+        // `ipcRenderer.invoke` rejects when the main process throws, so a
+        // bare await here could leave the row looking like nothing happened.
+        // A rejection is indistinguishable from a launcher that refused the
+        // file, so it reports as one rather than inventing a new outcome.
+        const outcome = await (
+          readLocalApi()?.shell.openPathInBrowser(artifact.path) ??
+          Promise.resolve("unsupported-platform" as const)
+        ).catch(() => "launch-failed" as const);
+        const failure = artifactOpenFailureMessage(outcome);
+        setArtifactOpenErrors((current) => {
+          if (failure === null) {
+            if (!(artifact.id in current)) return current;
+            const { [artifact.id]: _cleared, ...rest } = current;
+            return rest;
+          }
+          return current[artifact.id] === failure
+            ? current
+            : { ...current, [artifact.id]: failure };
+        });
+        // Marked read only once it actually opened: a file the user could not
+        // reach has not been read.
+        if (failure === null && artifact.readAt === null) {
+          setArtifactRead(artifact.id, true);
+        }
+      })();
+    },
+    [activeThreadRef, setArtifactRead],
+  );
   const openAgentTranscriptSurface = useCallback(
     (agentId: string, title?: string) => {
       if (!activeThreadRef) return;
@@ -6419,6 +6519,11 @@ function ChatViewContent(props: ChatViewProps) {
       liveAgentCount={
         rightPanelOpen && activeRightPanelSurface?.kind === "agents" ? 0 : agentPanelModel.liveCount
       }
+      // Same rule for artifacts: the rows and their unread dots are on screen
+      // while the Artifacts surface is visible.
+      unreadArtifactCount={
+        rightPanelOpen && activeRightPanelSurface?.kind === "artifacts" ? 0 : unreadArtifactCount
+      }
       onToggleReadingFocus={toggleReadingFocus}
       onToggleTerminal={toggleTerminalVisibility}
       onToggleRightPanel={toggleRightPanel}
@@ -6531,6 +6636,15 @@ function ChatViewContent(props: ChatViewProps) {
         environmentId={activeThreadRef?.environmentId ?? null}
         threadId={activeThreadRef?.threadId ?? null}
         onOpenTranscript={openAgentTranscriptSurface}
+      />
+    ) : activeRightPanelSurface?.kind === "artifacts" ? (
+      <ArtifactsPanel
+        artifacts={threadArtifacts}
+        reachability={artifactReachability}
+        openErrorsByArtifactId={artifactOpenErrors}
+        onOpen={openArtifact}
+        onSetRead={setArtifactRead}
+        onSetStarred={setArtifactStarred}
       />
     ) : activeRightPanelSurface?.kind === "agent-transcript" ? (
       <AgentTranscriptPanel
@@ -7092,14 +7206,17 @@ function ChatViewContent(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddAgents={addAgentsSurface}
+          onAddArtifacts={addArtifactsSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           agentsAvailable
+          artifactsAvailable
           pullRequestStatuses={pullRequestTabStatuses}
           liveAgentCount={agentPanelModel.liveCount}
+          unreadArtifactCount={unreadArtifactCount}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -7132,14 +7249,17 @@ function ChatViewContent(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddAgents={addAgentsSurface}
+            onAddArtifacts={addArtifactsSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             agentsAvailable
+            artifactsAvailable
             pullRequestStatuses={pullRequestTabStatuses}
             liveAgentCount={agentPanelModel.liveCount}
+            unreadArtifactCount={unreadArtifactCount}
           >
             {rightPanelContent}
           </RightPanelTabs>

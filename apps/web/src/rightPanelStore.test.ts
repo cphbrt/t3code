@@ -252,6 +252,56 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps artifacts as a singleton surface", () => {
+    useRightPanelStore.getState().open(refA, "artifacts");
+    useRightPanelStore.getState().open(refA, "artifacts");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "artifacts",
+      surfaces: [{ id: "artifacts", kind: "artifacts" }],
+    });
+  });
+
+  it("toggle hides and restores the artifacts surface", () => {
+    useRightPanelStore.getState().toggle(refA, "artifacts");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      "artifacts",
+    );
+    useRightPanelStore.getState().toggle(refA, "artifacts");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+    expect(
+      selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toEqual({ id: "artifacts", kind: "artifacts" });
+  });
+
+  it("carries a persisted artifacts surface through migration", () => {
+    expect(
+      migratePersistedRightPanelState({
+        byThreadKey: {
+          "env-1:thread-A": {
+            isOpen: true,
+            activeSurfaceId: "artifacts",
+            surfaces: [
+              { id: "artifacts", kind: "artifacts" },
+              { id: "diff", kind: "diff" },
+            ],
+          },
+        },
+      }),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "artifacts",
+          surfaces: [
+            { id: "artifacts", kind: "artifacts" },
+            { id: "diff", kind: "diff" },
+          ],
+        },
+      },
+    });
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");

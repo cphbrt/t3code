@@ -235,6 +235,7 @@ const makeDefaultOrchestrationReadModel = () => {
         messages: [],
         session: null,
         activities: [],
+        artifacts: [],
         proposedPlans: [],
         checkpoints: [],
         deletedAt: null,
@@ -267,6 +268,7 @@ const makeDefaultOrchestrationThreadShell = (
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    unreadArtifactCount: 0,
     ...overrides,
   };
 };
@@ -5868,6 +5870,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             messages: [],
             session: null,
             activities: [],
+            artifacts: [],
             proposedPlans: [],
             checkpoints: [],
             deletedAt: null,
@@ -6157,6 +6160,127 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(items[0]?.kind, "snapshot");
       assert.equal(items[1]?.kind, "event");
       assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 2);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  /**
+   * `OrchestrationEvent` is a closed union, so a client that predates the
+   * artifact types may not tolerate a frame carrying one — including the
+   * released iOS app, which we cannot re-test. Delivery is therefore opt-in.
+   */
+  const makeArtifactAndMessageEvents = (thread: { readonly id: ThreadId }) => {
+    const base = {
+      aggregateKind: "thread",
+      aggregateId: thread.id,
+      occurredAt: "2026-01-01T00:00:01.000Z",
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+    } as const;
+    return {
+      artifactEvent: {
+        ...base,
+        sequence: 2,
+        eventId: EventId.make("event-artifact"),
+        type: "thread.artifact-recorded",
+        payload: {
+          threadId: thread.id,
+          artifact: {
+            id: "artifact-1",
+            path: "/workspace/example/review.md",
+            recordedAt: "2026-01-01T00:00:01.000Z",
+            readAt: null,
+            starredAt: null,
+          },
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.artifact-recorded" }>,
+      messageEvent: {
+        ...base,
+        sequence: 3,
+        eventId: EventId.make("event-message-after-artifact"),
+        type: "thread.message-sent",
+        payload: {
+          threadId: thread.id,
+          messageId: MessageId.make("message-after-artifact"),
+          role: "user",
+          text: "After the artifact",
+          turnId: null,
+          streaming: false,
+          createdAt: "2026-01-01T00:00:01.000Z",
+          updatedAt: "2026-01-01T00:00:01.000Z",
+        },
+      } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>,
+    };
+  };
+
+  const runArtifactSubscription = (includeArtifactEvents: boolean | undefined) =>
+    Effect.gen(function* () {
+      const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const { artifactEvent, messageEvent } = makeArtifactAndMessageEvents(thread);
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            streamDomainEvents: Stream.fromPubSub(liveEvents),
+          },
+          projectionSnapshotQuery: {
+            getThreadDetailSnapshot: () =>
+              Effect.gen(function* () {
+                yield* Effect.sleep("25 millis");
+                yield* PubSub.publish(liveEvents, artifactEvent);
+                yield* PubSub.publish(liveEvents, messageEvent);
+                return Option.some({ snapshotSequence: 1, thread });
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      return yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+            threadId: defaultThreadId,
+            ...(includeArtifactEvents === undefined ? {} : { includeArtifactEvents }),
+          }).pipe(Stream.take(2), Stream.runCollect),
+        ),
+      ).pipe(Effect.timeout("2 seconds"));
+    });
+
+  it.effect("subscribeThread withholds artifact events from a client that did not opt in", () =>
+    Effect.gen(function* () {
+      const items = yield* runArtifactSubscription(undefined);
+
+      assert.equal(items[0]?.kind, "snapshot");
+      // The artifact event was published first and must be filtered out, so
+      // the second frame is the later message — and every pre-existing detail
+      // event still arrives untouched.
+      assert.equal(items[1]?.kind, "event");
+      assert.equal(items[1]?.kind === "event" ? items[1].event.type : null, "thread.message-sent");
+      assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 3);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("subscribeThread sends artifact events to a client that opted in", () =>
+    Effect.gen(function* () {
+      const items = yield* runArtifactSubscription(true);
+
+      assert.equal(items[0]?.kind, "snapshot");
+      assert.equal(items[1]?.kind, "event");
+      assert.equal(
+        items[1]?.kind === "event" ? items[1].event.type : null,
+        "thread.artifact-recorded",
+      );
+      assert.equal(items[1]?.kind === "event" ? items[1].event.sequence : null, 2);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("subscribeThread withholds artifact events when the client opts out explicitly", () =>
+    Effect.gen(function* () {
+      const items = yield* runArtifactSubscription(false);
+
+      assert.equal(items[1]?.kind === "event" ? items[1].event.type : null, "thread.message-sent");
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
