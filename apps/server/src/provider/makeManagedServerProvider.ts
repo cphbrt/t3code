@@ -39,6 +39,18 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
+  /**
+   * Whether this provider instance is currently doing work the user is paying
+   * for — an agent turn in flight. Drivers read it from their own adapter, so
+   * it is per-instance by construction and provider-neutral here.
+   *
+   * Unlike client-reported demand this deliberately ignores the focus-gated
+   * activity lease: usage is being spent whether or not a window is watching,
+   * and a stale quota reading is exactly what the user needs while an agent
+   * runs. It only re-arms the existing refresh tick; it starts no probe of its
+   * own and cannot poll faster than `refreshInterval`.
+   */
+  readonly hasActiveWork?: Effect.Effect<boolean>;
   readonly refreshInterval?: Duration.Input;
 }): Effect.fn.Return<
   ServerProviderShape,
@@ -148,6 +160,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
 
   const hasProviderStatusDemand = Effect.gen(function* () {
+    if (input.hasActiveWork !== undefined) {
+      if (yield* input.hasActiveWork) {
+        return true;
+      }
+    }
     const state = yield* Ref.get(snapshotStateRef);
     const instanceId = state.snapshot.instanceId;
     const [genericDemand, instanceDemand] = yield* Effect.all([

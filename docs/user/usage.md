@@ -25,7 +25,10 @@ Use **Past 24h** for an hourly chart covering the exact rolling 24-hour period. 
 headline and chart, and refreshing rescans every connected environment.
 Refreshing also asks each connected environment to update its provider quota snapshots.
 
-Quota snapshots are kept current only while something is showing them: this page while it is open,
-or the composer's quota chip while its details are open. Close both and environments stop checking
+Quota snapshots are kept current while something is showing them — this page while it is open, or
+the composer's quota chip while its details are open — and while a provider is actually running an
+agent turn. A running agent spends your allowance whether or not you are watching, so its provider
+keeps refreshing even with the app in the background or closed to the tray; the checks stop when
+that turn finishes. With no agent running and nothing on screen, environments stop checking
 allowances until you look again, so a snapshot you return to may be a few minutes old before its
 first refresh lands.
