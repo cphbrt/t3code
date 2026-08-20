@@ -150,6 +150,21 @@ short factual notes so the same wrong conclusion is not reached twice.
 
 ## Planned work
 
+- **`spawn_thread` deliberate omissions (2026-08-20).** The spawn toolkit
+  shipped with three consciously deferred edges. (1) No always-on
+  tool-instruction block: the tool is discoverable by name; add a block only
+  if live turns show agents failing to find it (the `settle_thread` precedent
+  cuts the other way, so watch for it). (2) No sidebar attribution of spawned
+  threads — a spawned thread is indistinguishable from a user-created one;
+  attribution would need a contract field on the thread shell. (3) The spawn
+  cap counts successful spawns per provider session for the session's
+  lifetime, in process memory only; a server restart resets it, and a
+  long-lived session cannot earn back allowance. All three are fine at
+  current scale; revisit on evidence, not speculation. Also note
+  `spawn_thread` bypasses the ws-layer `startup.enqueueCommand` readiness
+  gate, as `show_chris` already does — acceptable because an agent turn
+  implies a started server.
+
 - **Per-toolset gating for the `t3-code` MCP server (deferred).** Upstream
   `cd096b9ad` added the `enableAgentBrowserAccess` server setting, but it gates
   the whole `t3-code` MCP credential rather than the browser toolset:
