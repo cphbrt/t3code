@@ -33,10 +33,22 @@ subject, never as the entry's identifier.
   decoded bytes 73,660 / 74,486 against 68,000. Decoded bytes have drifted up
   from the 71,446 recorded above, so they hold steady only within a given main,
   not across its movement.
-- **"Plan updated" surface is dead in production.** Claude CLI 2.1.233
-  removed `TodoWrite`/`Task*` from the default toolset on modern models, so
-  `turn.plan.updated` never fires anymore. Decide: remove the surface, or
-  restore the tools via explicit `allowedTools` in the adapter.
+  Re-measured on 2026-08-20 against the fork series rebased onto upstream
+  `9027d6267`, where every figure rose again: total thread wire bytes 20,002
+  codex / 20,062 claudeAgent; thread snapshot wire bytes 8,605 / 8,621;
+  measured-turn wire bytes 11,397 / 11,441; measured-turn decoded bytes
+  76,859 / 77,707. Still the same eight violations and still unattributed, so
+  the rebase did not introduce it, but the gap widens with each upstream base.
+  Treat every one of these figures as approximate. The wire totals vary by a
+  few bytes between repeat runs in one checkout. The decoded totals are the
+  steadier pair — they reproduced exactly across repeat runs here — yet they
+  are still not portable: a reviewer measuring the same commit in a different
+  worktree got 76,893 / 77,785 against the 76,859 / 77,707 recorded above.
+  So decoded bytes are reproducible within a checkout and not across them,
+  which points at something environment-dependent riding the payload (the
+  worktree path length is the obvious suspect, unconfirmed). Compare against
+  a baseline you measured yourself, in the same tree, and treat a drift of
+  tens of bytes as noise rather than a regression.
 - **Batched peer-message deliveries have no marker.** When several
   inter-session messages arrive during one turn, the provider reports a
   single batched terminal `origin` (sometimes with no body), so individual
@@ -77,9 +89,10 @@ subject, never as the entry's identifier.
   so a self-settled thread keeps its idle provider session until the reaper or
   a quit takes it. Deliberately left out rather than adding a reactor for it;
   decide whether the asymmetry is worth closing.
-- **`ProjectionSnapshotQuery.test.ts` fails on clean main.** "hydrates read
-  model from projection tables and computes snapshot sequence" expects a thread
-  object without `scheduledTurn`, but the query now returns
+- **`ProjectionSnapshotQuery.test.ts` fails on clean main.** The file is
+  `apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts`.
+  "hydrates read model from projection tables and computes snapshot sequence"
+  expects a thread object without `scheduledTurn`, but the query now returns
   `scheduledTurn: null`. One-line expectation fix; unattributed, and unrelated
   to any in-flight lane that found it.
 - **Tool result previews are event-derived, so history stays bare.**
@@ -117,6 +130,23 @@ subject, never as the entry's identifier.
   different model than fixed positional slots. Note the recorder only
   captures semantic activations, so these ratios describe control usage, not
   keystrokes.
+
+## Corrected records
+
+Entries that were recorded as problems and turned out to be false. Kept as
+short factual notes so the same wrong conclusion is not reached twice.
+
+- **The "Plan updated" surface is alive, via the `Task*` path.** A previous
+  entry claimed Claude CLI 2.1.233 had removed `TodoWrite`/`Task*` from the
+  default toolset, so `turn.plan.updated` never fired, and asked whether to
+  delete the surface. Only `TodoWrite` went. `TaskCreate`, `TaskUpdate`, and
+  `TaskList` are live, and `ClaudeAdapter.ts` maps them to
+  `turn.plan.updated`: `isClaudeTaskTool` names exactly those three
+  (`ClaudeAdapter.ts:938`), it guards the task-item path
+  (`:1057`), and `emitClaudeTaskPlanUpdated` (`:2556`) emits
+  `type: "turn.plan.updated"` (`:2571`) from the tool dispatch at `:3267`.
+  The older `TodoWrite`-driven emit (`:2967`) is what actually went dark.
+  Verified by reading the adapter on 2026-08-20. Do not remove the surface.
 
 ## Planned work
 
@@ -174,6 +204,71 @@ subject, never as the entry's identifier.
   guidance in `AGENTS.md` once confirmed a second time.
 
 ## Known defects
+
+- **The Codex reset-delayed send is dark in production.** On a real hard
+  exhaustion on 2026-08-19 none of the reset-delayed affordances appeared,
+  because no `resetsAt` was ever derived. Two independent inputs both came up
+  empty. The `usageLimitExceeded` turn error's message read "try again at
+  11:34 PM." with no date at all, and the parser in `CodexUsageLimit.ts`
+  requires a month, day, and year, so it cannot match a bare clock time.
+  Separately, both `account/rateLimits/updated` frames observed during the
+  event were the sparse credits-shaped variant, carrying `primary`,
+  `secondary`, and `rateLimitReachedType` all null, so telemetry supplied no
+  exhausted window to refine the reset from either. With no `resetsAt`,
+  `observeUsageLimitError` records _nothing at all_: it returns `undefined`
+  (`CodexUsageLimit.ts:233-239`), because the limited variant of
+  `CodexUsageLimitUpdate` is `{ status: "limited"; resetsAt: string }`
+  (`:35-37`), which makes a reset-less limited state unrepresentable by
+  construction. The fork policy comment there is explicit that omitting the
+  state is preferred to guessing a reset. So the blast radius is wider than
+  the delayed-send affordance: the account's hard-exhaustion state is never
+  recorded, and therefore the top error bar on every thread using that
+  provider instance is suppressed too, alongside the **Send after reset**
+  button beside the composer's send, the **Until usage resets** entry in the
+  thread's Snooze menu, and the cross-thread reset countdown. The only thing
+  the user sees is the individual turn failing on its own thread. Note this
+  means the fix is not purely a parser change: a reset-less limited state
+  needs somewhere to live before an unparseable message can light up the
+  error bar. The message shape has drifted since the 2026-08-15 capture
+  the parser was written against, so the parser needs to accept a bare
+  time-of-day (resolving the date against the local clock, including
+  roll-over past midnight) rather than requiring a full date. Deferred to its
+  own commit after the 2026-08-20 upstream integration; identify the
+  behaviour by the commits `feat(codex): recognize provider usage-limit
+exhaustion` and `feat(threads): schedule prompts for usage resets`.
+
+- **Four payload-size assertions fail against the fork's inline command
+  output.** Across two files, a test asserts that a projected
+  `command_execution` payload stays under a byte budget, but the fork
+  deliberately carries a truncated copy of command output inline on the latest
+  turn, so `data.output` plus `data.outputOmittedBytes` push the payload well
+  past the cap. Three sit in
+  `apps/server/src/orchestration/ActivityPayloadProjection.test.ts`: "keeps a
+  bounded Codex command output summary" measures 1,167 against 500, "keeps
+  bounded Claude and ACP command output summaries" measures 1,149 against 500,
+  and upstream's "normalizes Claude and OpenCode command inputs before
+  slimming provider data" measures 1,132 against 200. The fourth is
+  `apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.activity.test.ts:123`,
+  "persists tool.updated with the wire projection of data, not the accumulated
+  stream", measuring 1,202 against 1,000.
+  Three of the four are pre-existing and reproduce byte-identically on
+  pre-rebase fork main `4661a692c` — including the
+  `ProviderRuntimeIngestion.activity` one at the same 1,202 — so they predate
+  the 2026-08-20 upstream integration. That integration added exactly one new
+  instance of the same mismatch, the upstream-authored "normalizes …" test.
+  Every one of them still checks something real: the field-level assertions in
+  all four pass, including the command normalization the new test exists to
+  cover, so only the size caps are wrong for this fork. Decide the honest
+  budget for a payload that intentionally carries inline output and reset all
+  four together, rather than deleting the tests.
+  Two traps for whoever picks this up. The failures live in four separate test
+  files whose names differ only by suffix — `ProviderRuntimeIngestion.test.ts`
+  passes cleanly while `ProviderRuntimeIngestion.activity.test.ts` fails, so a
+  targeted run of the obvious file reports all-green and hides the defect.
+  And the "normalizes …" test also exercises OpenCode's `state.input.command`
+  shape, which no longer has a provider here; the code path survives in
+  `projectCommandValue` and is harmless, but that half of the test asserts
+  nothing this fork can reach.
 
 - **Codex mid-turn quota merging is unverified against a live Codex account.**
   The sparse-merge path (`mergeCodexRollingQuotaUpdate` in `CodexProvider.ts`)
@@ -379,9 +474,10 @@ subject, never as the entry's identifier.
   caps a thread's activity list at 500 in two places — the projector's
   in-memory read model (`orchestration/projector.ts`, `.slice(-500)`) and the
   snapshot query's SQL bound (`THREAD_DETAIL_ACTIVITY_LIMIT` in
-  `Layers/ProjectionSnapshotQuery.ts`). A client applying live events holds
-  everything the socket delivered, so a thread that streams past 500 activities
-  in one continuously-open session shows more history than the server retains,
+  `orchestration/Layers/ProjectionSnapshotQuery.ts`). A client applying live
+  events holds everything the socket delivered, so a thread that streams past
+  500 activities in one continuously-open session shows more history than the
+  server retains,
   and those older rows disappear at the next reload or reconnect that reseeds
   from the snapshot. This is the **server** cap, not a missing client cap:
   mirroring the cap in `packages/client-runtime/src/state/threadReducer.ts`
@@ -407,7 +503,7 @@ registered"` on a repeating PR-lookup cycle. The message is malformed — "No
   2026-08-18.
 
 - **The decider is blind to activities and messages after a restart.**
-  `getCommandReadModel` (`Layers/ProjectionSnapshotQuery.ts`) deliberately
+  `getCommandReadModel` (`orchestration/Layers/ProjectionSnapshotQuery.ts`) deliberately
   returns `messages: []` and `activities: []` because they are heavy and were
   believed unused by command validation. They are not entirely unused: with an
   empty activity list the decider cannot see an outstanding approval, so
@@ -440,6 +536,21 @@ registered"` on a repeating PR-lookup cycle. The message is malformed — "No
   then use instead of the origin heuristic. Recorded 2026-08-18.
 
 ## Next fork-series curation pass
+
+- Move the deletion of `apps/server/src/provider/opencodeRuntime.environment.test.ts`
+  out of `feat(threads): let an agent settle its own thread when the turn lands
+cleanly` and into `chore(providers): support only Codex and Claude`, where the
+  rest of the OpenCode removal lives. The removal commit deletes
+  `opencodeRuntime.ts` but leaves this test behind, and the test does
+  `import { resolveOpenCodeConfigContent } from "./opencodeRuntime.ts"` — so
+  every tree from the removal commit up to the settle commit carries a dangling
+  import, a range of 51 commits as the series stood on 2026-08-20. The settle
+  commit's message never mentions OpenCode, so the deletion also reads as
+  unrelated noise in a feature commit. Verified by inspection during the
+  2026-08-20 upstream integration and deliberately left alone there, because
+  correcting it touches two commits far apart in the series and the integration
+  was already carrying the rebase. Expect the settle commit's own deletion of
+  the file to become a no-op once the earlier commit takes it.
 
 - Considered and rejected, recorded so it is not re-opened: folding
   `feat(web): provider usage scrolls with the model picker's model list` into
@@ -494,6 +605,14 @@ grep`, and always pair a content assertion with a control string known to
   malformed MCP results (`structuredContent: null`), and `preview_evaluate`
   rejects array-valued results (`structuredContent` must be an object).
   Observed 2026-08-17 against the running app; reproduce and fix in dev.
+- Upstream's legacy **Plan mode** setting was reported during the 2026-08-20
+  upstream review as not persisting across a fresh browser context: the
+  Settings toggle accepts the change, but a new context reads it back off.
+  Not independently reproduced by the integration lane, so confirm before
+  acting on it. The fork carries this setting unchanged from upstream and
+  does not depend on it, so it reads as an upstream bug rather than fork
+  fallout. Low priority; worth reporting upstream if it reproduces on a clean
+  upstream checkout.
 - Delete the `backup/pre-command-output` ref (pre-rewrite main tip safety
   net).
 - `git worktree prune` — the `design/claude-limit-countdown` worktree
