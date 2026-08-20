@@ -549,6 +549,49 @@ registered"` on a repeating PR-lookup cycle. The message is malformed — "No
   through a tailnet name. Doing adoption properly would want a real machine
   identity exchanged at connection time, which artifact reachability should
   then use instead of the origin heuristic. Recorded 2026-08-18.
+- **A model-selection change is recorded as a prompt-cache miss and poisons the
+  learned TTL.** Changing the effort level mid-thread invalidates the provider's
+  cached prefix, because effort is part of the rendered prompt rather than a
+  sampling knob; Anthropic documents this under "Changing effort mid-conversation"
+  ("effort shapes the rendered prompt, changing it between requests does not
+  preserve cached prefixes") and again in best practice 5. The prompt-cache
+  recorder cannot distinguish that invalidation from a TTL expiry, so it files an
+  ordinary `miss` observation whose `idle_gap_ms` is just however long the user
+  took to type — and `estimatePromptCacheTtl`
+  (`packages/shared/src/promptCache.ts:101-140`) reads every miss as evidence that
+  the cache dies at that gap. Observed on a `claude-opus-5` thread: a
+  `thread.meta-updated` event carrying
+  `modelSelection.options[{id:"effort", value:"medium"}]` landed 28 ms before the
+  next turn started, and that turn recorded a total miss — `cached_input_tokens`
+  0, the full 46,529-token prefix rewritten — at a 61.1 s idle gap. The two
+  following turns hit normally (46,529 and 99,180 tokens cached), so the cache
+  re-warmed immediately and nothing was actually cold. Confounds were excluded:
+  same model, same `1m` context window, and every turn in the thread transitions
+  through session status `starting`, including the two that hit, so the session
+  lifecycle explains nothing. The base rate makes the outlier plain — across the
+  whole observation table, idle gaps under two minutes ran 94 hits to 1 miss, and
+  that single miss is the effort-change turn, while genuine TTL expiry sits in
+  the over-one-hour bucket at 8 misses to 2 hits. The damage is instance-wide rather than
+  per-thread. With one miss in the window, `observedColdFromMs` (p25 of misses)
+  became 61,148 while `observedWarmThroughMs` (p95 of hits) stood at 1,091,119;
+  because warm then exceeds cold, the estimator takes its contradiction branch,
+  discards the one-hour Claude prior, and returns the median of all gaps —
+  leaving `claude-opus-5` at `estimated_ttl_ms` 154,661 (~2.6 min) with
+  `basis=learned, confidence=high` off 99 hits and that lone miss. So one effort
+  change cut the warmth estimate for every thread on that provider instance from
+  60 minutes to 2.6, and it decays back only as long-gap hits dilute it. Note the
+  direction: `AGENTS.md` warns about false-warm estimates, and this is the
+  opposite failure, a false-cold one that under-reports warmth on the sidebar glow
+  and the composer meter. Fix: suppress the observation entirely when
+  `modelSelection` changed since the thread's last cache activity — a
+  configuration-change invalidation is not evidence about cache lifetime and must
+  not enter the estimator's evidence window at all. The signal is already
+  persisted; `thread.meta-updated` carries the selection, and
+  `projection_thread_prompt_cache` already holds the per-thread last-activity row
+  to compare against. Any other request-level parameter that shapes the rendered
+  prompt (context-window selection is the near neighbour, since it rides the same
+  `modelSelection` payload) belongs under the same suppression. Recorded
+  2026-08-20.
 
 ## Next fork-series curation pass
 
