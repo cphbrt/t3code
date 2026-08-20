@@ -1,0 +1,269 @@
+import { CommandId, MessageId, ThreadId, type ModelSelection } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { SPAWN_LIMIT_PER_SESSION, SpawnThreadError, SpawnToolkit } from "./tools.ts";
+
+/**
+ * Spawns consumed per provider session, counted only when a spawn fully lands
+ * so a refused attempt costs nothing. Keyed by `providerSessionId`, which is
+ * minted per session and never reused, so entries are few and the map is left
+ * to die with the process like the credential registry it shadows.
+ */
+const spawnCountBySession = new Map<string, number>();
+
+/**
+ * Claude batches parallel tool calls, so two spawns can land in the same
+ * millisecond; a time-only command id would collide in the engine's
+ * command-receipt dedupe and silently replay the first receipt. Same counter
+ * dodge as `show_chris`.
+ */
+let spawnCallOrdinal = 0;
+
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+const SPAWN_CONFIRMATION =
+  "Spawned. The new thread is in the sidebar and has started on the prompt. It will not report back here; the user follows it there.";
+
+/**
+ * Creates a sibling top-level thread and starts its first turn.
+ *
+ * Everything not passed as an argument is inherited from the parent thread —
+ * provider instance, permission mode, and (by default) project, directory and
+ * model — read from the parent's shell row, never from arguments, so a spawn
+ * can never escalate or aim outside its own thread's scope. The project is the
+ * one derived point: a directory that is exactly a known project's workspace
+ * root files the child there. That is labeling, not escalation — the mode
+ * still inherits from the parent, and the directory itself was already the
+ * agent's to choose. The interaction mode is always "default": a delegation
+ * is given work to do, not a plan to propose, even when the parent itself is
+ * in plan mode.
+ *
+ * The two dispatches mirror the client bootstrap path in `ws.ts`, including
+ * its compensating delete: a thread whose first turn never started must not
+ * survive as an empty sidebar row.
+ */
+export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (params: {
+  readonly prompt: string;
+  readonly title: string;
+  readonly directory?: string | undefined;
+  readonly model?: string | undefined;
+}) {
+  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  if (!invocation.capabilities.has("spawn")) {
+    return yield* new SpawnThreadError({
+      reason: "capability-unavailable",
+      message: "This session's T3 Code credential may not spawn threads.",
+    });
+  }
+
+  const spent = spawnCountBySession.get(invocation.providerSessionId) ?? 0;
+  if (spent >= SPAWN_LIMIT_PER_SESSION) {
+    return yield* new SpawnThreadError({
+      reason: "spawn-limit-reached",
+      message: `This session has already spawned ${SPAWN_LIMIT_PER_SESSION} threads, which is the limit.`,
+    });
+  }
+
+  const prompt = params.prompt.trim();
+  if (prompt === "") {
+    return yield* new SpawnThreadError({
+      reason: "invalid-argument",
+      message: "prompt must not be empty. Pass the new thread's first user message.",
+    });
+  }
+  const title = params.title.trim();
+  if (title === "") {
+    return yield* new SpawnThreadError({
+      reason: "invalid-argument",
+      message: "title must not be empty. Pass a short sidebar title for the new thread.",
+    });
+  }
+  const model = params.model?.trim();
+  if (model === "") {
+    return yield* new SpawnThreadError({
+      reason: "invalid-argument",
+      message: "model must not be blank. Omit it to use this thread's model.",
+    });
+  }
+
+  const projection = yield* ProjectionSnapshotQuery;
+  const shell = yield* projection.getThreadShellById(invocation.threadId).pipe(
+    Effect.catch((error) =>
+      Effect.logWarning("spawn_thread could not read the parent thread shell", {
+        threadId: invocation.threadId,
+        error,
+      }).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new SpawnThreadError({
+              reason: "rejected",
+              message: "T3 Code could not resolve this thread to spawn from.",
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+  if (Option.isNone(shell)) {
+    return yield* new SpawnThreadError({
+      reason: "rejected",
+      message: "T3 Code could not resolve this thread to spawn from.",
+    });
+  }
+  const parent = shell.value;
+
+  // The directory is validated here, on the machine the new thread would run
+  // on, exactly as `show_chris` validates its path.
+  //
+  // Which project the child files under is derived from the directory, never
+  // chosen: a path that is exactly a known project's workspace root files the
+  // child under that project (its root is then the natural cwd, so no worktree
+  // override); any other path — a worktree, a subdirectory, an unrelated
+  // place — rides as a worktree of the parent's project, exactly like a
+  // user-created worktree thread. Path containment cannot do better, because
+  // real worktrees deliberately live outside their project's workspace root.
+  // No project is ever created for an unmatched directory.
+  let projectId = parent.projectId;
+  let worktreePath = parent.worktreePath;
+  if (params.directory !== undefined) {
+    const path = yield* Path.Path;
+    const rawDirectory = params.directory.trim();
+    if (rawDirectory === "" || !path.isAbsolute(rawDirectory)) {
+      return yield* new SpawnThreadError({
+        reason: "invalid-directory",
+        message: `'${params.directory}' is not an absolute path. Pass the full path to a directory, or omit it.`,
+      });
+    }
+    const requestedDirectory = path.resolve(rawDirectory);
+    const fileSystem = yield* FileSystem.FileSystem;
+    const info = yield* fileSystem.stat(requestedDirectory).pipe(
+      Effect.mapError(
+        () =>
+          new SpawnThreadError({
+            reason: "invalid-directory",
+            message: `Nothing exists at '${requestedDirectory}'. Pass an existing directory.`,
+          }),
+      ),
+    );
+    if (info.type !== "Directory") {
+      return yield* new SpawnThreadError({
+        reason: "invalid-directory",
+        message: `'${requestedDirectory}' is not a directory.`,
+      });
+    }
+    const ownProject = yield* projection.getActiveProjectByWorkspaceRoot(requestedDirectory).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("spawn_thread could not look up a project for the directory", {
+          threadId: invocation.threadId,
+          directory: requestedDirectory,
+          error,
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new SpawnThreadError({
+                reason: "rejected",
+                message: "T3 Code could not resolve the directory's project.",
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (Option.isSome(ownProject)) {
+      projectId = ownProject.value.id;
+      worktreePath = null;
+    } else {
+      worktreePath = requestedDirectory;
+    }
+  }
+
+  // A different model drops the parent's per-model option selections rather
+  // than carrying settings chosen for another model.
+  const modelSelection: ModelSelection =
+    model !== undefined
+      ? { instanceId: parent.modelSelection.instanceId, model }
+      : parent.modelSelection;
+
+  const crypto = yield* Crypto.Crypto;
+  const threadId = ThreadId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
+  const messageId = MessageId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
+  const millis = yield* Clock.currentTimeMillis;
+  const createdAt = yield* nowIso;
+  spawnCallOrdinal += 1;
+  const commandId = (step: string) =>
+    CommandId.make(`spawn-${step}:${invocation.providerSessionId}:${millis}:${spawnCallOrdinal}`);
+
+  const engine = yield* OrchestrationEngineService;
+  const rejected = (detail: string, error: { readonly message: string }) =>
+    Effect.logWarning(`spawn_thread ${detail} rejected`, {
+      threadId: invocation.threadId,
+      spawnedThreadId: threadId,
+      error,
+    }).pipe(
+      Effect.andThen(
+        Effect.fail(
+          new SpawnThreadError({
+            reason: "rejected",
+            message: `T3 Code refused to spawn the thread: ${error.message}`,
+          }),
+        ),
+      ),
+    );
+
+  yield* engine
+    .dispatch({
+      type: "thread.create",
+      commandId: commandId("create"),
+      threadId,
+      projectId,
+      title,
+      modelSelection,
+      runtimeMode: parent.runtimeMode,
+      interactionMode: "default",
+      branch: null,
+      worktreePath,
+      createdAt,
+    })
+    .pipe(Effect.catch((error) => rejected("thread create", error)));
+
+  yield* engine
+    .dispatch({
+      type: "thread.turn.start",
+      commandId: commandId("turn"),
+      threadId,
+      message: { messageId, role: "user", text: prompt, attachments: [] },
+      runtimeMode: parent.runtimeMode,
+      interactionMode: "default",
+      createdAt,
+    })
+    .pipe(
+      // Mirror of the ws bootstrap's cleanupCreatedThread: a create whose
+      // first turn never started must not survive as an empty sidebar row.
+      Effect.catch((error) =>
+        engine
+          .dispatch({ type: "thread.delete", commandId: commandId("cleanup"), threadId })
+          .pipe(Effect.ignoreCause({ log: true }), Effect.andThen(rejected("turn start", error))),
+      ),
+    );
+
+  spawnCountBySession.set(invocation.providerSessionId, spent + 1);
+  return { threadId, title, message: SPAWN_CONFIRMATION };
+});
+
+export const SpawnToolkitHandlersLive = SpawnToolkit.toLayer({
+  spawn_thread: spawnThread,
+});
+
+/** Exposed for tests. */
+export const __testing = {
+  resetSpawnCounts: () => spawnCountBySession.clear(),
+};

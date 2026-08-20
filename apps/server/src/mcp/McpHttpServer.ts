@@ -24,6 +24,8 @@ import {
 } from "./toolkits/preview/tools.ts";
 import { ArtifactToolkitHandlersLive } from "./toolkits/artifact/handlers.ts";
 import { ArtifactToolkit } from "./toolkits/artifact/tools.ts";
+import { SpawnToolkitHandlersLive } from "./toolkits/spawn/handlers.ts";
+import { SpawnToolkit } from "./toolkits/spawn/tools.ts";
 import { ThreadToolkitHandlersLive } from "./toolkits/thread/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import { UsageToolkitHandlersLive } from "./toolkits/usage/handlers.ts";
@@ -241,6 +243,10 @@ export const UsageToolkitRegistrationLive = McpServer.toolkit(UsageToolkit).pipe
   Layer.provide(UsageToolkitHandlersLive.pipe(Layer.provide(ProviderUsageStatus.layer))),
 );
 
+export const SpawnToolkitRegistrationLive = McpServer.toolkit(SpawnToolkit).pipe(
+  Layer.provide(SpawnToolkitHandlersLive),
+);
+
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -253,4 +259,5 @@ export const layer = Layer.mergeAll(
   ThreadToolkitRegistrationLive,
   UsageToolkitRegistrationLive,
   ArtifactToolkitRegistrationLive,
+  SpawnToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));
