@@ -812,7 +812,7 @@ export function makeMemoryConsolidationNotificationFilter(): (
   };
 }
 
-function readRouteFields(notification: CodexServerNotification): {
+export function readRouteFields(notification: CodexServerNotification): {
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
 } {
@@ -835,6 +835,7 @@ function readRouteFields(notification: CodexServerNotification): {
       };
     case "turn/diff/updated":
     case "turn/plan/updated":
+    case "thread/tokenUsage/updated":
       return {
         turnId: TurnId.make(notification.params.turnId),
         itemId: undefined,

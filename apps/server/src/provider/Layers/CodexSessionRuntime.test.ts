@@ -22,6 +22,7 @@ import {
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
+  readRouteFields,
   toMcpElicitationResponse,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
@@ -685,6 +686,37 @@ describe("makeMemoryConsolidationNotificationFilter", () => {
       }),
       false,
     );
+  });
+});
+
+describe("readRouteFields", () => {
+  it("keeps the turn id on Codex token-usage notifications", () => {
+    const route = readRouteFields({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId: "provider-thread-1",
+        turnId: "provider-turn-1",
+        tokenUsage: {
+          last: {
+            inputTokens: 12_000,
+            cachedInputTokens: 10_000,
+            outputTokens: 100,
+            reasoningOutputTokens: 50,
+            totalTokens: 12_100,
+          },
+          total: {
+            inputTokens: 24_000,
+            cachedInputTokens: 18_000,
+            outputTokens: 200,
+            reasoningOutputTokens: 100,
+            totalTokens: 24_200,
+          },
+        },
+      },
+    });
+
+    NodeAssert.equal(route.turnId, "provider-turn-1");
+    NodeAssert.equal(route.itemId, undefined);
   });
 });
 
