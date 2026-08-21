@@ -1,7 +1,10 @@
 import {
   EnvironmentId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderOptionSelection,
+  type ServerProvider,
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationThreadShell,
@@ -10,6 +13,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
@@ -17,6 +21,7 @@ import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import {
   ThreadBootstrapRunner,
   type ThreadTurnStartCommand,
@@ -111,6 +116,93 @@ const recordingRunner = (bootstrapped: ThreadTurnStartCommand[]) =>
     }),
   );
 
+const PARENT_MODEL_SLUG = parentShell.modelSelection.model;
+const PARENT_INSTANCE_ID = parentShell.modelSelection.instanceId;
+
+/**
+ * A snapshot carrying the model the parent thread runs on. `agentDescriptor`
+ * decides whether that model advertises the probe-injected `agent` select — the
+ * one fact the gate consults, so it is expressed as the descriptor the real
+ * probe emits rather than a boolean the fake could answer on its own.
+ */
+const makeProviderSnapshot = (input: {
+  readonly slug?: string;
+  readonly agentDescriptor: boolean;
+}): ServerProvider =>
+  ({
+    instanceId: PARENT_INSTANCE_ID,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    status: "ready",
+    enabled: true,
+    installed: true,
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: input.slug ?? PARENT_MODEL_SLUG,
+        name: "Haiku",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              options: [{ id: "medium", label: "Medium", isDefault: true }],
+            },
+            ...(input.agentDescriptor
+              ? [
+                  {
+                    id: "agent",
+                    label: "Agent Profile",
+                    type: "select" as const,
+                    options: [
+                      { id: "none", label: "None", isDefault: true },
+                      { id: "my-manager", label: "my-manager" },
+                    ],
+                  },
+                ]
+              : []),
+          ],
+        },
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  }) as unknown as ServerProvider;
+
+/**
+ * Only `getProviders` is supplied. `Layer.mock` typechecks the member against
+ * the real service and leaves every other one raising `UnimplementedError`,
+ * which pins the second half of the claim these tests make: the gate reads the
+ * cached snapshot and nothing else — no refresh, no stream, no probe.
+ */
+const makeProviderRegistry = (providers: ReadonlyArray<ServerProvider>) =>
+  Layer.mock(ProviderRegistry)({ getProviders: Effect.succeed(providers) });
+
+/**
+ * The gate only reads `ProviderRegistry`, so every spawn test can carry a
+ * supporting snapshot without caring: they never pass `agentProfile`, and an
+ * absent parameter never reaches the gate.
+ */
+const supportingRegistry = makeProviderRegistry([makeProviderSnapshot({ agentDescriptor: true })]);
+
+const agentOptionOf = (command: ThreadTurnStartCommand) =>
+  command.modelSelection?.options?.find((option) => option.id === "agent");
+
+/**
+ * The agent entry on the selection PERSISTED with the new thread, read off the
+ * create payload rather than the turn command.
+ *
+ * The handler happens to pass one object to both today, so asserting through
+ * the turn command would make this a restatement that cannot fail on its own.
+ * The persisted copy is what the provider command reactor falls back to, and so
+ * what actually delivers `--agent`; a refactor that built the two selections
+ * separately must not be able to quietly break it.
+ */
+const persistedAgentOptionOf = (command: ThreadTurnStartCommand) =>
+  command.bootstrap?.createThread?.modelSelection?.options?.find((option) => option.id === "agent");
+
 const provideAll =
   (
     runner: ThreadBootstrapRunner["Service"],
@@ -118,12 +210,14 @@ const provideAll =
     shell: Option.Option<OrchestrationThreadShell> = Option.some(parentShell),
     projectsByRoot: ReadonlyMap<string, ProjectId> = new Map(),
     git: GitWorkflowService.GitWorkflowService["Service"] = repositoryGit(),
+    registry: Layer.Layer<ProviderRegistry> = supportingRegistry,
   ) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(ThreadBootstrapRunner, runner),
       Effect.provideService(ProjectionSnapshotQuery, makeProjection(shell, projectsByRoot)),
       Effect.provideService(GitWorkflowService.GitWorkflowService, git),
+      Effect.provide(registry),
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
     );
 
@@ -551,6 +645,213 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
 
       expect(error.reason).toBe("rejected");
       expect(bootstrapped).toHaveLength(0);
+    }),
+  );
+
+  /**
+   * The agent-profile tests vary only in the parent's selection, the parameter,
+   * and the snapshot. Every other spawn dependency is the ordinary happy path,
+   * so a failure here is about the profile and nothing else.
+   */
+  const spawnWithProfile = (input: {
+    readonly agentProfile?: string | undefined;
+    readonly parentOptions?: ReadonlyArray<ProviderOptionSelection>;
+    readonly registry?: Layer.Layer<ProviderRegistry>;
+    readonly dispatched: ThreadTurnStartCommand[];
+    readonly session: string;
+  }) =>
+    spawnThread({
+      repositoryPath: "/repos/other-repo",
+      title: "Look at X",
+      prompt: "p",
+      ...(input.agentProfile === undefined ? {} : { agentProfile: input.agentProfile }),
+    }).pipe(
+      provideAll(
+        recordingRunner(input.dispatched),
+        makeScope(["spawn"], input.session),
+        Option.some(
+          input.parentOptions === undefined
+            ? parentShell
+            : {
+                ...parentShell,
+                modelSelection: { ...parentShell.modelSelection, options: input.parentOptions },
+              },
+        ),
+        new Map(),
+        repositoryGit(),
+        input.registry ?? supportingRegistry,
+      ),
+    );
+
+  it.effect("sets the child's agent profile when the model supports one", () =>
+    Effect.gen(function* () {
+      const dispatched: ThreadTurnStartCommand[] = [];
+      yield* spawnWithProfile({
+        agentProfile: "my-manager",
+        // A parent option that is not the profile, to prove assembly edits one
+        // entry rather than replacing the selection.
+        parentOptions: [{ id: "effort", value: "high" }],
+        dispatched,
+        session: "session-profile-set",
+      });
+
+      const command = dispatched[0]!;
+      expect(agentOptionOf(command)).toEqual({ id: "agent", value: "my-manager" });
+      // The rest of the parent's selection rides along untouched.
+      expect(command.modelSelection?.options).toContainEqual({ id: "effort", value: "high" });
+      expect(command.modelSelection?.model).toBe(PARENT_MODEL_SLUG);
+      expect(command.modelSelection?.instanceId).toBe(PARENT_INSTANCE_ID);
+      // The persisted selection on the new thread is what the adapter later
+      // reads, so the create payload must carry it too — not just the turn.
+      expect(persistedAgentOptionOf(command)).toEqual({ id: "agent", value: "my-manager" });
+    }),
+  );
+
+  it.effect("strips the parent's own agent profile when none is asked for", () =>
+    Effect.gen(function* () {
+      // The child inherits the parent's model selection wholesale, which would
+      // otherwise propagate the parent's profile as an accident: a manager
+      // profile spawning workers must not mint more managers. Omitting the
+      // parameter means no profile, never "the same as mine".
+      const dispatched: ThreadTurnStartCommand[] = [];
+      yield* spawnWithProfile({
+        parentOptions: [
+          { id: "agent", value: "my-manager" },
+          { id: "effort", value: "high" },
+        ],
+        dispatched,
+        session: "session-profile-strip",
+      });
+
+      const command = dispatched[0]!;
+      expect(agentOptionOf(command)).toBeUndefined();
+      expect(persistedAgentOptionOf(command)).toBeUndefined();
+      // Stripping is surgical: the parent's other selections survive.
+      expect(command.modelSelection?.options).toContainEqual({ id: "effort", value: "high" });
+    }),
+  );
+
+  it.effect('treats the literal "none" exactly as an omitted profile', () =>
+    Effect.gen(function* () {
+      // The descriptor's explicit None choice spells its value "none", so an
+      // agent reading the option list will pass it. It must mean the same thing
+      // end to end as leaving the parameter out, including the strip.
+      const dispatched: ThreadTurnStartCommand[] = [];
+      yield* spawnWithProfile({
+        agentProfile: "none",
+        parentOptions: [{ id: "agent", value: "my-manager" }],
+        dispatched,
+        session: "session-profile-none",
+      });
+
+      expect(agentOptionOf(dispatched[0]!)).toBeUndefined();
+      expect(persistedAgentOptionOf(dispatched[0]!)).toBeUndefined();
+    }),
+  );
+
+  it.effect("refuses a profile when the child's model advertises no agent select", () =>
+    Effect.gen(function* () {
+      // A Codex parent lands here for free: no descriptor is ever emitted for
+      // Codex models. Spawning a plain child instead would be the failure the
+      // calling agent is least able to see, so this refuses rather than drops.
+      const dispatched: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnWithProfile({
+        agentProfile: "my-manager",
+        registry: makeProviderRegistry([makeProviderSnapshot({ agentDescriptor: false })]),
+        dispatched,
+        session: "session-profile-unsupported",
+      }).pipe(Effect.flip);
+
+      expect(error.reason).toBe("invalid-agent-profile");
+      expect(dispatched).toHaveLength(0);
+      // The message has to name the parameter and the retry, since the agent is
+      // the only party that can act on it.
+      expect(error).toBeInstanceOf(Error);
+      expect(error.message).toContain("agentProfile");
+      expect(error.message).toContain("my-manager");
+    }),
+  );
+
+  it.effect("refuses a profile when the provider snapshot cannot be found", () =>
+    Effect.gen(function* () {
+      // Reject-when-unknown: an empty or lagging registry is not evidence of
+      // support, and spawning ungated would produce a silently profile-less
+      // child. The same refusal covers both unknowns.
+      const dispatched: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnWithProfile({
+        agentProfile: "my-manager",
+        registry: makeProviderRegistry([]),
+        dispatched,
+        session: "session-profile-no-instance",
+      }).pipe(Effect.flip);
+
+      expect(error.reason).toBe("invalid-agent-profile");
+      expect(dispatched).toHaveLength(0);
+    }),
+  );
+
+  it.effect("refuses a profile when the snapshot has no entry for the child's model", () =>
+    Effect.gen(function* () {
+      const dispatched: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnWithProfile({
+        agentProfile: "my-manager",
+        // The instance is present and supports profiles on a DIFFERENT model, so
+        // this pins that the gate matches on the child's own slug.
+        registry: makeProviderRegistry([
+          makeProviderSnapshot({ slug: "some-other-model", agentDescriptor: true }),
+        ]),
+        dispatched,
+        session: "session-profile-no-model",
+      }).pipe(Effect.flip);
+
+      expect(error.reason).toBe("invalid-agent-profile");
+      expect(dispatched).toHaveLength(0);
+    }),
+  );
+
+  it.effect("gates the profile against an overridden model, not the parent's", () =>
+    Effect.gen(function* () {
+      // Their `model` parameter moves the child off the parent's model, so the
+      // gate has to follow it: a parent on a profile-capable model must not be
+      // able to smuggle a profile onto a child model that advertises none.
+      const dispatched: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnThread({
+        repositoryPath: "/repos/other-repo",
+        title: "Look at X",
+        prompt: "p",
+        model: "some-other-model",
+        agentProfile: "my-manager",
+      }).pipe(
+        provideAll(
+          recordingRunner(dispatched),
+          makeScope(["spawn"], "session-profile-model-override"),
+          Option.some(parentShell),
+          new Map(),
+          repositoryGit(),
+          // Profiles are supported on the PARENT's model only.
+          supportingRegistry,
+        ),
+        Effect.flip,
+      );
+
+      expect(error.reason).toBe("invalid-agent-profile");
+      expect(dispatched).toHaveLength(0);
+    }),
+  );
+
+  it.effect("does not consult the provider registry when no profile is asked for", () =>
+    Effect.gen(function* () {
+      // Stripping needs no capability, so an absent parameter must not be able
+      // to fail on a provider snapshot the spawn does not depend on.
+      const dispatched: ThreadTurnStartCommand[] = [];
+      yield* spawnWithProfile({
+        registry: makeProviderRegistry([]),
+        dispatched,
+        session: "session-profile-absent",
+      });
+
+      expect(dispatched).toHaveLength(1);
+      expect(agentOptionOf(dispatched[0]!)).toBeUndefined();
     }),
   );
 });

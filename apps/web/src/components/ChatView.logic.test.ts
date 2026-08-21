@@ -242,6 +242,30 @@ const readySession = {
   updatedAt: "2026-03-29T00:00:10.000Z",
 };
 
+describe("agent-profile lock predicate", () => {
+  // Claude reads its agent profile only at session creation, so the lock is
+  // exactly "a session exists". Pinned here because `makeThread` is the
+  // realistic Thread fixture; the predicate itself lives in ChatComposer.
+  const hasProviderSession = (thread: Thread) => thread.session != null;
+
+  it("does not lock a thread that has no session yet", () => {
+    expect(hasProviderSession(makeThread())).toBe(false);
+  });
+
+  it("does not lock a thread holding a turn or message but no session", () => {
+    // The profile is genuinely still mutable here: nothing has read it yet.
+    expect(hasProviderSession(makeThread({ latestTurn: completedTurn }))).toBe(false);
+  });
+
+  it("locks once a session exists, whatever its status", () => {
+    // Stopped/interrupted/error threads still own a session whose profile is
+    // already fixed, even though their phase reads "disconnected".
+    for (const status of ["ready", "running", "stopped", "interrupted", "error"] as const) {
+      expect(hasProviderSession(makeThread({ session: { ...readySession, status } }))).toBe(true);
+    }
+  });
+});
+
 describe("open thread visit timestamp", () => {
   it("uses creation as the read boundary until the first response completes", () => {
     expect(resolveOpenThreadVisitedAt(makeThread())).toBe(now);

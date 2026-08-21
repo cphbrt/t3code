@@ -240,7 +240,41 @@ short factual notes so the same wrong conclusion is not reached twice.
   also match the agent's own process. Worth folding into the dev-server
   guidance in `AGENTS.md` once confirmed a second time.
 
+- **A Claude agent profile's `model:` frontmatter is inert in CPH Code.**
+  CPH Code always passes an explicit model to the Claude CLI alongside
+  `--agent`, and the explicit model wins, so a profile's own `model:`
+  preference never takes effect for a normal thread or a `spawn_thread`
+  child — both always run on the caller's selected model. The capabilities
+  probe now keeps `AgentInfo.model` and the expanded profile picker shows it
+  labelled "declares <model> · not applied", so the inertness is at least
+  visible rather than a silent surprise. Possible future work: honor a
+  profile's model for spawned children specifically, or fall back to it only
+  when no explicit model is selected — that second path is untested, since CPH
+  Code currently has no code path that omits an explicit model when invoking
+  `--agent`.
+
+- **A profile's scope (user vs project) is unavailable from the handshake.**
+  The expanded agent-profile picker cannot say whether a profile came from
+  `~/.claude/agents` or a project's `.claude/agents`, because the SDK's
+  `AgentInfo` carries exactly `name`, `description`, and an optional `model` —
+  verified against the installed SDK. Showing scope would mean adding a second
+  discovery path that scans those directories ourselves, which can disagree
+  with what the CLI actually resolved (the CLI applies its own precedence, and
+  it resolves project agents against the thread cwd while any scan of ours runs
+  from the server cwd). Trusting the handshake is the drift this design
+  deliberately avoided, so scope stays omitted unless the SDK reports it.
+
 ## Known defects
+
+- **Traits-picker explanatory lines are not tied to their groups for screen
+  readers.** Both the ultrathink-in-body-text line and the agent-profile lock
+  line in `apps/web/src/components/chat/TraitsPicker.tsx` are bare `div`s
+  rendered above their `MenuRadioGroup`, with no `aria-describedby` linking
+  them to the group they explain. A sighted user sees why the control is
+  read-only; a screen-reader user hears a disabled radio with no reason. The
+  pattern is inherited from the existing ultrathink line rather than introduced
+  by the agent-profile work. Small fix: give each line an id and reference it
+  from the group.
 
 - **Three activity-projection tests fail on clean `main`.** Verified
   2026-08-19 against `ed414ebd` in a clean worktree, so they are unrelated to
@@ -627,6 +661,35 @@ registered"` on a repeating PR-lookup cycle. The message is malformed — "No
   prompt (context-window selection is the near neighbour, since it rides the same
   `modelSelection` payload) belongs under the same suppression. Recorded
   2026-08-20.
+
+- **Custom Claude models can advertise stale agent profiles indefinitely.**
+  `mergeProviderModels` (`apps/server/src/provider/Layers/ProviderRegistry.ts`)
+  carries the previous snapshot's `capabilities` forward whenever the next
+  snapshot's model of the same slug has none. Built-in models always carry
+  catalog descriptors, so this never triggered for them; the injected
+  agent-profile select is the first thing to make an otherwise-empty
+  custom-model descriptor list non-empty. So once a custom Claude model has
+  been seen with profiles, a later snapshot that legitimately has none —
+  probe failure, or the profiles genuinely deleted — is overwritten by the
+  stale list, which then persists for the lifetime of the process. A user can
+  keep selecting a profile that no longer exists and get a provider error at
+  session start. Do not change the merge semantics to fix this without
+  considering why the carry-forward exists (it protects against transient
+  probe failures blanking the picker); the narrower fix is probably to let a
+  snapshot distinguish "no capabilities observed" from "observed, and empty".
+
+- **Agent-profile discovery is server-cwd-scoped and probe-TTL-fresh.** The
+  profile list comes from the capabilities probe, which resolves
+  `.claude/agents` against the server's own cwd, while a session resolves
+  against its thread's cwd. On a multi-project server, one project's
+  profiles are therefore offered to threads of unrelated projects (where they
+  fail visibly at session start), a worktree-local profile is absent from the
+  list but works if named, and a newly added profile takes up to the probe
+  cache TTL (~5 minutes) to appear. This is an accepted v1 limitation per
+  `docs/superpowers/specs/2026-08-20-agent-profile-selector-design.md`, and
+  the same limitation skills and slash commands already carry. Fixing it
+  properly needs per-thread-cwd discovery and new wire plumbing to carry a
+  per-thread list, which the design explicitly puts out of scope.
 
 ## Next fork-series curation pass
 
