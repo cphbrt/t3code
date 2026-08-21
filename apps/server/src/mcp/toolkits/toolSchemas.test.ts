@@ -90,7 +90,16 @@ it("keeps identity and permission mode out of spawn_thread's arguments", () => {
   // Project, provider instance, and permission mode are all inherited from
   // the parent thread via the credential. An argument for any of them would
   // let an agent aim a spawn outside its own scope or escalate its mode.
-  expect(Object.keys(properties).sort()).toEqual(["directory", "model", "prompt", "title"]);
+  // `model` is the one identity-adjacent argument, and stays within the
+  // inherited provider instance, so it chooses a model rather than a runtime.
+  expect(Object.keys(properties).sort()).toEqual([
+    "baseBranch",
+    "directory",
+    "model",
+    "prompt",
+    "repositoryPath",
+    "title",
+  ]);
 });
 
 it("never mentions the client's presentation to the agent", () => {

@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 
+import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   ThreadBootstrapRunner,
@@ -85,6 +86,21 @@ const makeRunner = (
   dispatchBootstrapTurnStart: ThreadBootstrapRunner["Service"]["dispatchBootstrapTurnStart"],
 ): ThreadBootstrapRunner["Service"] => ({ dispatchBootstrapTurnStart });
 
+/**
+ * Only `localStatus` is reached: the handler asks whether a `repositoryPath`
+ * is a repository and what it has checked out, then hands the worktree cut
+ * itself to `ThreadBootstrapRunner`.
+ */
+const makeGit = (
+  localStatus: (input: {
+    readonly cwd: string;
+  }) => Effect.Effect<{ readonly isRepo: boolean; readonly refName: string | null }, unknown>,
+): GitWorkflowService.GitWorkflowService["Service"] =>
+  ({ localStatus }) as unknown as GitWorkflowService.GitWorkflowService["Service"];
+
+const repositoryGit = (refName: string | null = "main") =>
+  makeGit(() => Effect.succeed({ isRepo: true, refName }));
+
 const recordingRunner = (bootstrapped: ThreadTurnStartCommand[]) =>
   makeRunner((command) =>
     Effect.sync(() => {
@@ -99,11 +115,13 @@ const provideAll =
     scope: McpInvocationContext.McpInvocationScope,
     shell: Option.Option<OrchestrationThreadShell> = Option.some(parentShell),
     projectsByRoot: ReadonlyMap<string, ProjectId> = new Map(),
+    git: GitWorkflowService.GitWorkflowService["Service"] = repositoryGit(),
   ) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(ThreadBootstrapRunner, runner),
       Effect.provideService(ProjectionSnapshotQuery, makeProjection(shell, projectsByRoot)),
+      Effect.provideService(GitWorkflowService.GitWorkflowService, git),
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
     );
 
@@ -236,6 +254,150 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
         instanceId: parentShell.modelSelection.instanceId,
         model: "claude-sonnet-5",
       });
+    }),
+  );
+
+  it.effect("cuts a fresh worktree on a new branch when a repository is named", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      yield* spawnThread({
+        prompt: "Fix the flaky test over there.",
+        title: "Other repo",
+        repositoryPath: "/synthetic/repo",
+      }).pipe(provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-worktree")));
+
+      const turn = bootstrapped[0];
+      if (!turn) throw new Error("expected a bootstrap turn start");
+      const prepare = turn.bootstrap?.prepareWorktree;
+      if (!prepare) throw new Error("expected a bootstrap prepareWorktree");
+      expect(prepare.projectCwd).toBe("/synthetic/repo");
+      // Defaults to whatever the repository has checked out.
+      expect(prepare.baseBranch).toBe("main");
+      // A NEW branch, not the base: `worktree add <path> <base>` would try to
+      // check out a branch the source repository already has checked out, and
+      // git refuses. Naming a branch makes it `worktree add -b`.
+      expect(prepare.branch).not.toBe("main");
+      expect(prepare.branch).toBeTruthy();
+      // The runner records the worktree it resolves, so the create carries none.
+      expect(createOf(turn).worktreePath).toBeNull();
+      // Delegated work stays part of the caller's project even in another
+      // repository, so the thread keeps exactly one repository to checkpoint.
+      expect(createOf(turn).projectId).toBe(parentShell.projectId);
+      expect(turn.bootstrap?.runSetupScript).toBe(true);
+    }),
+  );
+
+  it.effect("normalizes the repository path and honours an explicit base branch", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      yield* spawnThread({
+        prompt: "Work from the release branch.",
+        title: "Release fix",
+        repositoryPath: "/synthetic/repo/nested/../",
+        baseBranch: "release",
+      }).pipe(provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-base")));
+
+      const prepare = bootstrapped[0]?.bootstrap?.prepareWorktree;
+      if (!prepare) throw new Error("expected a bootstrap prepareWorktree");
+      expect(prepare.projectCwd).toBe("/synthetic/repo");
+      expect(prepare.baseBranch).toBe("release");
+    }),
+  );
+
+  it.effect("refuses a relative repository path", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnThread({
+        prompt: "Hi.",
+        title: "Hi",
+        repositoryPath: "relative/repo",
+      }).pipe(
+        provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-rel-repo")),
+        Effect.flip,
+      );
+
+      expect(error.reason).toBe("invalid-path");
+      expect(bootstrapped).toHaveLength(0);
+    }),
+  );
+
+  it.effect("refuses a path that is not a git repository", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnThread({
+        prompt: "Hi.",
+        title: "Hi",
+        repositoryPath: "/synthetic/not-a-repo",
+      }).pipe(
+        provideAll(
+          recordingRunner(bootstrapped),
+          makeScope(["spawn"], "session-not-repo"),
+          Option.some(parentShell),
+          new Map(),
+          makeGit(() => Effect.succeed({ isRepo: false, refName: null })),
+        ),
+        Effect.flip,
+      );
+
+      expect(error.reason).toBe("not-a-repository");
+      expect(bootstrapped).toHaveLength(0);
+    }),
+  );
+
+  it.effect("refuses a repository with nothing checked out and no base branch", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnThread({
+        prompt: "Hi.",
+        title: "Hi",
+        repositoryPath: "/synthetic/detached",
+      }).pipe(
+        provideAll(
+          recordingRunner(bootstrapped),
+          makeScope(["spawn"], "session-detached"),
+          Option.some(parentShell),
+          new Map(),
+          repositoryGit(null),
+        ),
+        Effect.flip,
+      );
+
+      expect(error.reason).toBe("not-a-repository");
+      expect(error.message).toContain("baseBranch");
+      expect(bootstrapped).toHaveLength(0);
+    }),
+  );
+
+  it.effect("refuses directory and repositoryPath together rather than picking one", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      const error = yield* spawnThread({
+        prompt: "Hi.",
+        title: "Hi",
+        directory: "/synthetic/dir",
+        repositoryPath: "/synthetic/repo",
+      }).pipe(
+        provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-both")),
+        Effect.flip,
+      );
+
+      expect(error.reason).toBe("invalid-argument");
+      expect(bootstrapped).toHaveLength(0);
+    }),
+  );
+
+  // Chris's original behavior: no repositoryPath means no worktree is cut, and
+  // the thread takes the parent's directory as it stands.
+  it.effect("cuts no worktree when no repository is named", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      yield* spawnThread({ prompt: "In place.", title: "In place" }).pipe(
+        provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-no-worktree")),
+      );
+
+      const turn = bootstrapped[0];
+      expect(turn?.bootstrap?.prepareWorktree).toBeUndefined();
+      expect(createOf(turn).worktreePath).toBe(parentShell.worktreePath);
     }),
   );
 
