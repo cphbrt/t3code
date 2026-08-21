@@ -257,16 +257,89 @@ gets a `parentThreadId`, so it has nothing for the tree builder to attach and
 renders as an ordinary root without any special-casing.
 
 `buildThreadDelegationTree` (client-runtime, so any client can share it) takes
-the already-sorted thread list and attaches children under their parents,
-preserving the caller's ordering for parents. Nesting is applied _before_ the
-shelf's preview and collapse rules, so a collapsed shelf can never show a child
-whose parent is hidden.
+the already-sorted thread list and attaches children under their parents
+recursively, preserving the caller's ordering for parents. Each node carries
+`children` and `settledChildren` separately, and `flattenThreadDelegationTree`
+turns a node list into render rows that each know their delegation depth.
 
 A child whose parent is absent from the list — archived, filtered, deleted, or
 on another project — is returned as a root rather than dropped. Nesting is
 presentation; losing a live thread because its parent went away would not be.
-A thread naming itself as its own parent is likewise treated as a root, so a
-malformed row cannot make a thread disappear from the sidebar.
+A thread naming itself as its own parent is likewise treated as a root. A
+parentage cycle has no root at all, so a second pass promotes the first cycle
+member in list order and hangs the rest beneath it: a malformed row costs a
+row's position, never the row.
+
+### Delegation is resolved across every shelf at once
+
+The sidebar classifies threads into four disjoint arrays — pinned, active,
+snoozed, settled — and a settled child's parent may be in any of them. So the
+tree is built over all four concatenated, before any shelf claims a row, and
+each shelf then keeps only its own roots. `collectDelegatedThreads` names every
+thread some parent claimed at any depth, and the settled shelf and each shelf's
+root list both subtract it, so no thread renders twice and the settled shelf's
+count describes what the shelf actually holds.
+
+That ordering also means a shelf's own collapse rule runs on its roots and
+delegation expands what survives, so a collapsed shelf still cannot show a child
+whose parent is hidden. The rule that a collapsed shelf keeps the open thread's
+row therefore has to match on the open thread's delegation root
+(`findDelegationRootOf`), not on the thread itself — a nested thread is not among
+its shelf's roots, so matching it directly would fold away the very row it needs
+to render under. The settled tail's "Show more" paging matches on the root for
+the same reason.
+
+Each shelf header counts its own roots rather than its classified array, so a
+header can never disagree with the rows beneath it.
+
+A pin outranks nesting, through the builder's `isRoot` escape hatch. Nothing
+server-side stops a spawned child from being pinned — the pin decider has no
+lifecycle invariants and the action menu has no `parentThreadId` awareness — and
+nesting a pinned child would take away its shelf, its place in that shelf's
+count, and its pin glyph. Pinning is an explicit "keep this in view", which
+outranks the implicit grouping nesting provides. Its own children still nest
+under it, settled ones still behind its divider.
+
+The pinned shelf is the exception in shape only: it renders through its own
+dnd-kit sortable list in drag order, so its delegation rows are grouped per
+pinned parent and emitted beside that parent's draggable row. Only the parent
+joins the sortable set — a delegated row in it would let a drag reorder one
+family into another's.
+
+### The nested settled divider
+
+A delegated child rendering in its parent's shelf means the shelf can no longer
+say what a row is, so `resolveSidebarRowSection` gives a root row its shelf's
+section and resolves every delegated row — at any depth — entirely from the
+thread's own live classification: settled, else snoozed, else active. Never the
+shelf.
+
+That "never" is load-bearing rather than tidiness. Non-settled `children` are
+emitted at every depth without a divider gating them, so falling back to the
+shelf misreads any row whose intervening ancestor is not itself active: an
+active grandchild under an opened settled divider would offer Unsettle, and an
+active child of a snoozed parent would offer Unsnooze. A delegated row is also
+never `pinned`, because pins stay top-level, so a nested row cannot wear the pin
+glyph.
+
+Disclosure is per parent, keyed by thread id, in `useLocalStorage` under
+`t3code:sidebar-v2:nested-settled-expanded` — the same mechanism and key
+namespace as the four shelf collapse preferences, because a disclosure is a
+per-device reading preference and never a server round trip. Only the ids the
+user opened are stored, so the record is proportional to what was clicked rather
+than to how many threads have ever settled. An undisclosed subtree emits no
+thread rows at all, so a parent with a long settled tail costs one divider row.
+
+The one exception mirrors the collapsed shelf: `flattenThreadDelegationTree`
+takes a `visibleThreadId` and forces the open thread's own branch through a
+closed divider, so navigating into a settled delegated thread cannot hide its
+highlight or its un-settle action. Its settled siblings stay hidden, and the
+divider still reads as closed.
+
+Indentation is an inline margin from `delegationIndentStyle`, capped at six
+levels: delegation nests as deep as agents delegate, and a Tailwind class per
+level would cap the depth the sidebar can show. Depth 0 returns `undefined` so
+every non-delegated row keeps exactly its previous geometry.
 
 ## Deliberately not built
 

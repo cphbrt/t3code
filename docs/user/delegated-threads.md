@@ -47,6 +47,37 @@ itself is not adopted by the project — what the project holds onto is the
 worktree and branch that were cut for the work, when the agent chose to cut
 one.
 
+## Delegated work that has wrapped up
+
+When a delegated thread settles, it does not move out to the Settled shelf at
+the bottom of the sidebar. It stays with the thread that started it, tucked
+behind a small **Settled** divider indented under that parent, with a count of
+how many are behind it.
+
+The divider starts closed, so a parent that has delegated a lot of work over
+time reads as one thread and a short note about its history rather than a wall
+of finished rows. Twirl it open to see them, twirl it shut again when you are
+done; each parent remembers its own state, and it is remembered on this device
+only.
+
+Nesting depends on the parent being in the sidebar. If the thread that started
+the work has been archived, or you have filtered the sidebar down to a project
+it is not in, its settled children have nothing to sit under and appear on the
+main Settled shelf instead, as any other finished thread would.
+
+A delegated thread that delegated in turn keeps its own divider: settled work
+hangs off the thread that actually started it, not off the top of the chain.
+
+Where a thread sits never changes what it is. A thread still working reads as
+still working and offers to settle, even when it is nested under a parent that
+has itself settled or been snoozed — the row always describes the thread, not
+its neighbours.
+
+Pinning wins over all of this. If you pin a delegated thread, it moves up to
+Pinned and stays there in plain sight — you asked to keep it in view, and that
+outranks tucking it under its parent. Anything it delegated in turn still nests
+beneath it.
+
 ## Agents talking to each other
 
 Only a teammate thread and the thread that started it can talk to each other.
