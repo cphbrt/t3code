@@ -3,7 +3,6 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationCommand,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -12,9 +11,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 
-import { OrchestrationCommandInvariantError } from "../../../orchestration/Errors.ts";
-import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import {
+  ThreadBootstrapRunner,
+  type ThreadTurnStartCommand,
+} from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { spawnThread } from "./handlers.ts";
 import { SPAWN_LIMIT_PER_SESSION } from "./tools.ts";
@@ -72,58 +75,58 @@ const makeProjection = (
     },
   }) as unknown as ProjectionSnapshotQuery["Service"];
 
-const makeEngine = (
-  dispatch: OrchestrationEngineService["Service"]["dispatch"],
-): OrchestrationEngineService["Service"] =>
-  ({
-    dispatch,
-    readEvents: () => {
-      throw new Error("unused");
-    },
-    streamDomainEvents: undefined as never,
-    latestSequence: Effect.succeed(0),
-  }) as OrchestrationEngineService["Service"];
+/**
+ * The handler dispatches one bootstrap command rather than a create/turn pair:
+ * `ThreadBootstrapRunner` owns thread creation, the turn start, and the
+ * compensating delete, and `server.test.ts` proves that behavior against the
+ * real service. These tests assert what the handler asks the runner for.
+ */
+const makeRunner = (
+  dispatchBootstrapTurnStart: ThreadBootstrapRunner["Service"]["dispatchBootstrapTurnStart"],
+): ThreadBootstrapRunner["Service"] => ({ dispatchBootstrapTurnStart });
 
-const recordingEngine = (dispatched: OrchestrationCommand[]) =>
-  makeEngine((command) =>
+const recordingRunner = (bootstrapped: ThreadTurnStartCommand[]) =>
+  makeRunner((command) =>
     Effect.sync(() => {
-      dispatched.push(command);
+      bootstrapped.push(command);
       return { sequence: 1 };
     }),
   );
 
 const provideAll =
   (
-    engine: OrchestrationEngineService["Service"],
+    runner: ThreadBootstrapRunner["Service"],
     scope: McpInvocationContext.McpInvocationScope,
     shell: Option.Option<OrchestrationThreadShell> = Option.some(parentShell),
     projectsByRoot: ReadonlyMap<string, ProjectId> = new Map(),
   ) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.provideService(OrchestrationEngineService, engine),
+      Effect.provideService(ThreadBootstrapRunner, runner),
       Effect.provideService(ProjectionSnapshotQuery, makeProjection(shell, projectsByRoot)),
       Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
     );
 
+/** The create half of the single bootstrap command, which every spawn carries. */
+const createOf = (command: ThreadTurnStartCommand | undefined) => {
+  const create = command?.bootstrap?.createThread;
+  if (!create) throw new Error("expected a bootstrap createThread");
+  return create;
+};
+
 it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
   it.effect("creates a sibling thread and starts its first turn with inherited scope", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       const result = yield* spawnThread({
         prompt: "Review the flaky test in apps/server.",
         title: "Flaky test review",
-      }).pipe(provideAll(recordingEngine(dispatched), makeScope(["spawn"], "session-inherit")));
+      }).pipe(provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-inherit")));
 
-      expect(dispatched.map((command) => command.type)).toEqual([
-        "thread.create",
-        "thread.turn.start",
-      ]);
-      const create = dispatched[0];
-      const turn = dispatched[1];
-      if (create?.type !== "thread.create" || turn?.type !== "thread.turn.start") {
-        throw new Error("expected thread.create then thread.turn.start");
-      }
+      expect(bootstrapped).toHaveLength(1);
+      const turn = bootstrapped[0];
+      if (!turn) throw new Error("expected a bootstrap turn start");
+      const create = createOf(turn);
       // Everything not an argument is inherited from the parent shell — except
       // the interaction mode, which is always "default": a delegation is given
       // work to do even when the parent is in plan mode.
@@ -132,12 +135,11 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
       expect(create.runtimeMode).toBe("auto");
       expect(create.interactionMode).toBe("default");
       expect(create.worktreePath).toBe(parentShell.worktreePath);
-      expect(create.threadId).not.toBe(PARENT_THREAD_ID);
-      expect(turn.threadId).toBe(create.threadId);
+      expect(turn.threadId).not.toBe(PARENT_THREAD_ID);
       expect(turn.runtimeMode).toBe("auto");
       expect(turn.interactionMode).toBe("default");
       expect(turn.message.text).toBe("Review the flaky test in apps/server.");
-      expect(result.threadId).toBe(create.threadId);
+      expect(result.threadId).toBe(turn.threadId);
     }),
   );
 
@@ -145,15 +147,14 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const directory = yield* fileSystem.makeTempDirectoryScoped();
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       yield* spawnThread({
         prompt: "Work over there.",
         title: "Elsewhere",
         directory,
-      }).pipe(provideAll(recordingEngine(dispatched), makeScope(["spawn"], "session-directory")));
+      }).pipe(provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-directory")));
 
-      const create = dispatched[0];
-      if (create?.type !== "thread.create") throw new Error("expected thread.create");
+      const create = createOf(bootstrapped[0]);
       expect(create.projectId).toBe(parentShell.projectId);
       expect(create.worktreePath).toBe(directory);
     }).pipe(Effect.scoped),
@@ -164,22 +165,21 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const directory = yield* fileSystem.makeTempDirectoryScoped();
       const otherProjectId = ProjectId.make("project-other");
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       yield* spawnThread({
         prompt: "Work in the other repo.",
         title: "Other repo",
         directory,
       }).pipe(
         provideAll(
-          recordingEngine(dispatched),
+          recordingRunner(bootstrapped),
           makeScope(["spawn"], "session-other-project"),
           Option.some(parentShell),
           new Map([[directory, otherProjectId]]),
         ),
       );
 
-      const create = dispatched[0];
-      if (create?.type !== "thread.create") throw new Error("expected thread.create");
+      const create = createOf(bootstrapped[0]);
       // The project root is the thread's natural cwd, so no worktree override.
       expect(create.projectId).toBe(otherProjectId);
       expect(create.worktreePath).toBeNull();
@@ -190,49 +190,48 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
 
   it.effect("refuses a relative directory without dispatching", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       const error = yield* spawnThread({
         prompt: "Work over there.",
         title: "Elsewhere",
         directory: "some/relative/place",
       }).pipe(
-        provideAll(recordingEngine(dispatched), makeScope(["spawn"], "session-relative")),
+        provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-relative")),
         Effect.flip,
       );
 
       expect(error.reason).toBe("invalid-directory");
-      expect(dispatched).toHaveLength(0);
+      expect(bootstrapped).toHaveLength(0);
     }),
   );
 
   it.effect("refuses a directory with nothing at it", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       const error = yield* spawnThread({
         prompt: "Work over there.",
         title: "Elsewhere",
         directory: "/tmp/t3-spawn-does-not-exist/nowhere",
       }).pipe(
-        provideAll(recordingEngine(dispatched), makeScope(["spawn"], "session-missing-dir")),
+        provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-missing-dir")),
         Effect.flip,
       );
 
       expect(error.reason).toBe("invalid-directory");
-      expect(dispatched).toHaveLength(0);
+      expect(bootstrapped).toHaveLength(0);
     }),
   );
 
   it.effect("keeps the provider instance and drops options when the model is overridden", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       yield* spawnThread({
         prompt: "Cheap sweep.",
         title: "Sweep",
         model: "claude-sonnet-5",
-      }).pipe(provideAll(recordingEngine(dispatched), makeScope(["spawn"], "session-model")));
+      }).pipe(provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-model")));
 
-      const create = dispatched[0];
-      if (create?.type !== "thread.create") throw new Error("expected thread.create");
+      const create = createOf(bootstrapped[0]);
       expect(create.modelSelection).toEqual({
         instanceId: parentShell.modelSelection.instanceId,
         model: "claude-sonnet-5",
@@ -242,10 +241,10 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
 
   it.effect("refuses a credential without the spawn capability", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       const error = yield* spawnThread({ prompt: "Hi.", title: "Hi" }).pipe(
         provideAll(
-          recordingEngine(dispatched),
+          recordingRunner(bootstrapped),
           makeScope(["preview", "settle", "usage", "artifact"], "session-no-cap"),
         ),
         Effect.flip,
@@ -253,15 +252,15 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
 
       expect(error._tag).toBe("SpawnThreadError");
       expect(error.reason).toBe("capability-unavailable");
-      expect(dispatched).toHaveLength(0);
+      expect(bootstrapped).toHaveLength(0);
     }),
   );
 
   it.effect("stops at the per-session spawn limit, counting only successful spawns", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       const scope = makeScope(["spawn"], "session-cap");
-      const provide = provideAll(recordingEngine(dispatched), scope);
+      const provide = provideAll(recordingRunner(bootstrapped), scope);
 
       // A refused attempt must not consume the allowance.
       yield* spawnThread({ prompt: "", title: "Empty" }).pipe(provide, Effect.flip);
@@ -275,50 +274,43 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
       );
 
       expect(error.reason).toBe("spawn-limit-reached");
-      // Two dispatches per successful spawn, nothing for the refusals.
-      expect(dispatched).toHaveLength(SPAWN_LIMIT_PER_SESSION * 2);
+      // One bootstrap per successful spawn, nothing for the refusals.
+      expect(bootstrapped).toHaveLength(SPAWN_LIMIT_PER_SESSION);
     }),
   );
 
-  it.effect("deletes the created thread when the first turn fails to start", () =>
+  // The runner performs the compensating delete itself, proven against the
+  // real service in `server.test.ts`. What the handler owes the agent is the
+  // reason the bootstrap failed, in words it can act on.
+  it.effect("reports the bootstrap failure's own reason and spends no allowance", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
-      const engine = makeEngine((command) =>
-        command.type === "thread.turn.start"
-          ? Effect.fail(
-              new OrchestrationCommandInvariantError({
-                commandType: "thread.turn.start",
-                detail: "no provider available",
-              }),
-            )
-          : Effect.sync(() => {
-              dispatched.push(command);
-              return { sequence: 1 };
-            }),
+      const scope = makeScope(["spawn"], "session-bootstrap-failed");
+      const runner = makeRunner(() =>
+        Effect.fail(new OrchestrationDispatchCommandError({ message: "no provider available" })),
       );
       const error = yield* spawnThread({ prompt: "Doomed.", title: "Doomed" }).pipe(
-        provideAll(engine, makeScope(["spawn"], "session-cleanup")),
+        provideAll(runner, scope),
         Effect.flip,
       );
 
       expect(error.reason).toBe("rejected");
       expect(error.message).toContain("no provider available");
-      expect(dispatched.map((command) => command.type)).toEqual(["thread.create", "thread.delete"]);
-      const create = dispatched[0];
-      const cleanup = dispatched[1];
-      if (create?.type !== "thread.create" || cleanup?.type !== "thread.delete") {
-        throw new Error("expected thread.create then thread.delete");
-      }
-      expect(cleanup.threadId).toBe(create.threadId);
+
+      // A failed spawn must not consume the session's allowance.
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      yield* spawnThread({ prompt: "Retry.", title: "Retry" }).pipe(
+        provideAll(recordingRunner(bootstrapped), scope),
+      );
+      expect(bootstrapped).toHaveLength(1);
     }),
   );
 
   it.effect("rejects when the parent thread shell cannot be resolved", () =>
     Effect.gen(function* () {
-      const dispatched: OrchestrationCommand[] = [];
+      const bootstrapped: ThreadTurnStartCommand[] = [];
       const error = yield* spawnThread({ prompt: "Hi.", title: "Hi" }).pipe(
         provideAll(
-          recordingEngine(dispatched),
+          recordingRunner(bootstrapped),
           makeScope(["spawn"], "session-gone"),
           Option.none(),
         ),
@@ -326,7 +318,7 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
       );
 
       expect(error.reason).toBe("rejected");
-      expect(dispatched).toHaveLength(0);
+      expect(bootstrapped).toHaveLength(0);
     }),
   );
 });

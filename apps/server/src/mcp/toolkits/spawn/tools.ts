@@ -5,8 +5,8 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadBootstrapRunner } from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
 
 /**
  * How many threads one provider session may spawn over its lifetime. A spawned
@@ -19,11 +19,13 @@ export const SPAWN_LIMIT_PER_SESSION = 5;
 // FileSystem and Path are declared because the handler validates the optional
 // directory argument on the machine the new thread would work on; Crypto
 // because the handler mints the new thread and message ids itself, as the
-// creating client always does.
+// creating client always does. `ThreadBootstrapRunner` is the shared service
+// that creates the thread and starts its first turn, so a spawn and a
+// user-opened thread are bootstrapped by the same code.
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
-  OrchestrationEngineService,
   ProjectionSnapshotQuery,
+  ThreadBootstrapRunner,
   FileSystem.FileSystem,
   Path.Path,
   Crypto.Crypto,

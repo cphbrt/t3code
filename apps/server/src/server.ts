@@ -108,6 +108,7 @@ import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as QuotaHistoryStore from "./usage/QuotaHistoryStore.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
+import * as ThreadBootstrapRunner from "./orchestration/Services/ThreadBootstrapRunner.ts";
 import {
   clearPersistedServerRuntimeState,
   makePersistedServerRuntimeState,
@@ -406,7 +407,13 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeDependenciesBaseLive = RuntimeCoreDependenciesLive.pipe(
+const RuntimeDependenciesBaseLive = ThreadBootstrapRunner.layer.pipe(
+  // Shared by the WebSocket `dispatchCommand` path and the `spawn_thread` MCP
+  // tool, so a thread an agent spawns is bootstrapped by exactly the same code
+  // as one the user starts. Outside the core dependencies because it draws on
+  // orchestration, git, vcs, and project setup at once, all of which they
+  // build; inside `KeepAwakeReporter`, which needs the whole runtime.
+  Layer.provideMerge(RuntimeCoreDependenciesLive),
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),
