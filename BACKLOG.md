@@ -49,6 +49,15 @@ subject, never as the entry's identifier.
   worktree path length is the obvious suspect, unconfirmed). Compare against
   a baseline you measured yourself, in the same tree, and treat a drift of
   tens of bytes as noise rather than a regression.
+  Note the cost of leaving this open: because all four byte budgets already
+  fail at base by roughly 30%, the test cannot report a regression a change
+  actually introduces. Its failure is unconditional, so a new payload cost
+  lands as a larger number in an already-failing assertion rather than a
+  red-to-green transition anyone would notice. Any series touching wire
+  payloads has to measure base against tip by hand — comparing the decoded
+  figures, which reproduce within a checkout, and disregarding the gzip wire
+  figures, which drift in both directions between runs. Restoring a
+  meaningful guardrail means resolving this entry, not adjusting the caps.
 - **Batched peer-message deliveries have no marker.** When several
   inter-session messages arrive during one turn, the provider reports a
   single batched terminal `origin` (sometimes with no body), so individual
@@ -94,7 +103,9 @@ subject, never as the entry's identifier.
   "hydrates read model from projection tables and computes snapshot sequence"
   expects a thread object without `scheduledTurn`, but the query now returns
   `scheduledTurn: null`. One-line expectation fix; unattributed, and unrelated
-  to any in-flight lane that found it.
+  to any in-flight lane that found it. Re-confirmed on 2026-08-21 against
+  `341f8b20`, so it has survived several unrelated changes; whoever touches
+  this file next should just fix the expectation.
 - **Tool result previews are event-derived, so history stays bare.**
   `ItemLifecyclePayload.resultPreview` is computed in `ClaudeAdapter` when a
   call completes, so only turns taken after it shipped carry one; every
@@ -150,20 +161,31 @@ short factual notes so the same wrong conclusion is not reached twice.
 
 ## Planned work
 
-- **`spawn_thread` deliberate omissions (2026-08-20).** The spawn toolkit
-  shipped with three consciously deferred edges. (1) No always-on
-  tool-instruction block: the tool is discoverable by name; add a block only
-  if live turns show agents failing to find it (the `settle_thread` precedent
-  cuts the other way, so watch for it). (2) No sidebar attribution of spawned
-  threads — a spawned thread is indistinguishable from a user-created one;
-  attribution would need a contract field on the thread shell. (3) The spawn
-  cap counts successful spawns per provider session for the session's
+- **`spawn_thread` deliberate omissions (2026-08-20, revised 2026-08-21).**
+  (1) No always-on tool-instruction block, for either `spawn_thread` or
+  `message_thread`: both are discoverable by name, and the accepted
+  consequence — an agent reaching for its own subagent when asked to work in
+  another repository — is recorded in `AGENTS.md` as a choice rather than a
+  gap. Add a block only if live turns show it costing more than expected (the
+  `settle_thread` precedent cuts the other way, so watch for it). (2) The
+  spawn cap counts successful spawns per provider session for the session's
   lifetime, in process memory only; a server restart resets it, and a
-  long-lived session cannot earn back allowance. All three are fine at
-  current scale; revisit on evidence, not speculation. Also note
-  `spawn_thread` bypasses the ws-layer `startup.enqueueCommand` readiness
-  gate, as `show_chris` already does — acceptable because an agent turn
-  implies a started server.
+  long-lived session cannot earn back allowance. Fine at current scale;
+  revisit on evidence, not speculation. Also note `spawn_thread` bypasses the
+  ws-layer `startup.enqueueCommand` readiness gate, as `show_chris` already
+  does — acceptable because an agent turn implies a started server.
+
+  Resolved: sidebar attribution of spawned threads. It was deferred pending a
+  contract field on the thread shell; `parentThreadId` now exists, so a
+  teammate nests under its parent. A hand-off still has no parent and stays a
+  top-level sibling, which is not an omission — it is what a hand-off is.
+
+- **Sibling messaging between spawned threads (2026-08-21, out of scope).**
+  `message_thread` authorizes on a single parent pointer in each direction, so
+  two threads spawned by the same parent cannot reach each other. Deliberate:
+  a team of peers would need a persisted team entity rather than a parent
+  pointer, and that is a separate decision. Do not smuggle it in as an
+  authorization relaxation.
 
 - **Per-toolset gating for the `t3-code` MCP server (deferred).** Upstream
   `cd096b9ad` added the `enableAgentBrowserAccess` server setting, but it gates
@@ -219,6 +241,19 @@ short factual notes so the same wrong conclusion is not reached twice.
   guidance in `AGENTS.md` once confirmed a second time.
 
 ## Known defects
+
+- **Three activity-projection tests fail on clean `main`.** Verified
+  2026-08-19 against `ed414ebd` in a clean worktree, so they are unrelated to
+  any feature lane in flight:
+  `ActivityPayloadProjection.test.ts` "keeps a bounded Codex command output
+  summary" and "keeps bounded Claude and ACP command output summaries";
+  `ProviderRuntimeIngestion.activity.test.ts` "persists tool.updated with the
+  wire projection of data, not the accumulated stream" (asserts a projected
+  payload stays under 1,000 bytes, observed 1,202). All three look like one
+  cause — a command-output payload that is no longer bounded where these tests
+  expect — so treat them as a single investigation. Needs an owner. The
+  `ProjectionSnapshotQuery.test.ts` failure observed alongside them has its own
+  entry above and a different cause.
 
 - **The Codex reset-delayed send is dark in production.** On a real hard
   exhaustion on 2026-08-19 none of the reset-delayed affordances appeared,

@@ -41,6 +41,12 @@ Thread switches preserve your manual reading position. Live work stays pinned to
 
 When a thread starts waiting on you and CPH Code is in the background, it shows a brief system notification naming the state and the thread—pending approval, awaiting input, a completed turn you have not opened, or an interrupted or failed run. These are exactly the states the sidebar already marks, they close themselves after a few seconds so nothing collects in Notification Center, and clicking one brings the app forward on that thread. Snoozed threads stay quiet unless they raise their hand, and a fresh load never produces a burst. **Settings → General → Notify when a thread needs you** turns it off.
 
+An agent can start another thread rather than doing everything itself. Ask for it plainly — "spin up an agent to look at how we do X in the Y repo" — and a new thread appears in the sidebar, already working, on the same provider account. It can work in an existing checkout or in a fresh worktree of a repository on its own branch, which is what you want when the delegated work will change files and two agents in one checkout would collide.
+
+How it relates to the thread that started it depends on what was asked for. Usually it is started on your behalf: an ordinary sibling thread you alone talk to, with no channel back to the agent that opened it. When an agent needs the answer itself, it starts the thread as a teammate instead — that one sits indented beneath its parent, so a larger piece of work reads as one shape instead of scattered rows, and the two pass messages both ways: results and blockers up, more context down. Messaging only ever follows that one line, and a message arrives as the other thread's next turn, so nothing is interrupted and nobody waits for a reply.
+
+Worktrees and branches are never cleaned up on your behalf — a delegated agent's worktree may hold work that is not committed yet, and removing it stays your call.
+
 Long user messages likewise remain fully visible, without controls to collapse or expand them.
 
 Dictation on the macOS desktop app is entirely local. The composer's microphone button transcribes through a whisper.cpp binary and ggml model you point CPH Code at yourself, so your audio never leaves the machine. Nothing is bundled and there is no network transcription path — **Settings → General → Dictation** is where you set both paths.

@@ -1295,6 +1295,79 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("carries parent_thread_id onto the thread shell and detail read models", () =>
+    Effect.gen(function* () {
+      // Regression: the column was written and selected, but every read mapper
+      // dropped it. A spawned agent then read its own row as parentless and
+      // `message_thread` refused with "nobody to reply to", and the sidebar
+      // could not nest. Only an assertion at this layer catches that; the
+      // toolkit's own tests stub the projection.
+      const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          parent_thread_id,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-child',
+          'project-1',
+          'Delegated thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          'thread-1',
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          '2026-02-24T00:00:05.000Z',
+          '2026-02-24T00:00:05.000Z',
+          NULL
+        )
+      `;
+
+      const shell = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-child"));
+      assert.equal(shell._tag, "Some");
+      if (shell._tag === "Some") {
+        assert.equal(shell.value.parentThreadId, ThreadId.make("thread-1"));
+      }
+
+      const detail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-child"));
+      assert.equal(detail._tag, "Some");
+      if (detail._tag === "Some") {
+        assert.equal(detail.value.parentThreadId, ThreadId.make("thread-1"));
+      }
+
+      // A thread nobody spawned must stay absent rather than arriving as null,
+      // which is what keeps it off the wire for the common case.
+      const unparented = yield* snapshotQuery.getThreadShellById(ThreadId.make("thread-1"));
+      assert.equal(unparented._tag, "Some");
+      if (unparented._tag === "Some") {
+        assert.equal(unparented.value.parentThreadId, undefined);
+      }
+    }),
+  );
+
   it.effect("uses projection_threads.latest_turn_id for bulk command and shell snapshots", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;

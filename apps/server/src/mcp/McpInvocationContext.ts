@@ -12,7 +12,8 @@ import * as Effect from "effect/Effect";
  * collaborative browser; "settle" lets the thread's own agent park its thread
  * once the turn lands cleanly; "usage" lets it read its own provider account's
  * usage-limit status; "artifact" lets it hand the user a file it has made;
- * "spawn" lets it create a sibling top-level thread in its own project.
+ * "spawn" lets it delegate work to another thread — either a sibling the user
+ * follows or a teammate it can exchange messages with.
  */
 export type McpCapability = "preview" | "settle" | "usage" | "artifact" | "spawn";
 

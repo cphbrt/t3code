@@ -468,6 +468,56 @@ export function resolveThreadRowClassName(input: {
   );
 }
 
+// Delegation indent, in rem per hop. A static inline margin rather than one
+// Tailwind class per level: delegation nests as deep as agents delegate, and
+// enumerating classes would cap the depth the sidebar can show. Depth 0 returns
+// undefined so an ordinary root row keeps exactly its previous geometry, and
+// the depth is capped so a runaway chain cannot indent a row off the edge.
+export const DELEGATION_INDENT_REM_PER_LEVEL = 0.75;
+export const DELEGATION_INDENT_MAX_LEVELS = 6;
+
+export function delegationIndentStyle(depth: number): { readonly marginLeft: string } | undefined {
+  if (depth <= 0) return undefined;
+  const levels = Math.min(depth, DELEGATION_INDENT_MAX_LEVELS);
+  return { marginLeft: `${levels * DELEGATION_INDENT_REM_PER_LEVEL}rem` };
+}
+
+/**
+ * Which shelf's treatment a sidebar row wears: its slim-or-card variant and the
+ * quick action it offers.
+ */
+export type SidebarRowSection = "pinned" | "active" | "snoozed" | "settled";
+
+/**
+ * Resolves the section for one rendered row.
+ *
+ * A root row takes its shelf's section — the shelf is what put it there. A
+ * delegated row cannot: it renders inside its parent's shelf, at any depth, and
+ * the shelf says nothing about the row's own state. So a delegated row resolves
+ * entirely from its own live classification and never falls back to the shelf.
+ *
+ * The fallback is not merely redundant, it is wrong: `children` are emitted
+ * unconditionally at every depth, so an active grandchild under an opened
+ * settled divider would inherit "settled" and offer Unsettle, and an active
+ * child of a snoozed parent would inherit "snoozed" and offer Unsnooze. Both
+ * resolve to "active", the state they are actually in.
+ *
+ * A delegated row is never "pinned": pins outrank nesting and stay top-level
+ * (see `buildThreadDelegationTree`'s `isRoot`), so a nested row must not wear
+ * the pin glyph even when its parent is pinned.
+ */
+export function resolveSidebarRowSection(input: {
+  readonly shelfSection: SidebarRowSection;
+  readonly delegationDepth: number;
+  readonly isSettled: boolean;
+  readonly isSnoozed: boolean;
+}): SidebarRowSection {
+  if (input.delegationDepth === 0) return input.shelfSection;
+  if (input.isSettled) return "settled";
+  if (input.isSnoozed) return "snoozed";
+  return "active";
+}
+
 // ── Sidebar thread status model ─────────────────────────────────────
 // Color is reserved for states that carry meaning at a glance: "act now"
 // (approval/input/interrupted), "in motion" (working), and "broken" (failed). Ready is the

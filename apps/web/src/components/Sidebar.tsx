@@ -91,6 +91,13 @@ import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
+  buildThreadDelegationTree,
+  collectDelegatedThreads,
+  findDelegationRootOf,
+  flattenThreadDelegationTree,
+  type DelegationRow,
+} from "@t3tools/client-runtime/state/thread-delegation";
+import {
   buildSidebarProjectSnapshots,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -127,6 +134,7 @@ import { cn } from "~/lib/utils";
 import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
 import {
   buildBulkTitleRegenerationContextMenuItem,
+  delegationIndentStyle,
   formatWorkingDurationLabel,
   firstValidTimestampMs,
   hasUnseenCompletion,
@@ -137,6 +145,7 @@ import {
   releaseSidebarRowFocus,
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
+  resolveSidebarRowSection,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
@@ -145,6 +154,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortSettledThreadsForSidebar,
   sortThreadsForSidebar,
+  type SidebarRowSection,
 } from "./Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "./BranchToolbar.logic";
 import {
@@ -218,6 +228,18 @@ const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:snoozed-expanded";
 // stay together in local storage.
 const PINNED_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:pinned-expanded";
 const ACTIVE_SHELF_EXPANDED_KEY = "t3code:sidebar-v2:active-expanded";
+// Per-parent disclosure for nested settled children, same namespace as the four
+// shelf preferences. Only the thread ids the user has actually twirled open are
+// stored, so the record stays proportional to what was clicked rather than to
+// how many threads have ever settled.
+const NESTED_SETTLED_EXPANDED_KEY = "t3code:sidebar-v2:nested-settled-expanded";
+const NestedSettledExpandedSchema = Schema.Array(Schema.String);
+// Hoisted so useLocalStorage's initial value keeps a stable identity across
+// renders; a fresh [] each render would churn its memo.
+const NESTED_SETTLED_EXPANDED_DEFAULT: readonly string[] = [];
+// Only grows when the user twirls a group open, so this is generous rather than
+// tight; it exists so the record cannot grow without bound across years of use.
+const NESTED_SETTLED_EXPANDED_LIMIT = 200;
 
 // Every sidebar group (Pinned, Active, Snoozed, Settled) renders the same
 // header: a label that carries the count while collapsed, a rule filling the
@@ -268,20 +290,47 @@ function SidebarShelfHeader(props: {
   );
 }
 
-// A collapsed shelf still renders the open thread's row: navigating into a
-// thread that lives under a collapsed heading must not hide its highlight or
-// its row actions. Same exception the settled tail's "Show more" makes.
-function shelfRows(
-  threads: readonly EnvironmentThreadShell[],
-  expanded: boolean,
-  routeThreadKey: string | null,
-): readonly EnvironmentThreadShell[] {
-  if (expanded) return threads;
-  if (routeThreadKey === null) return [];
-  const routeThread = threads.find(
-    (thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
+// A settled delegated thread stays under the thread that started it instead of
+// being reclassified into the flat Settled shelf, where the parentage the user
+// cares about would be invisible. It hides behind this divider: the shelf
+// header's own look, indented to child level and inset by the same rule the
+// child rows carry, so the group reads as part of the parent's block rather
+// than as a fifth top-level shelf.
+export function SidebarNestedSettledDivider(props: {
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+  readonly testId: string;
+  readonly depth: number;
+}) {
+  return (
+    <li data-thread-selection-safe className="list-none">
+      <div
+        className="border-l border-sidebar-border pl-2"
+        style={delegationIndentStyle(props.depth)}
+      >
+        <button
+          type="button"
+          onClick={props.onToggle}
+          aria-expanded={props.expanded}
+          data-testid={props.testId}
+          className="mb-1 mt-1.5 flex w-full cursor-pointer items-center gap-2 px-2.5 text-left"
+        >
+          <span className="text-[11px] font-medium text-muted-foreground/50">
+            {props.expanded ? "Settled" : `Settled (${props.count})`}
+          </span>
+          <span className="h-px flex-1 bg-sidebar-border/60" />
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              "size-3 text-muted-foreground/50 transition-transform",
+              props.expanded && "rotate-180",
+            )}
+          />
+        </button>
+      </div>
+    </li>
   );
-  return routeThread === undefined ? [] : [routeThread];
 }
 
 function compactSidebarTimeLabel(label: string): string {
@@ -826,6 +875,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // third-row hover actions.
   pinningSupported: boolean;
   isPinned: boolean;
+  // How many delegation hops this thread sits below a root: 0 for an ordinary
+  // thread, 1 for one an agent spawned, 2 for one that thread's agent spawned
+  // in turn. The row indents by its depth so the delegation is visible as
+  // structure rather than as a badge the eye has to hunt for.
+  delegationDepth: number;
   // Present only on pinned cards whose server supports reordering: dnd-kit
   // sortable bag applied to the card root so the whole card drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
@@ -1346,7 +1400,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
-        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+        className={cn(
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]",
+          props.delegationDepth > 0 && "border-l border-sidebar-border pl-2",
+        )}
+        style={delegationIndentStyle(props.delegationDepth)}
       >
         <Tooltip>
           <TooltipTrigger
@@ -1495,17 +1553,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     <li
       data-thread-item
       ref={sortable?.setNodeRef}
-      style={
-        sortable
+      style={{
+        ...delegationIndentStyle(props.delegationDepth),
+        ...(sortable
           ? {
               transform: CSS.Translate.toString(sortable.transform),
               transition: sortable.transition,
             }
-          : undefined
-      }
+          : undefined),
+      }}
       {...(sortable?.listeners ?? {})}
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
+        // A delegated thread reads as belonging to the row above it: indented,
+        // with a rule tying it back to its parent. Static — no repainting
+        // gradient — because these rows sit in a list users scroll all day.
+        props.delegationDepth > 0 && "border-l border-sidebar-border pl-2",
         sortable?.isDragging && "z-20 opacity-80",
       )}
     >
@@ -2311,6 +2374,161 @@ export default function Sidebar() {
     threads,
   ]);
 
+  // Which parents have their settled children twirled open. Only the ids the
+  // user opened are stored; everything else is closed by default, so a settled
+  // delegated thread stays out of the way until asked for. Local storage, the
+  // same mechanism and key namespace as the four shelf collapse preferences —
+  // a disclosure is a per-device reading preference, never a server round trip.
+  const [expandedNestedSettledIds, setExpandedNestedSettledIds] = useLocalStorage(
+    NESTED_SETTLED_EXPANDED_KEY,
+    NESTED_SETTLED_EXPANDED_DEFAULT,
+    NestedSettledExpandedSchema,
+  );
+  const expandedNestedSettledSet = useMemo(
+    () => new Set(expandedNestedSettledIds),
+    [expandedNestedSettledIds],
+  );
+  const toggleNestedSettled = useCallback(
+    (threadId: string) => {
+      setExpandedNestedSettledIds((current) => {
+        if (current.includes(threadId)) return current.filter((id) => id !== threadId);
+        // Oldest entries fall off the front rather than being pruned against
+        // the live thread list: a parent outside the current project scope, or
+        // on an environment that is not connected yet, is absent from that list
+        // without being gone, and pruning it would silently shut a group the
+        // user had opened. A cap is bounded with no false-prune risk, and the
+        // cost of falling off is one re-twirl.
+        const next = [...current, threadId];
+        return next.length > NESTED_SETTLED_EXPANDED_LIMIT
+          ? next.slice(next.length - NESTED_SETTLED_EXPANDED_LIMIT)
+          : next;
+      });
+    },
+    [setExpandedNestedSettledIds],
+  );
+
+  // Bare thread ids, not scoped keys: `parentThreadId` is a thread id, so the
+  // delegation tree matches on the same identifier the server recorded. A
+  // delegated row renders inside its parent's shelf, so its own classification
+  // is what decides how the row looks and what action it offers.
+  const settledThreadIds = useMemo(
+    () => new Set(settledThreads.map((thread) => thread.id)),
+    [settledThreads],
+  );
+  const snoozedThreadIdSet = useMemo(
+    () => new Set(snoozedThreads.map((thread) => thread.id)),
+    [snoozedThreads],
+  );
+  // A pin outranks nesting. Pinning a delegated thread is an explicit "keep
+  // this in view", and nesting it under its parent would take away its shelf,
+  // its place in that shelf's count, and its pin glyph. Nothing server-side
+  // stops a spawned child from being pinned, so this is reachable through the
+  // ordinary pin action rather than only through malformed data.
+  const pinnedThreadIdSet = useMemo(
+    () => new Set(pinnedThreads.map((thread) => thread.id)),
+    [pinnedThreads],
+  );
+
+  // Delegation is resolved across every shelf at once, before any shelf claims
+  // a row. A settled child must stay attached to its parent wherever that
+  // parent renders — Active, Snoozed, Pinned, or itself Settled — and the four
+  // classified arrays are disjoint, so nesting inside one of them could never
+  // reach across. Building one tree over all of them and then letting each
+  // shelf keep only its own roots gets both: a claimed child renders under its
+  // parent, and a child whose parent is absent stays a root and falls back to
+  // its own shelf rather than vanishing.
+  const delegationNodes = useMemo(
+    () =>
+      buildThreadDelegationTree(
+        [...pinnedThreads, ...activeThreads, ...snoozedThreads, ...settledThreads],
+        {
+          isSettled: (thread) => settledThreadIds.has(thread.id),
+          isRoot: (thread) => pinnedThreadIdSet.has(thread.id),
+        },
+      ),
+    [
+      activeThreads,
+      pinnedThreadIdSet,
+      pinnedThreads,
+      settledThreadIds,
+      settledThreads,
+      snoozedThreads,
+    ],
+  );
+  const delegationNodeByThreadId = useMemo(
+    () => new Map(delegationNodes.map((node) => [node.thread.id, node] as const)),
+    [delegationNodes],
+  );
+  // Every thread some parent claimed, at any depth. A shelf drops these: they
+  // render through their parent's subtree instead, so nothing appears twice.
+  const delegatedThreadIds = useMemo(
+    () => new Set(collectDelegatedThreads(delegationNodes).map((thread) => thread.id)),
+    [delegationNodes],
+  );
+  // Every shelf header counts the threads it owns as roots. A thread some
+  // parent claimed renders inside that parent's block instead — in another
+  // shelf, if the parent lives in one — so counting it here too would make the
+  // header disagree with the rows beneath it.
+  const shelfRootCount = useCallback(
+    (shelfThreads: readonly EnvironmentThreadShell[]) =>
+      shelfThreads.reduce(
+        (count, thread) => (delegatedThreadIds.has(thread.id) ? count : count + 1),
+        0,
+      ),
+    [delegatedThreadIds],
+  );
+
+  // Which shelf root, if any, holds the open thread somewhere in its subtree.
+  // A collapsed shelf still renders the open thread's row, and now that a
+  // thread can be nested the row it has to keep is the whole family the open
+  // thread sits in — otherwise navigating into a delegated thread in a
+  // collapsed shelf would show nothing.
+  const routeDelegationRootId = useMemo(
+    () => findDelegationRootOf(delegationNodes, routeThreadRef?.threadId)?.id ?? null,
+    [delegationNodes, routeThreadRef?.threadId],
+  );
+  // The shelf's own collapse/preview rule, but keyed on the delegation root:
+  // `shelfRows` matches the open thread by scoped key among the rows it is
+  // given, and a nested open thread is not among a shelf's roots.
+  const shelfRootRows = useCallback(
+    (shelfThreads: readonly EnvironmentThreadShell[], expanded: boolean) => {
+      if (expanded) return shelfThreads;
+      if (routeDelegationRootId === null) return [];
+      const root = shelfThreads.find((thread) => thread.id === routeDelegationRootId);
+      return root === undefined ? [] : [root];
+    },
+    [routeDelegationRootId],
+  );
+  // Flattens one shelf's already-ordered rows into render rows, carrying each
+  // thread's delegation depth and inserting a settled divider under any parent
+  // that has settled children. Threads a parent claimed are skipped here; the
+  // parent's own subtree emits them.
+  const delegationRowsFor = useCallback(
+    (shelfThreads: readonly EnvironmentThreadShell[]) =>
+      flattenThreadDelegationTree(
+        shelfThreads
+          .filter((thread) => !delegatedThreadIds.has(thread.id))
+          .map(
+            (thread) =>
+              delegationNodeByThreadId.get(thread.id) ?? {
+                thread,
+                children: [],
+                settledChildren: [],
+              },
+          ),
+        {
+          isSettledExpanded: (thread) => expandedNestedSettledSet.has(thread.id),
+          visibleThreadId: routeThreadRef?.threadId ?? null,
+        },
+      ),
+    [
+      delegatedThreadIds,
+      delegationNodeByThreadId,
+      expandedNestedSettledSet,
+      routeThreadRef?.threadId,
+    ],
+  );
+
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
@@ -2367,24 +2585,32 @@ export default function Sidebar() {
     lastSettledResetKeyRef.current = settledResetKey;
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }
+  // The shelf shows settled threads no parent claimed. A settled thread whose
+  // parent is present renders under that parent's divider instead, so counting
+  // it here too would show it twice and make the shelf's count a lie.
+  const settledShelfThreads = useMemo(
+    () => settledThreads.filter((thread) => !delegatedThreadIds.has(thread.id)),
+    [delegatedThreadIds, settledThreads],
+  );
   const visibleSettledThreads = useMemo(() => {
-    if (settledThreads.length <= settledVisibleCount) return settledThreads;
-    const visible = settledThreads.slice(0, settledVisibleCount);
+    if (settledShelfThreads.length <= settledVisibleCount) return settledShelfThreads;
+    const visible = settledShelfThreads.slice(0, settledVisibleCount);
     // The open thread must never hide under "Show more": navigating into a
     // deep settled thread (search, deep link) pulls its row into the visible
     // tail so the highlight and the un-settle affordance stay reachable.
-    if (routeThreadKey !== null) {
-      const routeThread = settledThreads
+    // Matched on the delegation root, not the open thread itself: the open
+    // thread may be nested under a settled parent deep in the tail, and it is
+    // that parent's row the page has to pull forward for the child to render
+    // under it at all.
+    if (routeDelegationRootId !== null) {
+      const routeThread = settledShelfThreads
         .slice(settledVisibleCount)
-        .find(
-          (thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey,
-        );
+        .find((thread) => thread.id === routeDelegationRootId);
       if (routeThread !== undefined) visible.push(routeThread);
     }
     return visible;
-  }, [routeThreadKey, settledThreads, settledVisibleCount]);
-  const hiddenSettledCount = settledThreads.length - visibleSettledThreads.length;
+  }, [routeDelegationRootId, settledShelfThreads, settledVisibleCount]);
+  const hiddenSettledCount = settledShelfThreads.length - visibleSettledThreads.length;
   const showMoreSettled = useCallback(
     () => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT),
     [],
@@ -2398,9 +2624,9 @@ export default function Sidebar() {
     () => setSettledShelfExpanded((value) => !value),
     [setSettledShelfExpanded],
   );
-  const renderedSettledThreads = useMemo(
-    () => shelfRows(visibleSettledThreads, settledShelfExpanded, routeThreadKey),
-    [routeThreadKey, settledShelfExpanded, visibleSettledThreads],
+  const renderedSettledRows = useMemo(
+    () => delegationRowsFor(shelfRootRows(visibleSettledThreads, settledShelfExpanded)),
+    [delegationRowsFor, settledShelfExpanded, shelfRootRows, visibleSettledThreads],
   );
 
   // The snoozed shelf is collapsed by default: out of the way, never gone.
@@ -2415,9 +2641,9 @@ export default function Sidebar() {
     () => setSnoozedShelfExpanded((value) => !value),
     [setSnoozedShelfExpanded],
   );
-  const visibleSnoozedThreads = useMemo(
-    () => shelfRows(snoozedThreads, snoozedShelfExpanded, routeThreadKey),
-    [routeThreadKey, snoozedShelfExpanded, snoozedThreads],
+  const visibleSnoozedRows = useMemo(
+    () => delegationRowsFor(shelfRootRows(snoozedThreads, snoozedShelfExpanded)),
+    [delegationRowsFor, shelfRootRows, snoozedShelfExpanded, snoozedThreads],
   );
 
   // The pinned shelf is expanded by default: unlike snoozed and settled work,
@@ -2432,10 +2658,30 @@ export default function Sidebar() {
     () => setPinnedShelfExpanded((value) => !value),
     [setPinnedShelfExpanded],
   );
-  const visiblePinnedThreads = useMemo(
-    () => shelfRows(pinnedThreads, pinnedShelfExpanded, routeThreadKey),
-    [pinnedShelfExpanded, pinnedThreads, routeThreadKey],
+  // The pinned shelf renders in drag order through its own sortable list, so
+  // its delegation rows are grouped per pinned parent and emitted beside that
+  // parent's draggable row rather than as one flat block. Grouped from the same
+  // collapse-filtered root list the other shelves use, so a collapsed pinned
+  // shelf folds a pin's delegated rows away with it.
+  const visiblePinnedRows = useMemo(
+    () => delegationRowsFor(shelfRootRows(pinnedThreads, pinnedShelfExpanded)),
+    [delegationRowsFor, pinnedShelfExpanded, pinnedThreads, shelfRootRows],
   );
+  const pinnedDelegationRowsByThreadId = useMemo(() => {
+    const grouped = new Map<ThreadId, DelegationRow<EnvironmentThreadShell>[]>();
+    let current: DelegationRow<EnvironmentThreadShell>[] | undefined;
+    for (const row of visiblePinnedRows) {
+      // Depth 0 opens a new pinned parent's group; everything below it until
+      // the next depth-0 row belongs to that parent.
+      if (row.kind === "thread" && row.depth === 0) {
+        current = [];
+        grouped.set(row.thread.id, current);
+        continue;
+      }
+      current?.push(row);
+    }
+    return grouped;
+  }, [visiblePinnedRows]);
 
   // Active is the landing group, so it is expanded by default and collapses
   // last resort — but it is a shelf like the others, and folding it is how
@@ -2449,19 +2695,28 @@ export default function Sidebar() {
     () => setActiveShelfExpanded((value) => !value),
     [setActiveShelfExpanded],
   );
-  const visibleActiveThreads = useMemo(
-    () => shelfRows(activeThreads, activeShelfExpanded, routeThreadKey),
-    [activeShelfExpanded, activeThreads, routeThreadKey],
+  // A thread an agent spawned belongs to its parent's work, so it renders
+  // directly beneath it rather than competing for a place in the activity
+  // order. The collapse rule runs on the shelf's roots and delegation expands
+  // what survives, so a collapsed shelf still cannot show a child whose parent
+  // is hidden.
+  const visibleActiveRows = useMemo(
+    () => delegationRowsFor(shelfRootRows(activeThreads, activeShelfExpanded)),
+    [activeShelfExpanded, activeThreads, delegationRowsFor, shelfRootRows],
   );
 
+  // Jump shortcuts and shift-range-select run over what the sidebar actually
+  // shows, so divider rows drop out and a thread hidden behind an undisclosed
+  // divider never entered the row list in the first place.
   const orderedThreads = useMemo(
-    () => [
-      ...visiblePinnedThreads,
-      ...visibleActiveThreads,
-      ...visibleSnoozedThreads,
-      ...renderedSettledThreads,
-    ],
-    [visiblePinnedThreads, visibleActiveThreads, visibleSnoozedThreads, renderedSettledThreads],
+    () =>
+      [
+        ...visiblePinnedRows,
+        ...visibleActiveRows,
+        ...visibleSnoozedRows,
+        ...renderedSettledRows,
+      ].flatMap((row) => (row.kind === "thread" ? [row.thread] : [])),
+    [visiblePinnedRows, visibleActiveRows, visibleSnoozedRows, renderedSettledRows],
   );
   const orderedThreadKeys = useMemo(
     () =>
@@ -2819,8 +3074,8 @@ export default function Sidebar() {
   // What the pinned shelf actually renders: drag order, minus the rows a
   // collapsed shelf folds away.
   const renderedPinnedThreads = useMemo(
-    () => shelfRows(orderedPinnedThreads, pinnedShelfExpanded, routeThreadKey),
-    [orderedPinnedThreads, pinnedShelfExpanded, routeThreadKey],
+    () => shelfRootRows(orderedPinnedThreads, pinnedShelfExpanded),
+    [orderedPinnedThreads, pinnedShelfExpanded, shelfRootRows],
   );
   useEffect(() => {
     if (optimisticPinnedOrder === null) return;
@@ -3917,12 +4172,22 @@ export default function Sidebar() {
                 {(() => {
                   const renderThreadRow = (
                     thread: EnvironmentThreadShell,
-                    section: "pinned" | "active" | "snoozed" | "settled",
+                    shelfSection: SidebarRowSection,
+                    delegationDepth = 0,
                     sortable?: SortablePinnedRowBag,
                   ) => {
                     const threadKey = scopedThreadKey(
                       scopeThreadRef(thread.environmentId, thread.id),
                     );
+                    // A delegated child renders inside its parent's shelf, at
+                    // any depth, so the shelf can no longer say what a row is.
+                    // Its own classification does.
+                    const section = resolveSidebarRowSection({
+                      shelfSection,
+                      delegationDepth,
+                      isSettled: settledThreadIds.has(thread.id),
+                      isSnoozed: snoozedThreadIdSet.has(thread.id),
+                    });
                     // Settled and snoozed are the ONLY things that collapse a
                     // row: every other thread is a full card. Density comes
                     // from users (or the auto rules) actually parking work,
@@ -3963,6 +4228,7 @@ export default function Sidebar() {
                           serverConfigs.get(thread.environmentId)?.environment.capabilities
                             .threadPinning === true
                         }
+                        delegationDepth={delegationDepth}
                         isPinned={section === "pinned"}
                         sortable={sortable}
                         snoozeWakeLabelText={
@@ -4032,6 +4298,28 @@ export default function Sidebar() {
                       />
                     );
                   };
+                  // One delegation row becomes either a thread row or the
+                  // divider that hides a parent's settled children. The divider
+                  // is keyed by the parent so its disclosure survives the
+                  // parent moving between shelves.
+                  const renderDelegationRow = (
+                    row: DelegationRow<EnvironmentThreadShell>,
+                    shelfSection: SidebarRowSection,
+                  ): ReactNode => {
+                    if (row.kind === "thread") {
+                      return renderThreadRow(row.thread, shelfSection, row.depth);
+                    }
+                    return (
+                      <SidebarNestedSettledDivider
+                        key={`nested-settled:${row.thread.id}`}
+                        count={row.count}
+                        expanded={row.expanded}
+                        depth={row.depth}
+                        onToggle={() => toggleNestedSettled(row.thread.id)}
+                        testId={`sidebar-nested-settled-toggle-${row.thread.id}`}
+                      />
+                    );
+                  };
                   // Draft block above everything, then four shelves that all
                   // read the same way: Pinned, Active, Snoozed, Settled, each
                   // announced by its own heading and each vanishing entirely
@@ -4052,12 +4340,13 @@ export default function Sidebar() {
                       onNavigateToDraft={navigateToDraft}
                     />,
                   ];
-                  if (pinnedThreads.length > 0) {
+                  const pinnedRootCount = shelfRootCount(pinnedThreads);
+                  if (pinnedRootCount > 0) {
                     items.push(
                       <SidebarShelfHeader
                         key="pinned-shelf-header"
                         label="Pinned"
-                        count={pinnedThreads.length}
+                        count={pinnedRootCount}
                         expanded={pinnedShelfExpanded}
                         onToggle={togglePinnedShelf}
                         testId="sidebar-pinned-shelf-toggle"
@@ -4081,18 +4370,26 @@ export default function Sidebar() {
                           .filter((threadKey) => reorderablePinnedKeys.has(threadKey))}
                         strategy={verticalListSortingStrategy}
                       >
-                        {renderedPinnedThreads.map((thread) => {
+                        {renderedPinnedThreads.flatMap((thread) => {
                           const threadKey = scopedThreadKey(
                             scopeThreadRef(thread.environmentId, thread.id),
                           );
-                          if (!reorderablePinnedKeys.has(threadKey)) {
-                            return renderThreadRow(thread, "pinned");
-                          }
-                          return (
+                          // Only the pinned parent is draggable. Its delegated
+                          // rows follow it as ordinary rows so a pin's own
+                          // work stays visible without joining the sortable
+                          // set, where they would let a drag reorder a family
+                          // into someone else's.
+                          const nestedRows = pinnedDelegationRowsByThreadId
+                            .get(thread.id)
+                            ?.map((row) => renderDelegationRow(row, "pinned"));
+                          const parentRow = reorderablePinnedKeys.has(threadKey) ? (
                             <SortablePinnedThreadRow key={threadKey} id={threadKey}>
-                              {(bag) => renderThreadRow(thread, "pinned", bag)}
+                              {(bag) => renderThreadRow(thread, "pinned", 0, bag)}
                             </SortablePinnedThreadRow>
+                          ) : (
+                            renderThreadRow(thread, "pinned")
                           );
+                          return [parentRow, ...(nestedRows ?? [])];
                         })}
                       </SortableContext>
                     </DndContext>,
@@ -4101,20 +4398,21 @@ export default function Sidebar() {
                   // same way the others do: an empty heading over an empty
                   // group is chrome pretending to be content, and the sidebar
                   // already has a real empty state for a genuinely empty list.
-                  if (activeThreads.length > 0) {
+                  const activeRootCount = shelfRootCount(activeThreads);
+                  if (activeRootCount > 0) {
                     items.push(
                       <SidebarShelfHeader
                         key="active-shelf-header"
                         label="Active"
-                        count={activeThreads.length}
+                        count={activeRootCount}
                         expanded={activeShelfExpanded}
                         onToggle={toggleActiveShelf}
                         testId="sidebar-active-shelf-toggle"
                         tone="muted"
                       />,
                     );
-                    for (const thread of visibleActiveThreads) {
-                      items.push(renderThreadRow(thread, "active"));
+                    for (const row of visibleActiveRows) {
+                      items.push(renderDelegationRow(row, "active"));
                     }
                   }
                   // Snoozed shelf: between Active and Settled — out of the
@@ -4122,28 +4420,32 @@ export default function Sidebar() {
                   // is snoozed (the count is the whole footprint when
                   // collapsed); rows only when expanded. Vanishes entirely at
                   // count 0.
-                  if (snoozedThreads.length > 0) {
+                  const snoozedRootCount = shelfRootCount(snoozedThreads);
+                  if (snoozedRootCount > 0) {
                     items.push(
                       <SidebarShelfHeader
                         key="snoozed-shelf-header"
                         label="Snoozed"
-                        count={snoozedThreads.length}
+                        count={snoozedRootCount}
                         expanded={snoozedShelfExpanded}
                         onToggle={toggleSnoozedShelf}
                         testId="sidebar-snoozed-shelf-toggle"
                         tone="snooze"
                       />,
                     );
-                    for (const thread of visibleSnoozedThreads) {
-                      items.push(renderThreadRow(thread, "snoozed"));
+                    for (const row of visibleSnoozedRows) {
+                      items.push(renderDelegationRow(row, "snoozed"));
                     }
                   }
-                  if (settledThreads.length > 0) {
+                  // Counts what the shelf holds, not every settled thread: the
+                  // ones a parent claimed are behind that parent's own divider
+                  // and are counted there.
+                  if (settledShelfThreads.length > 0) {
                     items.push(
                       <SidebarShelfHeader
                         key="settled-shelf-header"
                         label="Settled"
-                        count={settledThreads.length}
+                        count={settledShelfThreads.length}
                         expanded={settledShelfExpanded}
                         onToggle={toggleSettledShelf}
                         testId="sidebar-settled-shelf-toggle"
@@ -4151,8 +4453,8 @@ export default function Sidebar() {
                       />,
                     );
                   }
-                  for (const thread of renderedSettledThreads) {
-                    items.push(renderThreadRow(thread, "settled"));
+                  for (const row of renderedSettledRows) {
+                    items.push(renderDelegationRow(row, "settled"));
                   }
                   return items;
                 })()}
