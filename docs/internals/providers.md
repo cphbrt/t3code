@@ -2,7 +2,7 @@
 
 > For maintainers. Using T3 Code? See [docs/user](../user/).
 
-A provider is the agent runtime that does the actual work. CPH Code supports Codex and Claude, and
+A provider is the agent runtime that does the actual work. CPH Code supports Codex, Claude, and OpenCode, and
 the orchestration layer does not know which one is behind a thread.
 
 ## Built-in drivers
@@ -21,8 +21,8 @@ adapter in a child scope. Adapter implementations live beside them in
 transport, config, and event shapes are mapped.
 
 Legacy provider identifiers and settings schemas may still decode persisted configuration or wire
-data from released clients. They do not imply a shipped runtime: CPH Code carries no Cursor, Grok,
-or OpenCode driver, adapter, probe, or text-generation implementation.
+data from released clients. They do not imply a shipped runtime: CPH Code carries no Cursor or Grok
+driver, adapter, probe, or text-generation implementation.
 
 ## Registry and routing
 
