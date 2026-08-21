@@ -105,7 +105,17 @@ it("keeps identity and permission mode out of spawn_thread's arguments", () => {
   // `interactionMode` is not an escalation either: plan mode is the weaker of
   // the two, and the runtime mode carrying the permissions still inherits.
   // `delegateAs` decides who the thread answers to, not what it may do.
+  //
+  // `agentProfile` is the honest one to name: a profile supplies the child's
+  // system prompt and its tool policy, so a parent choosing one is choosing
+  // how the child thinks and what it may do — accepted by design, because
+  // that is the point of delegating to a purpose-built profile. What it is NOT
+  // is an escalation past the parent: it resolves inside the parent's own
+  // provider instance, spends the same account's allowance, and does not
+  // change the child's model. The provider instance stays non-overridable and
+  // absent from this list.
   expect(Object.keys(properties).sort()).toEqual([
+    "agentProfile",
     "baseBranch",
     "delegateAs",
     "directory",
@@ -115,6 +125,35 @@ it("keeps identity and permission mode out of spawn_thread's arguments", () => {
     "repositoryPath",
     "title",
   ]);
+});
+
+it("tells the agent that a child profile is never inherited and must be supported", () => {
+  const properties = (
+    Tool.getJsonSchema(SpawnToolkit.tools.spawn_thread) as {
+      properties: Record<
+        string,
+        { description?: string; anyOf?: ReadonlyArray<{ description?: string }> }
+      >;
+    }
+  ).properties;
+  const node = properties["agentProfile"];
+  // An optional annotated string encodes as `anyOf: [{string, description}, {null}]`,
+  // so the annotation rides the string branch and NOT the property node — reading
+  // the node alone yields undefined and passes every `toMatch` vacuously.
+  const description =
+    node?.description ?? node?.anyOf?.find((branch) => branch.description)?.description ?? "";
+  expect(description).not.toBe("");
+  // Four facts an agent cannot discover by trying: what the parameter is
+  // equivalent to, that omitting it strips its OWN profile rather than passing
+  // it down, that "none" is a spelling of omitted, and that an unsupported
+  // provider fails the call outright instead of quietly spawning a plain child.
+  expect(description).toMatch(/--agent/u);
+  expect(description).toMatch(/not inherit|no profile|never inherited/iu);
+  // Both anchored on the actual phrasing. Bare /none/ matched the "no profile"
+  // sentence, and bare /fail/ matched any mention of failure at all, so either
+  // would have kept passing after the fact it is guarding was deleted.
+  expect(description).toMatch(/"none"/u);
+  expect(description).toMatch(/fails rather than/u);
 });
 
 it("keeps message_thread's recipient optional so a reply upward needs no id", () => {

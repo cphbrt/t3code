@@ -174,6 +174,8 @@ export function buildSelectOptionDescriptor(input: {
         label: string;
         description?: string | undefined;
         isDefault?: boolean | undefined;
+        /** Display-only; see `ProviderOptionChoice.declaresModel`. */
+        declaresModel?: string | undefined;
       }>
     | undefined;
   readonly description?: string;
@@ -184,6 +186,7 @@ export function buildSelectOptionDescriptor(input: {
     label: option.label,
     ...(option.description ? { description: option.description } : {}),
     ...(option.isDefault ? { isDefault: true } : {}),
+    ...(option.declaresModel ? { declaresModel: option.declaresModel } : {}),
   }));
   const currentValue = options.find((option) => option.isDefault)?.id;
   return {

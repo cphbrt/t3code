@@ -1292,6 +1292,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
 
+  // Claude reads its agent profile only when the session is created, so the
+  // lock is exactly "a session exists" — not the wider "thread has started",
+  // which would also catch a thread holding a queued message whose profile is
+  // genuinely still mutable. Unlike `phase`, this stays true for a stopped or
+  // interrupted thread, whose session row remains set.
+  const traitsThreadHasProviderSession = activeThread?.session != null;
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -1302,6 +1308,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
+    threadHasProviderSession: traitsThreadHasProviderSession,
   });
   const providerTraitsPicker = renderProviderTraitsPicker({
     provider: selectedProvider,
@@ -1313,6 +1320,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
     onPromptChange: setPromptFromTraits,
+    threadHasProviderSession: traitsThreadHasProviderSession,
   });
   const pendingPrimaryAction = useMemo(
     () =>

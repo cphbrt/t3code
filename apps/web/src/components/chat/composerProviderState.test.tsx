@@ -165,6 +165,49 @@ describe("getComposerProviderState", () => {
     );
   });
 
+  it("dispatches an undiscovered agent profile intact instead of clamping it to the default", () => {
+    // The dispatch direction, which the render tests cannot see. The probe
+    // scans the server's cwd while the profile resolves against the thread's
+    // cwd, so a worktree-local profile is a legitimate selection that is not in
+    // the option list. Without the agent-option injection the descriptor round
+    // trip through buildProviderOptionSelectionsFromDescriptors rewrites this to
+    // "none", and the thread silently runs with no profile at all.
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
+        selectDescriptor("agent", [
+          { id: "none", label: "None", isDefault: true },
+          { id: "reviewer", label: "reviewer" },
+        ]),
+      ]),
+      modelOptions: selections(["agent", "worktree-local"]),
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(
+      selections(["effort", "high"], ["agent", "worktree-local"]),
+    );
+  });
+
+  it("still clamps a non-agent select whose value is not an option", () => {
+    // The injection is deliberately agent-only: every other descriptor should
+    // keep the shared resolver's clamping behaviour.
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("contextWindow", [
+          { id: "200k", label: "200k", isDefault: true },
+          { id: "1m", label: "1M" },
+        ]),
+      ]),
+      modelOptions: selections(["contextWindow", "512k"]),
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual(selections(["contextWindow", "200k"]));
+  });
+
   it("returns undefined dispatch options when the model declares no descriptors", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,

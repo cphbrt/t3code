@@ -5,10 +5,16 @@ import {
   ProviderDriverKind,
   type ModelCapabilities,
   type ProviderInstanceId,
+  type ProviderOptionDescriptor,
+  type ProviderOptionSelection,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  createModelCapabilities,
+  getProviderOptionDescriptors,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -84,6 +90,75 @@ export function getProviderModelCapabilities(
 ): ModelCapabilities {
   const slug = normalizeModelSlug(model, provider);
   return models.find((candidate) => candidate.slug === slug)?.capabilities ?? EMPTY_CAPABILITIES;
+}
+
+/** Descriptor id of the Claude agent-profile select. */
+const AGENT_DESCRIPTOR_ID = "agent";
+
+/**
+ * Add the selected agent profile to the descriptor's options when the probe did
+ * not discover it.
+ *
+ * The server deliberately does not clamp the agent selection against the
+ * discovered list: the list is scanned from the server's cwd while the profile
+ * resolves against the thread's cwd, so a worktree-local profile is a
+ * legitimate live selection the probe cannot see. `getProviderOptionDescriptors`
+ * clamps any value that is not an option, which would both display "None" and —
+ * via the `buildProviderOptionSelectionsFromDescriptors` round trip — dispatch
+ * "none" to the server, silently running the thread with no profile.
+ *
+ * The clamp is correct for every other descriptor, so the exception lives here
+ * in fork code rather than in the shared resolver.
+ *
+ * The injected option is scoped to the live selection only: it is derived per
+ * call from the current value and disappears as soon as the user switches away.
+ * This is not a persistent registry of profiles, and switching off an
+ * undiscovered profile is a one-way door by design.
+ */
+function withSelectedAgentOption(
+  caps: ModelCapabilities,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ModelCapabilities {
+  const descriptors = caps.optionDescriptors;
+  if (!descriptors) {
+    return caps;
+  }
+  const selected = selections?.find((selection) => selection.id === AGENT_DESCRIPTOR_ID)?.value;
+  if (typeof selected !== "string" || selected.length === 0) {
+    return caps;
+  }
+  let changed = false;
+  const nextDescriptors = descriptors.map((descriptor) => {
+    if (
+      descriptor.id !== AGENT_DESCRIPTOR_ID ||
+      descriptor.type !== "select" ||
+      descriptor.options.some((option) => option.id === selected)
+    ) {
+      return descriptor;
+    }
+    changed = true;
+    return { ...descriptor, options: [...descriptor.options, { id: selected, label: selected }] };
+  });
+  return changed ? { ...caps, optionDescriptors: nextDescriptors } : caps;
+}
+
+/**
+ * Resolve a model's option descriptors against the user's selections.
+ *
+ * The single place the agent-profile injection is applied, so the traits picker
+ * and the dispatch payload can never disagree about which profile is active.
+ */
+export function getProviderModelOptionDescriptors(input: {
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  provider: ProviderDriverKind;
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+}): ReadonlyArray<ProviderOptionDescriptor> {
+  const caps = getProviderModelCapabilities(input.models, input.model, input.provider);
+  return getProviderOptionDescriptors({
+    caps: withSelectedAgentOption(caps, input.selections),
+    selections: input.selections,
+  });
 }
 
 export function getDefaultServerModel(

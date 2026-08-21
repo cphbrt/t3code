@@ -231,7 +231,7 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "      request_id: message.request_id,",
           "      response: {",
           '        commands: [{ name: "review", description: "Review changes", argumentHint: "[path]" }],',
-          "        agents: [],",
+          '        agents: [{ name: "my-manager", description: "Plans work without touching code" }, { name: "my-intern", description: "Runs defined legwork", model: "haiku" }],',
           '        output_style: "default",',
           '        available_output_styles: ["default"],',
           "        models: [],",
@@ -274,6 +274,15 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
             description: "Review changes",
             input: { hint: "[path]" },
           },
+        ],
+        // The CLI has already applied user/project scope precedence to this
+        // list, so the probe keeps it verbatim rather than rescanning. A
+        // profile's declared model is kept so the expanded picker can show it;
+        // it is reported, never applied, because the user's selected model
+        // wins at session start.
+        agents: [
+          { name: "my-manager", description: "Plans work without touching code" },
+          { name: "my-intern", description: "Runs defined legwork", model: "haiku" },
         ],
         usage: {
           session: {

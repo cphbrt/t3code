@@ -23,6 +23,10 @@ const probeResult = (input?: {
   tokenSource: "oauth",
   apiProvider: "firstParty",
   slashCommands: [],
+  // The probe reports discovered agent profiles alongside slash commands. An
+  // empty list is the honest fixture here: this suite is about usage and
+  // identity resolution, not profile discovery.
+  agents: [],
   usage: usageResponse(input?.utilization ?? 10),
   probedAt: "2026-01-01T00:00:00.000Z",
 });

@@ -113,6 +113,21 @@ An agent's worktree may hold work that has not been committed, and nothing
 tidies that away on your behalf. Archiving the thread leaves the worktree
 exactly where it is, for you to keep, merge, or remove yourself.
 
+## Agent profiles are not inherited
+
+A delegated thread runs on the same provider and model as the thread that
+started it. Agent profiles are the one exception: if the parent thread is
+running under a profile — see [Claude](./providers-claude.md#agent-profiles) —
+that profile does not carry over to a thread it delegates work to. A spawned
+thread starts with no profile unless the agent starting it names one
+explicitly, so a thread running as a manager-style profile does not mint more
+threads running as managers by accident.
+
+If a profile is requested for a delegated thread but its provider or model
+does not support profiles, the thread is not created; the request fails so it
+can be retried without a profile instead of quietly starting an unprofiled
+thread.
+
 ## What it costs
 
 Every delegated thread is a full agent, spending the same account allowance as

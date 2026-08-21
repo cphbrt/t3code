@@ -12,6 +12,19 @@ export const ProviderOptionChoice = Schema.Struct({
   label: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   isDefault: Schema.optional(Schema.Boolean),
+  /**
+   * A model this choice merely *declares*, reported for display and never
+   * applied. Today's only source is a Claude agent profile's `model:`
+   * frontmatter, which is inert: the model selected alongside the profile wins
+   * at session start. Kept as its own field rather than folded into
+   * `description` so the UI can label it honestly without parsing prose —
+   * this struct strips unknown properties on decode, so a display-only field
+   * has to be declared here to survive the wire at all.
+   *
+   * Additive and optional, so an older client ignores it and an older server
+   * simply omits it.
+   */
+  declaresModel: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderOptionChoice = typeof ProviderOptionChoice.Type;
 

@@ -24,6 +24,7 @@ import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
+  type AgentInfo as ClaudeAgentInfo,
   type Options as ClaudeQueryOptions,
   type SDKControlGetUsageResponse,
   type SlashCommand as ClaudeSlashCommand,
@@ -60,6 +61,22 @@ const MINIMUM_CLAUDE_OPUS_4_8_VERSION = "2.1.154";
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
 
 const CURRENT_CLAUDE_MODELS = new Set(["claude-fable-5", "claude-opus-5", "claude-sonnet-5"]);
+
+/**
+ * The agent-profile select's explicit no-profile choice. The picker's radio
+ * group needs a real option id to carry "None" as the default, so this is a
+ * sentinel value rather than an absent selection; the adapter treats it as
+ * "send no `--agent`". A profile literally named `none` collides with it and is
+ * dropped when the select is built, so it is never offered and cannot be
+ * selected; that is accepted over inventing a wire-visible encoding for a name
+ * nobody uses.
+ *
+ * The descriptor id `agent` is inherited from upstream's OpenCode agent-mode
+ * select (upstream commit 8d1d699f), which `TraitsPicker`'s
+ * `agentDescriptor`/`showAgent` handling still consumes; this fork repurposes
+ * that id for Claude agent profiles now that OpenCode is gone.
+ */
+export const CLAUDE_NO_AGENT_PROFILE_VALUE = "none";
 
 export function isLegacyClaudeModel(model: string): boolean {
   return !CURRENT_CLAUDE_MODELS.has(model);
@@ -646,6 +663,19 @@ export type ClaudeCapabilitiesProbe = {
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   /**
+   * Agent profiles the CLI resolved from `~/.claude/agents` and the project's
+   * `.claude/agents`, with scope precedence already applied on its side. These
+   * are the names `claude --agent <name>` accepts, and they are resolved
+   * against the probe's own cwd rather than any individual thread's.
+   *
+   * Two visible consequences follow. On a server hosting several projects, the
+   * project-scoped profiles of whichever directory the probe ran in are offered
+   * to threads of unrelated projects, where they may not resolve. And because
+   * the probe is served from a multi-minute cache, a newly added profile can
+   * take up to that TTL (~5 minutes) to appear in the picker.
+   */
+  readonly agents: ReadonlyArray<ClaudeAgentProfile>;
+  /**
    * Type-only narrowing to the fields the quota normalizer reads. At runtime
    * this is still whatever the SDK returned, `session` and `behaviors`
    * included — the probe spreads the response through untouched. Declaring the
@@ -784,6 +814,109 @@ export function normalizeClaudeProviderQuota(
     ...(planLabel ? { planLabel } : {}),
     windows,
     ...(extraUsage ? { extraUsage } : {}),
+  };
+}
+
+/** A `--agent`-selectable profile as reported by the CLI's init handshake. */
+export type ClaudeAgentProfile = {
+  readonly name: string;
+  readonly description?: string;
+  /**
+   * The profile's declared `model:` frontmatter, kept for display only.
+   *
+   * Live verification showed this is inert for the main conversation: the model
+   * chosen in the picker governs the session regardless of what the profile
+   * declares. It is surfaced so the expanded picker can say so out loud, rather
+   * than leaving the user to assume a profile silently switches models.
+   *
+   * The handshake carries no scope, so there is deliberately no field for
+   * whether a profile came from the user or project directory.
+   */
+  readonly model?: string;
+};
+
+function parseClaudeInitializationAgents(
+  agents: ReadonlyArray<ClaudeAgentInfo> | undefined,
+): ReadonlyArray<ClaudeAgentProfile> {
+  const profilesByName = new Map<string, ClaudeAgentProfile>();
+
+  for (const agent of agents ?? []) {
+    const name = nonEmptyProbeString(agent.name);
+    if (!name || profilesByName.has(name)) {
+      continue;
+    }
+    const description = nonEmptyProbeString(agent.description);
+    // `model` is the one optional field on the SDK's AgentInfo, so it is
+    // guarded before trimming rather than passed straight in like the others.
+    const model = agent.model ? nonEmptyProbeString(agent.model) : undefined;
+    profilesByName.set(name, {
+      name,
+      ...(description ? { description } : {}),
+      ...(model ? { model } : {}),
+    });
+  }
+
+  return [...profilesByName.values()];
+}
+
+/**
+ * Build the per-thread agent-profile select injected into every Claude model's
+ * descriptors. Returns nothing when no profiles exist: the picker renders each
+ * select unconditionally, so a None-only descriptor would be a dead control.
+ *
+ * This descriptor exists only on the live provider snapshot. Consumers must
+ * therefore read the chosen value straight off the selection with
+ * `getModelSelectionStringOptionValue(modelSelection, "agent")`, and must not
+ * resolve it through `getClaudeModelCapabilities` or the static catalog: a
+ * resolver written by analogy with the effort options would silently see
+ * nothing there.
+ */
+function buildClaudeAgentOptionDescriptor(agents: ReadonlyArray<ClaudeAgentProfile>) {
+  // Filtered here rather than at the probe so the guarantee holds for every
+  // path that supplies profiles, not just the one that parses them.
+  const selectable = agents.filter((agent) => agent.name !== CLAUDE_NO_AGENT_PROFILE_VALUE);
+  if (selectable.length === 0) return undefined;
+  return buildSelectOptionDescriptor({
+    id: "agent",
+    label: "Agent Profile",
+    options: [
+      { value: CLAUDE_NO_AGENT_PROFILE_VALUE, label: "None", isDefault: true },
+      ...selectable.map((agent) => ({
+        value: agent.name,
+        label: agent.name,
+        ...(agent.description ? { description: agent.description } : {}),
+        // Reported, never applied — see ClaudeAgentProfile.model.
+        ...(agent.model ? { declaresModel: agent.model } : {}),
+      })),
+    ],
+  });
+}
+
+/**
+ * Add the agent-profile select to a model's capabilities. Custom models arrive
+ * with an empty descriptor list and still gain the select: they run the same
+ * CLI, so `--agent` applies to them too. The optional chain covers the
+ * contract's nullable `capabilities`, which no Claude path populates today.
+ *
+ * No catalog model defines an `agent` descriptor today; the same-id filter is a
+ * guard so that if one ever does, the probed list wins instead of the model
+ * carrying two selects under one id.
+ */
+function withClaudeAgentDescriptor(
+  model: ServerProviderModel,
+  agentDescriptor: ReturnType<typeof buildClaudeAgentOptionDescriptor>,
+): ServerProviderModel {
+  if (!agentDescriptor) return model;
+  return {
+    ...model,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        ...(model.capabilities?.optionDescriptors ?? []).filter(
+          (descriptor) => descriptor.id !== "agent",
+        ),
+        agentDescriptor,
+      ],
+    }),
   };
 }
 
@@ -926,6 +1059,7 @@ const probeClaudeCapabilities = (
         tokenSource: account?.tokenSource,
         apiProvider: account?.apiProvider,
         slashCommands: parseClaudeInitializationCommands(init.commands),
+        agents: parseClaudeInitializationAgents(init.agents),
         ...(usage ? { usage } : {}),
       } satisfies Omit<ClaudeCapabilitiesProbe, "probedAt">;
     });
@@ -1120,11 +1254,18 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const quota = capabilities.usage
     ? normalizeClaudeProviderQuota(capabilities.usage, capabilities.probedAt)
     : undefined;
+  // Agent profiles are server-authored data riding the snapshot rather than
+  // static catalog entries, so the descriptor is injected here — the only place
+  // that has both the model list and a live probe to read profiles from.
+  const agentDescriptor = buildClaudeAgentOptionDescriptor(capabilities.agents);
+  const modelsWithAgentProfiles = models.map((model) =>
+    withClaudeAgentDescriptor(model, agentDescriptor),
+  );
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
     checkedAt,
-    models,
+    models: modelsWithAgentProfiles,
     slashCommands: dedupedSlashCommands,
     skills,
     ...(quota ? { quota } : {}),
