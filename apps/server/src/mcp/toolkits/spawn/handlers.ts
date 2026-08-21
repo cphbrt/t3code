@@ -1,4 +1,11 @@
-import { CommandId, MessageId, ThreadId, type ModelSelection } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ThreadId,
+  type ModelSelection,
+  type OrchestrationThreadShell,
+  type ProviderInteractionMode,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -11,10 +18,18 @@ import * as Path from "effect/Path";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadBootstrapRunner } from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { SPAWN_LIMIT_PER_SESSION, SpawnThreadError, SpawnToolkit } from "./tools.ts";
+import {
+  DEFAULT_SPAWN_DELEGATE_AS,
+  MessageThreadError,
+  SPAWN_LIMIT_PER_SESSION,
+  SpawnThreadError,
+  SpawnToolkit,
+  type SpawnDelegateAs,
+} from "./tools.ts";
 
 /**
  * Spawns consumed per provider session, counted only when a spawn fully lands
@@ -34,8 +49,40 @@ let spawnCallOrdinal = 0;
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-const SPAWN_CONFIRMATION =
+const HAND_OFF_CONFIRMATION =
   "Spawned. The new thread is in the sidebar and has started on the prompt. It will not report back here; the user follows it there.";
+
+const TEAMMATE_CONFIRMATION =
+  "Spawned as your teammate. It is nested under this thread and has started on the prompt. It already knows how to reach you and needs no id from you, so ask in the prompt for whatever you need back. To send it more context later, call message_thread with the threadId returned here.";
+
+/**
+ * Appended to a teammate's opening message, and only a teammate's.
+ *
+ * A spawned agent otherwise cannot tell it was delegated to: the prompt reads
+ * like any other, and nothing in its context names the thread that started it.
+ * Claude sessions make this actively worse, because their own peer-messaging
+ * tooling lists unrelated sessions and invites picking one — a live Claude turn
+ * declined to report back at all rather than guess an id, which was the right
+ * call and the wrong outcome.
+ *
+ * So the delegation is stated in the one place the agent is guaranteed to read,
+ * and the parent is deliberately NOT identified by id: `message_thread` with no
+ * `threadId` routes upward on its own, and an id the agent never has to handle
+ * is an id it cannot get wrong.
+ *
+ * A hand-off gets none of this, because there is nothing true to say: it has no
+ * reply channel, and telling it otherwise would produce a refusal it cannot
+ * act on.
+ */
+const DELEGATION_PREAMBLE = `
+
+---
+
+You are working on behalf of another T3 Code thread, which delegated this task to you and cannot see your transcript.
+
+To report back — a result, an answer, a blocker, or a question — call the \`message_thread\` tool on the \`t3-code\` MCP server with a \`message\` and **no** \`threadId\`. That routes to the thread that started you; T3 Code knows which one it is. Never pass a \`threadId\` you guessed or inferred from a session list, and do not use your own harness's peer- or session-messaging tools for this — they do not reach that thread.
+
+Your reply arrives as that thread's next turn, so there is nothing to wait for here: finish your work and send one message when you have something worth reporting.`;
 
 /**
  * Creates a sibling top-level thread and starts its first turn.
@@ -64,6 +111,8 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
   readonly repositoryPath?: string | undefined;
   readonly baseBranch?: string | undefined;
   readonly model?: string | undefined;
+  readonly delegateAs?: SpawnDelegateAs | undefined;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
 }) {
   const invocation = yield* McpInvocationContext.McpInvocationContext;
   if (!invocation.capabilities.has("spawn")) {
@@ -112,6 +161,18 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
         "Pass directory or repositoryPath, not both — they both say where the new thread works. Use repositoryPath to cut it a fresh worktree, which is what you want if it will change files; use directory to put it in a checkout as it stands.",
     });
   }
+
+  // An agent that spawns without an opinion means a hand-off: work started for
+  // the user, which the user alone follows. Only an explicit "teammate" opens a
+  // reply channel and nests the thread, so the default is the weaker grant.
+  const delegateAs = params.delegateAs ?? DEFAULT_SPAWN_DELEGATE_AS;
+  const isTeammate = delegateAs === "teammate";
+
+  // A delegation is given work to do, not a plan to propose, so the interaction
+  // mode does NOT inherit — a parent in plan mode still spawns a thread that
+  // works. The parent may override that explicitly when it wants the approach
+  // before the action.
+  const interactionMode: ProviderInteractionMode = params.interactionMode ?? "default";
 
   const projection = yield* ProjectionSnapshotQuery;
   const shell = yield* projection.getThreadShellById(invocation.threadId).pipe(
@@ -304,12 +365,17 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
       type: "thread.turn.start",
       commandId: commandId("bootstrap"),
       threadId,
-      message: { messageId, role: "user", text: prompt, attachments: [] },
+      message: {
+        messageId,
+        role: "user",
+        // Only a teammate is told it was delegated to and how to reply. A
+        // hand-off has no reply channel, so saying so would be false.
+        text: isTeammate ? `${prompt}${DELEGATION_PREAMBLE}` : prompt,
+        attachments: [],
+      },
       modelSelection,
       runtimeMode: parent.runtimeMode,
-      // A delegation is given work to do, not a plan to propose, so the
-      // interaction mode is "default" even when the parent itself is planning.
-      interactionMode: "default",
+      interactionMode,
       titleSeed: title,
       bootstrap: {
         createThread: {
@@ -317,9 +383,14 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
           title,
           modelSelection,
           runtimeMode: parent.runtimeMode,
-          interactionMode: "default",
+          interactionMode,
           branch: null,
           worktreePath,
+          // Recorded only for a teammate. A hand-off is genuinely the user's
+          // sibling thread, so it has no parent to nest under and no parent to
+          // authorize messaging against — the mode and the authorization are
+          // the same fact.
+          ...(isTeammate ? { parentThreadId: invocation.threadId } : {}),
           createdAt,
         },
         ...(prepareWorktree ? { prepareWorktree, runSetupScript: true } : {}),
@@ -348,11 +419,165 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
     );
 
   spawnCountBySession.set(invocation.providerSessionId, spent + 1);
-  return { threadId, title, message: SPAWN_CONFIRMATION };
+  return {
+    threadId,
+    title,
+    message: isTeammate ? TEAMMATE_CONFIRMATION : HAND_OFF_CONFIRMATION,
+  };
+});
+
+/**
+ * Reads a thread's shell row. A projection read failure and a missing row lead
+ * to the same refusal here, and the tool's own error says more to an agent than
+ * a SQL fault would; the cause is logged rather than dropped.
+ */
+const readThreadShell = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const projection = yield* ProjectionSnapshotQuery;
+    return yield* projection.getThreadShellById(threadId);
+  }).pipe(
+    Effect.catch((cause) =>
+      Effect.logWarning("message_thread could not read a thread shell", { threadId, cause }).pipe(
+        Effect.as(Option.none<OrchestrationThreadShell>()),
+      ),
+    ),
+  );
+
+/**
+ * Delivers a message between a thread and its parent, in either direction.
+ *
+ * Parentage is the entire authorization model, and both ends of it are read
+ * from projection rows rather than from arguments: the caller's thread comes
+ * from the credential, and the recipient's parent pointer comes from its own
+ * row. An agent therefore cannot forge a relationship it does not have.
+ *
+ * Sibling and child-to-child messaging is deliberately out of scope. This
+ * checks a single parent pointer in each direction; a team would need a
+ * persisted team entity, which is a separate decision.
+ */
+export const messageThread = Effect.fn("SpawnToolkit.message_thread")(function* (params: {
+  readonly threadId?: string | undefined;
+  readonly message: string;
+}) {
+  const invocation = yield* McpInvocationContext.McpInvocationContext;
+  if (!invocation.capabilities.has("spawn")) {
+    return yield* new MessageThreadError({
+      reason: "capability-unavailable",
+      message: "This session's T3 Code credential may not message other threads.",
+    });
+  }
+
+  const message = params.message.trim();
+  if (message === "") {
+    return yield* new MessageThreadError({
+      reason: "invalid-argument",
+      message: "message must not be empty. Pass what you want the other thread to read.",
+    });
+  }
+
+  const caller = yield* readThreadShell(invocation.threadId);
+  if (Option.isNone(caller)) {
+    return yield* new MessageThreadError({
+      reason: "rejected",
+      message: "T3 Code could not read your own thread, so it cannot check who you may message.",
+    });
+  }
+
+  // An omitted recipient means "whoever spawned me". The agent is never told
+  // its parent's id — it has no way to learn one it did not create — so
+  // requiring the id here would make replying upward impossible, and inviting a
+  // guess would deliver a report to an unrelated thread. The server already
+  // knows the answer, so it answers.
+  const requestedThreadId = params.threadId?.trim();
+  const targetThreadId = requestedThreadId
+    ? ThreadId.make(requestedThreadId)
+    : (caller.value.parentThreadId ?? null);
+  if (targetThreadId === null) {
+    return yield* new MessageThreadError({
+      reason: "not-related",
+      message:
+        "No thread spawned this one as a teammate, so there is nobody to reply to. Pass the threadId of a teammate you spawned yourself if that is what you meant.",
+    });
+  }
+  if (targetThreadId === invocation.threadId) {
+    return yield* new MessageThreadError({
+      reason: "not-related",
+      message: "That is your own thread. Messaging yourself would only start another turn here.",
+    });
+  }
+
+  const target = yield* readThreadShell(targetThreadId);
+  if (Option.isNone(target)) {
+    return yield* new MessageThreadError({
+      reason: "not-found",
+      message: `No active thread with id '${targetThreadId}' exists here.`,
+    });
+  }
+
+  const targetIsChild = target.value.parentThreadId === invocation.threadId;
+  const targetIsParent = caller.value.parentThreadId === targetThreadId;
+  if (!targetIsChild && !targetIsParent) {
+    return yield* new MessageThreadError({
+      reason: "not-related",
+      message:
+        "You may only message the thread that spawned you as a teammate, or a teammate you spawned yourself.",
+    });
+  }
+
+  const millis = yield* Clock.currentTimeMillis;
+  spawnCallOrdinal += 1;
+  const createdAt = yield* nowIso;
+  const suffix = `${invocation.providerSessionId}:${millis}:${spawnCallOrdinal}`;
+
+  const engine = yield* OrchestrationEngineService;
+  yield* engine
+    .dispatch({
+      type: "thread.turn.start",
+      commandId: CommandId.make(`thread-message:${suffix}`),
+      threadId: targetThreadId,
+      message: {
+        messageId: MessageId.make(`message-thread-${suffix}`),
+        role: "user",
+        text: message,
+        attachments: [],
+      },
+      // The recipient keeps running as itself: its own model, runtime, and
+      // interaction mode. A message is a turn in that thread, not a takeover
+      // of it.
+      modelSelection: target.value.modelSelection,
+      runtimeMode: target.value.runtimeMode,
+      interactionMode: target.value.interactionMode,
+      createdAt,
+    })
+    .pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("message_thread delivery rejected", {
+          threadId: invocation.threadId,
+          targetThreadId,
+          error,
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new MessageThreadError({
+                reason: "rejected",
+                message: `T3 Code could not deliver that message: ${error.message}`,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+  return {
+    threadId: targetThreadId,
+    message:
+      "Delivered. It arrives as that thread's next turn, so if it is working now it will finish first. There is no reply to wait for here; if you asked for one it will reach you as a message of its own.",
+  };
 });
 
 export const SpawnToolkitHandlersLive = SpawnToolkit.toLayer({
   spawn_thread: spawnThread,
+  message_thread: messageThread,
 });
 
 /** Exposed for tests. */
