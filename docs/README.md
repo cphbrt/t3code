@@ -12,6 +12,7 @@
 - [Background work after a turn settles](./user/background-tasks.md)
 - [Notifications when a thread needs you](./user/waiting-notifications.md)
 - [Files an agent makes for you](./user/artifacts.md)
+- [Agents that start other agents](./user/delegated-threads.md)
 - [Review usage](./user/usage.md)
 - [Customize a project icon](./user/project-settings.md)
 - [Mobile appearance](./user/mobile-appearance.md)
@@ -38,6 +39,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Environment auth](./internals/environment-auth.md)
 - [T3 Connect](./internals/t3-connect.md)
 - [show_chris and the Artifacts surface](./internals/show-chris-artifacts.md)
+- [spawn_thread and delegated threads](./internals/spawned-threads.md)
 - [CI gates](./internals/ci.md)
 - [Engineering work artifacts](./internals/work-artifacts.md)
 

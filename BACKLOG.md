@@ -94,7 +94,9 @@ subject, never as the entry's identifier.
   "hydrates read model from projection tables and computes snapshot sequence"
   expects a thread object without `scheduledTurn`, but the query now returns
   `scheduledTurn: null`. One-line expectation fix; unattributed, and unrelated
-  to any in-flight lane that found it.
+  to any in-flight lane that found it. Re-confirmed on 2026-08-21 against
+  `341f8b20`, so it has survived several unrelated changes; whoever touches
+  this file next should just fix the expectation.
 - **Tool result previews are event-derived, so history stays bare.**
   `ItemLifecyclePayload.resultPreview` is computed in `ClaudeAdapter` when a
   call completes, so only turns taken after it shipped carry one; every
@@ -230,6 +232,19 @@ short factual notes so the same wrong conclusion is not reached twice.
   guidance in `AGENTS.md` once confirmed a second time.
 
 ## Known defects
+
+- **Three activity-projection tests fail on clean `main`.** Verified
+  2026-08-19 against `ed414ebd` in a clean worktree, so they are unrelated to
+  any feature lane in flight:
+  `ActivityPayloadProjection.test.ts` "keeps a bounded Codex command output
+  summary" and "keeps bounded Claude and ACP command output summaries";
+  `ProviderRuntimeIngestion.activity.test.ts` "persists tool.updated with the
+  wire projection of data, not the accumulated stream" (asserts a projected
+  payload stays under 1,000 bytes, observed 1,202). All three look like one
+  cause — a command-output payload that is no longer bounded where these tests
+  expect — so treat them as a single investigation. Needs an owner. The
+  `ProjectionSnapshotQuery.test.ts` failure observed alongside them has its own
+  entry above and a different cause.
 
 - **The Codex reset-delayed send is dark in production.** On a real hard
   exhaustion on 2026-08-19 none of the reset-delayed affordances appeared,

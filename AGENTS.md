@@ -129,6 +129,8 @@ Both tools are discoverable by name and deliberately absent from the always-on t
 
 Errors these tools return must be `Error` subclasses. Effect's MCP server forwards a declared failure's own message only when the failure `instanceof Error`, substituting a generic internal-server-error string otherwise — so a plain tagged struct "succeeds" with text no agent can act on, and every carefully worded refusal is discarded.
 
+The sidebar nests a teammate directly beneath its parent, indented with a connecting rule, because the delegation structure is the useful structure. Nesting follows the mode: a hand-off has no parent and is genuinely a sibling, so it stays top-level. Apply nesting before a shelf's preview and collapse rules so a collapsed shelf can never show a child whose parent is hidden, and treat a thread whose parent is absent or self-referential as a root: nesting is presentation, and losing a live thread to it would not be.
+
 Guidance that agents must be told about, rather than merely offered, belongs in the shared tool-instruction block list so it reaches both providers by construction. Note the refresh asymmetry when editing one: Codex re-reads its developer instructions every turn, while Claude reads the appended system prompt only at session start, so a change reaches an existing Claude thread only after a new provider session.
 
 As Chris's workflow and product preferences become clear through use, proactively record durable choices in this CPH Code prefix and the corresponding `README.md` introduction. Keep those additions concise and specific so future work preserves intentional fork behavior instead of repeatedly rediscovering it.
