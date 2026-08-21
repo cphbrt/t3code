@@ -38,6 +38,7 @@ import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { isFloatingLayerVisible } from "~/lib/floatingLayer";
 
 import { PreviewPanelShell, type PreviewPanelMode } from "./preview/PreviewPanelShell";
 import { FaviconImage } from "./preview/PreviewFaviconIcon";
@@ -368,7 +369,7 @@ function RightPanelEmptyState(props: {
     const handler = (event: KeyboardEvent) => {
       const action = surfaceShortcutActionForKey(shortcutActionsRef.current, event);
       if (!action) return;
-      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      if (isFloatingLayerVisible(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
       const target = event.target;
       if (target instanceof Element && surfaceShortcutTargetsTypingContext(target)) return;
       event.preventDefault();
