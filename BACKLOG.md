@@ -780,3 +780,13 @@ grep`, and always pair a content assertion with a control string known to
   resuming one must rebase first — a stale tip can silently remove newer
   main work (this exact trap was confirmed and cleaned up once already on
   2026-08-16).
+- The web unit suite has no DOM environment, so `isFloatingLayerVisible`
+  (`apps/web/src/lib/floatingLayer.ts`) ships without a unit test — its whole
+  point is `checkVisibility`, which jsdom would have to be trusted to model
+  correctly. `t3code/no-mounted-popup-selector` guards the pattern instead. A
+  browser-level test is the honest form if one is wanted.
+- `TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR` (`ChatView.tsx`) and
+  `LAUNCHER_SHORTCUT_BLOCKING_LAYERS` (`RightPanelTabs.tsx`) list overlapping
+  but different popup slots — the launcher also blocks on `dialog-popup`,
+  `alert-dialog-popup`, and `command-dialog-popup`. Decide once whether that
+  difference is intentional and, if not, share one list.
