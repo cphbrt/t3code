@@ -3,10 +3,14 @@ import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
+
+import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadBootstrapRunner } from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -57,6 +61,8 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
   readonly prompt: string;
   readonly title: string;
   readonly directory?: string | undefined;
+  readonly repositoryPath?: string | undefined;
+  readonly baseBranch?: string | undefined;
   readonly model?: string | undefined;
 }) {
   const invocation = yield* McpInvocationContext.McpInvocationContext;
@@ -94,6 +100,16 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
     return yield* new SpawnThreadError({
       reason: "invalid-argument",
       message: "model must not be blank. Omit it to use this thread's model.",
+    });
+  }
+  // Both name where the thread works, so accepting both would mean silently
+  // honoring one. The refusal says which to keep, since only the agent knows
+  // whether the delegated work edits files.
+  if (params.directory !== undefined && params.repositoryPath !== undefined) {
+    return yield* new SpawnThreadError({
+      reason: "invalid-argument",
+      message:
+        "Pass directory or repositoryPath, not both — they both say where the new thread works. Use repositoryPath to cut it a fresh worktree, which is what you want if it will change files; use directory to put it in a checkout as it stands.",
     });
   }
 
@@ -188,6 +204,84 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
     }
   }
 
+  // `repositoryPath` is the other shape of "where": rather than taking a
+  // checkout as it stands, cut a fresh worktree from a repository so the new
+  // thread can edit files without contending with whoever is in the source
+  // checkout — including the caller. The thread stays in the caller's project,
+  // like any user-created worktree thread, so delegated work remains part of
+  // the same piece of work and the thread still has exactly one repository to
+  // checkpoint against.
+  let prepareWorktree:
+    | { readonly projectCwd: string; readonly baseBranch: string; readonly branch: string }
+    | undefined;
+  if (params.repositoryPath !== undefined) {
+    const path = yield* Path.Path;
+    const rawPath = params.repositoryPath.trim();
+    if (rawPath === "" || !path.isAbsolute(rawPath)) {
+      return yield* new SpawnThreadError({
+        reason: "invalid-path",
+        message: `'${params.repositoryPath}' is not an absolute path. Pass the full path to the repository.`,
+      });
+    }
+    // Normalize after the absolute check so `/a/b/../c` and `/a/c` name one
+    // repository, matching how `show_chris` records the paths it is given.
+    const repositoryPath = path.resolve(rawPath);
+    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+    const status = yield* gitWorkflow.localStatus({ cwd: repositoryPath }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("spawn_thread could not read the requested repository", {
+          threadId: invocation.threadId,
+          repositoryPath,
+          error,
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new SpawnThreadError({
+                reason: "not-a-repository",
+                message: `T3 Code could not read a git repository at '${repositoryPath}'.`,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!status.isRepo) {
+      return yield* new SpawnThreadError({
+        reason: "not-a-repository",
+        message: `'${repositoryPath}' is not a git repository. A worktree can only be cut from one.`,
+      });
+    }
+    // Without a base the worktree is cut from wherever the repository
+    // currently stands, which is what a person picking "new thread" there
+    // would get.
+    const baseBranch = params.baseBranch?.trim() || status.refName;
+    if (!baseBranch) {
+      return yield* new SpawnThreadError({
+        reason: "not-a-repository",
+        message: `'${repositoryPath}' has no branch checked out, so there is nothing to base a worktree on. Pass baseBranch.`,
+      });
+    }
+    // A temporary branch is not optional. Without one the bootstrap runs
+    // `git worktree add <path> <baseBranch>`, which tries to CHECK OUT the
+    // base branch — and git refuses, because the base is already checked out
+    // in the repository we are cutting from. Naming a new branch makes it
+    // `worktree add -b <new> <path> <base>`, which branches instead. Same
+    // helper and same reason as the composer's own worktree path.
+    const crypto = yield* Crypto.Crypto;
+    const branchToken = yield* crypto.randomBytes(4).pipe(
+      Effect.map((bytes) => Encoding.encodeHex(bytes)),
+      Effect.orDie,
+    );
+    prepareWorktree = {
+      projectCwd: repositoryPath,
+      baseBranch,
+      branch: buildTemporaryWorktreeBranchName(() => branchToken),
+    };
+    // The runner records the worktree it actually resolved, so the create
+    // carries none.
+    worktreePath = null;
+  }
+
   // A different model drops the parent's per-model option selections rather
   // than carrying settings chosen for another model.
   const modelSelection: ModelSelection =
@@ -228,6 +322,7 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
           worktreePath,
           createdAt,
         },
+        ...(prepareWorktree ? { prepareWorktree, runSetupScript: true } : {}),
       },
       createdAt,
     })
