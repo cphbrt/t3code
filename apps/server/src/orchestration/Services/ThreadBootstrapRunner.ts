@@ -274,6 +274,9 @@ export const layer = Layer.effect(
               interactionMode: bootstrap.createThread.interactionMode,
               branch: bootstrap.createThread.branch,
               worktreePath: bootstrap.createThread.worktreePath,
+              ...(bootstrap.createThread.parentThreadId
+                ? { parentThreadId: bootstrap.createThread.parentThreadId }
+                : {}),
               createdAt: bootstrap.createThread.createdAt,
             });
             createdThread = true;

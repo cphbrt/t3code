@@ -1,12 +1,22 @@
 import { expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 import { Tool } from "effect/unstable/ai";
 
 import { providerQuotaRefreshMinIntervalLabel } from "../../provider/providerQuota.ts";
 import { ArtifactToolkit, T3_CODE_SHOW_CHRIS_TOOL_INSTRUCTIONS } from "./artifact/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
-import { SpawnToolkit } from "./spawn/tools.ts";
+import { MessageThreadError, SpawnThreadError, SpawnToolkit } from "./spawn/tools.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
 import { UsageToolkit } from "./usage/tools.ts";
+
+/**
+ * Verbatim from Effect's MCP server, which substitutes it for a declared
+ * failure's own message whenever the failure is not an `Error`.
+ */
+const INTERNAL_TOOL_ERROR_MESSAGE = "Tool execution failed due to an internal server error.";
+
+const isSpawnThreadError = Schema.is(SpawnThreadError);
+const isMessageThreadError = Schema.is(MessageThreadError);
 
 const everyRegisteredTool = [
   ...Object.values(PreviewToolkit.tools),
@@ -92,14 +102,61 @@ it("keeps identity and permission mode out of spawn_thread's arguments", () => {
   // let an agent aim a spawn outside its own scope or escalate its mode.
   // `model` is the one identity-adjacent argument, and stays within the
   // inherited provider instance, so it chooses a model rather than a runtime.
+  // `interactionMode` is not an escalation either: plan mode is the weaker of
+  // the two, and the runtime mode carrying the permissions still inherits.
+  // `delegateAs` decides who the thread answers to, not what it may do.
   expect(Object.keys(properties).sort()).toEqual([
     "baseBranch",
+    "delegateAs",
     "directory",
+    "interactionMode",
     "model",
     "prompt",
     "repositoryPath",
     "title",
   ]);
+});
+
+it("keeps message_thread's recipient optional so a reply upward needs no id", () => {
+  const schema = Tool.getJsonSchema(SpawnToolkit.tools.message_thread) as {
+    properties: object;
+    required?: ReadonlyArray<string>;
+  };
+  expect(Object.keys(schema.properties).sort()).toEqual(["message", "threadId"]);
+  // A spawned agent is never told its parent's id. Requiring one would make
+  // replying upward impossible; the server resolves the parent instead.
+  expect(schema.required ?? []).toEqual(["message"]);
+});
+
+it("carries a refusal's own message across the MCP boundary", () => {
+  // Effect's MCP server forwards a declared failure's message ONLY when the
+  // failure `instanceof Error` — otherwise it substitutes a generic
+  // internal-server-error string and the refusal's own words are discarded.
+  // See `McpServer.ts`'s declared-failure branch. A `Schema.TaggedStruct`
+  // failure therefore "succeeds" with text no agent can act on, which matters
+  // most for the one refusal an agent must recover from: omit `threadId` to
+  // reach your parent.
+  const spawnFailure = new SpawnThreadError({
+    reason: "invalid-argument",
+    message: "prompt must not be empty.",
+  });
+  const messageFailure = new MessageThreadError({
+    reason: "not-related",
+    message: "No thread spawned this one as a teammate, so there is nobody to reply to.",
+  });
+
+  for (const failure of [spawnFailure, messageFailure]) {
+    expect(failure instanceof Error).toBe(true);
+    // The exact expression the MCP server evaluates.
+    expect(failure instanceof Error ? failure.message : INTERNAL_TOOL_ERROR_MESSAGE).toBe(
+      failure.message,
+    );
+  }
+
+  // Both failures must also still satisfy their own declared failure schema,
+  // or the server takes the undeclared branch and discards the message anyway.
+  expect(isSpawnThreadError(spawnFailure)).toBe(true);
+  expect(isMessageThreadError(messageFailure)).toBe(true);
 });
 
 it("never mentions the client's presentation to the agent", () => {

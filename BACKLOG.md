@@ -150,20 +150,31 @@ short factual notes so the same wrong conclusion is not reached twice.
 
 ## Planned work
 
-- **`spawn_thread` deliberate omissions (2026-08-20).** The spawn toolkit
-  shipped with three consciously deferred edges. (1) No always-on
-  tool-instruction block: the tool is discoverable by name; add a block only
-  if live turns show agents failing to find it (the `settle_thread` precedent
-  cuts the other way, so watch for it). (2) No sidebar attribution of spawned
-  threads — a spawned thread is indistinguishable from a user-created one;
-  attribution would need a contract field on the thread shell. (3) The spawn
-  cap counts successful spawns per provider session for the session's
+- **`spawn_thread` deliberate omissions (2026-08-20, revised 2026-08-21).**
+  (1) No always-on tool-instruction block, for either `spawn_thread` or
+  `message_thread`: both are discoverable by name, and the accepted
+  consequence — an agent reaching for its own subagent when asked to work in
+  another repository — is recorded in `AGENTS.md` as a choice rather than a
+  gap. Add a block only if live turns show it costing more than expected (the
+  `settle_thread` precedent cuts the other way, so watch for it). (2) The
+  spawn cap counts successful spawns per provider session for the session's
   lifetime, in process memory only; a server restart resets it, and a
-  long-lived session cannot earn back allowance. All three are fine at
-  current scale; revisit on evidence, not speculation. Also note
-  `spawn_thread` bypasses the ws-layer `startup.enqueueCommand` readiness
-  gate, as `show_chris` already does — acceptable because an agent turn
-  implies a started server.
+  long-lived session cannot earn back allowance. Fine at current scale;
+  revisit on evidence, not speculation. Also note `spawn_thread` bypasses the
+  ws-layer `startup.enqueueCommand` readiness gate, as `show_chris` already
+  does — acceptable because an agent turn implies a started server.
+
+  Resolved: sidebar attribution of spawned threads. It was deferred pending a
+  contract field on the thread shell; `parentThreadId` now exists, so a
+  teammate nests under its parent. A hand-off still has no parent and stays a
+  top-level sibling, which is not an omission — it is what a hand-off is.
+
+- **Sibling messaging between spawned threads (2026-08-21, out of scope).**
+  `message_thread` authorizes on a single parent pointer in each direction, so
+  two threads spawned by the same parent cannot reach each other. Deliberate:
+  a team of peers would need a persisted team entity rather than a parent
+  pointer, and that is a separate decision. Do not smuggle it in as an
+  authorization relaxation.
 
 - **Per-toolset gating for the `t3-code` MCP server (deferred).** Upstream
   `cd096b9ad` added the `enableAgentBrowserAccess` server setting, but it gates

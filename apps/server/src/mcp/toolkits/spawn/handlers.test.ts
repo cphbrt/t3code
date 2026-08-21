@@ -3,6 +3,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationCommand,
   type OrchestrationThreadShell,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -15,12 +16,13 @@ import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import {
   ThreadBootstrapRunner,
   type ThreadTurnStartCommand,
 } from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import { spawnThread } from "./handlers.ts";
+import { messageThread, spawnThread } from "./handlers.ts";
 import { SPAWN_LIMIT_PER_SESSION } from "./tools.ts";
 
 const PARENT_THREAD_ID = ThreadId.make("thread-parent");
@@ -467,6 +469,74 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
     }),
   );
 
+  // Decision: the two delegations are different grants, so the default is the
+  // weaker one. An agent spawning without an opinion means a hand-off.
+  it.effect("defaults to a hand-off with no parent recorded and no preamble", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      const result = yield* spawnThread({
+        prompt: "Look into the build.",
+        title: "Build",
+      }).pipe(provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-handoff")));
+
+      const turn = bootstrapped[0];
+      if (!turn) throw new Error("expected a bootstrap turn start");
+      // No parent: a hand-off is genuinely the user's sibling thread, so it
+      // neither nests nor gains a reply channel.
+      expect(createOf(turn).parentThreadId).toBeUndefined();
+      // And it is not told about a channel it does not have.
+      expect(turn.message.text).toBe("Look into the build.");
+      expect(turn.message.text).not.toContain("message_thread");
+      expect(result.message).toContain("will not report back");
+    }),
+  );
+
+  it.effect("records the parent and teaches the reply route for a teammate", () =>
+    Effect.gen(function* () {
+      const bootstrapped: ThreadTurnStartCommand[] = [];
+      const result = yield* spawnThread({
+        prompt: "Find out which migration broke it.",
+        title: "Migration hunt",
+        delegateAs: "teammate",
+      }).pipe(provideAll(recordingRunner(bootstrapped), makeScope(["spawn"], "session-teammate")));
+
+      const turn = bootstrapped[0];
+      if (!turn) throw new Error("expected a bootstrap turn start");
+      // Parentage is both the nesting signal and the authorization model.
+      expect(createOf(turn).parentThreadId).toBe(PARENT_THREAD_ID);
+      expect(turn.message.text).toContain("Find out which migration broke it.");
+      // Told how to reply, and told NOT to guess an id — the id it would guess
+      // is the one thing it can get wrong.
+      expect(turn.message.text).toContain("message_thread");
+      expect(turn.message.text).toContain("**no** `threadId`");
+      expect(result.message).toContain("teammate");
+    }),
+  );
+
+  it.effect("forces the delegation to work rather than plan, and lets the parent say plan", () =>
+    Effect.gen(function* () {
+      const scope = makeScope(["spawn"], "session-interaction");
+      // The parent shell is in plan mode; the delegation still gets work.
+      expect(parentShell.interactionMode).toBe("plan");
+
+      const forced: ThreadTurnStartCommand[] = [];
+      yield* spawnThread({ prompt: "Do it.", title: "Do it" }).pipe(
+        provideAll(recordingRunner(forced), scope),
+      );
+      expect(forced[0]?.interactionMode).toBe("default");
+      expect(createOf(forced[0]).interactionMode).toBe("default");
+
+      const overridden: ThreadTurnStartCommand[] = [];
+      yield* spawnThread({
+        prompt: "Propose an approach first.",
+        title: "Approach",
+        interactionMode: "plan",
+      }).pipe(provideAll(recordingRunner(overridden), scope));
+      expect(overridden[0]?.interactionMode).toBe("plan");
+      expect(createOf(overridden[0]).interactionMode).toBe("plan");
+    }),
+  );
+
   it.effect("rejects when the parent thread shell cannot be resolved", () =>
     Effect.gen(function* () {
       const bootstrapped: ThreadTurnStartCommand[] = [];
@@ -484,3 +554,244 @@ it.layer(NodeServices.layer)("spawn_thread handler", (it) => {
     }),
   );
 });
+
+const CHILD_THREAD_ID = ThreadId.make("thread-child");
+
+const childShell: OrchestrationThreadShell = {
+  ...parentShell,
+  id: CHILD_THREAD_ID,
+  title: "Child thread",
+  parentThreadId: PARENT_THREAD_ID,
+  interactionMode: "default",
+};
+
+const unrelatedShell: OrchestrationThreadShell = {
+  ...parentShell,
+  id: ThreadId.make("thread-unrelated"),
+  title: "Unrelated thread",
+};
+
+const makeEngine = (
+  dispatch: OrchestrationEngineService["Service"]["dispatch"],
+): OrchestrationEngineService["Service"] =>
+  ({
+    dispatch,
+    readEvents: () => {
+      throw new Error("unused");
+    },
+    streamDomainEvents: undefined as never,
+    latestSequence: Effect.succeed(0),
+  }) as OrchestrationEngineService["Service"];
+
+const recordingEngine = (dispatched: OrchestrationCommand[]) =>
+  makeEngine((command) =>
+    Effect.sync(() => {
+      dispatched.push(command);
+      return { sequence: 1 };
+    }),
+  );
+
+/**
+ * `message_thread` reads two shells: the caller's, keyed by the credential, and
+ * the recipient's, keyed by the id under test. Both come from projection rows,
+ * never from arguments, which is what makes parentage unforgeable.
+ */
+const provideMessaging =
+  (
+    engine: OrchestrationEngineService["Service"],
+    scope: McpInvocationContext.McpInvocationScope,
+    shellsById: ReadonlyMap<string, OrchestrationThreadShell>,
+  ) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(OrchestrationEngineService, engine),
+      Effect.provideService(ProjectionSnapshotQuery, {
+        getThreadShellById: (threadId: string) => {
+          const shell = shellsById.get(threadId);
+          return Effect.succeed(shell === undefined ? Option.none() : Option.some(shell));
+        },
+        getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+      } as unknown as ProjectionSnapshotQuery["Service"]),
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+    );
+
+const parentAndChild = new Map([
+  [PARENT_THREAD_ID, parentShell],
+  [CHILD_THREAD_ID, childShell],
+]);
+
+const childScope = (providerSessionId: string) => ({
+  ...makeScope(["spawn"], providerSessionId),
+  threadId: CHILD_THREAD_ID,
+});
+
+it.effect("delivers a child's reply upward with no threadId given", () =>
+  Effect.gen(function* () {
+    const dispatched: OrchestrationCommand[] = [];
+    const result = yield* messageThread({ message: "Migration 041 broke it." }).pipe(
+      provideMessaging(recordingEngine(dispatched), childScope("session-up"), parentAndChild),
+    );
+
+    expect(result.threadId).toBe(PARENT_THREAD_ID);
+    expect(dispatched).toHaveLength(1);
+    const turn = dispatched[0];
+    if (turn?.type !== "thread.turn.start") throw new Error("expected thread.turn.start");
+    expect(turn.threadId).toBe(PARENT_THREAD_ID);
+    expect(turn.message.text).toBe("Migration 041 broke it.");
+    // The recipient keeps running as itself: a message is a turn in that
+    // thread, not a takeover of it.
+    expect(turn.interactionMode).toBe(parentShell.interactionMode);
+    expect(turn.modelSelection).toEqual(parentShell.modelSelection);
+  }),
+);
+
+it.effect("delivers a parent's instruction down to a thread it spawned", () =>
+  Effect.gen(function* () {
+    const dispatched: OrchestrationCommand[] = [];
+    const result = yield* messageThread({
+      threadId: CHILD_THREAD_ID,
+      message: "Skip the flaky one for now.",
+    }).pipe(
+      provideMessaging(
+        recordingEngine(dispatched),
+        makeScope(["spawn"], "session-down"),
+        parentAndChild,
+      ),
+    );
+
+    expect(result.threadId).toBe(CHILD_THREAD_ID);
+    const turn = dispatched[0];
+    if (turn?.type !== "thread.turn.start") throw new Error("expected thread.turn.start");
+    expect(turn.threadId).toBe(CHILD_THREAD_ID);
+    expect(turn.interactionMode).toBe(childShell.interactionMode);
+  }),
+);
+
+it.effect("refuses a thread with no parent to reply to, and says what to do instead", () =>
+  Effect.gen(function* () {
+    const dispatched: OrchestrationCommand[] = [];
+    const error = yield* messageThread({ message: "Anyone there?" }).pipe(
+      provideMessaging(
+        recordingEngine(dispatched),
+        makeScope(["spawn"], "session-orphan"),
+        parentAndChild,
+      ),
+      Effect.flip,
+    );
+
+    expect(error.reason).toBe("not-related");
+    // This is the refusal an agent must be able to act on, so it must name the
+    // alternative rather than only stating the failure.
+    expect(error.message).toContain("threadId");
+    expect(dispatched).toHaveLength(0);
+  }),
+);
+
+it.effect("refuses an unrelated thread even when it exists", () =>
+  Effect.gen(function* () {
+    const dispatched: OrchestrationCommand[] = [];
+    const error = yield* messageThread({
+      threadId: unrelatedShell.id,
+      message: "Do my bidding.",
+    }).pipe(
+      provideMessaging(
+        recordingEngine(dispatched),
+        childScope("session-unrelated"),
+        new Map([...parentAndChild, [unrelatedShell.id, unrelatedShell]]),
+      ),
+      Effect.flip,
+    );
+
+    // Parentage is the entire authorization model: without it any agent could
+    // drive any thread on this machine.
+    expect(error.reason).toBe("not-related");
+    expect(dispatched).toHaveLength(0);
+  }),
+);
+
+it.effect("refuses a sibling, which is out of scope rather than merely unbuilt", () =>
+  Effect.gen(function* () {
+    const siblingId = ThreadId.make("thread-sibling");
+    const siblingShell: OrchestrationThreadShell = {
+      ...childShell,
+      id: siblingId,
+      title: "Sibling thread",
+    };
+    const dispatched: OrchestrationCommand[] = [];
+    const error = yield* messageThread({ threadId: siblingId, message: "Hey sibling." }).pipe(
+      provideMessaging(
+        recordingEngine(dispatched),
+        childScope("session-sibling"),
+        new Map([...parentAndChild, [siblingId, siblingShell]]),
+      ),
+      Effect.flip,
+    );
+
+    // Both threads share a parent, which is deliberately not a relationship
+    // this tool honours; a team would need a persisted team entity.
+    expect(error.reason).toBe("not-related");
+    expect(dispatched).toHaveLength(0);
+  }),
+);
+
+it.effect("refuses a thread that does not exist", () =>
+  Effect.gen(function* () {
+    const dispatched: OrchestrationCommand[] = [];
+    const error = yield* messageThread({
+      threadId: "thread-imaginary",
+      message: "Hello?",
+    }).pipe(
+      provideMessaging(
+        recordingEngine(dispatched),
+        makeScope(["spawn"], "session-ghost"),
+        parentAndChild,
+      ),
+      Effect.flip,
+    );
+
+    expect(error.reason).toBe("not-found");
+    expect(dispatched).toHaveLength(0);
+  }),
+);
+
+it.effect("refuses messaging itself", () =>
+  Effect.gen(function* () {
+    const dispatched: OrchestrationCommand[] = [];
+    const error = yield* messageThread({
+      threadId: PARENT_THREAD_ID,
+      message: "Note to self.",
+    }).pipe(
+      provideMessaging(
+        recordingEngine(dispatched),
+        makeScope(["spawn"], "session-self"),
+        parentAndChild,
+      ),
+      Effect.flip,
+    );
+
+    expect(error.reason).toBe("not-related");
+    expect(dispatched).toHaveLength(0);
+  }),
+);
+
+it.effect("refuses an empty message and a credential without the capability", () =>
+  Effect.gen(function* () {
+    const dispatched: OrchestrationCommand[] = [];
+    const empty = yield* messageThread({ message: "   " }).pipe(
+      provideMessaging(recordingEngine(dispatched), childScope("session-empty"), parentAndChild),
+      Effect.flip,
+    );
+    expect(empty.reason).toBe("invalid-argument");
+
+    const uncapable = yield* messageThread({ message: "Hi." }).pipe(
+      provideMessaging(
+        recordingEngine(dispatched),
+        { ...childScope("session-msg-no-cap"), capabilities: new Set(["usage" as const]) },
+        parentAndChild,
+      ),
+      Effect.flip,
+    );
+    expect(uncapable.reason).toBe("capability-unavailable");
+    expect(dispatched).toHaveLength(0);
+  }),
+);

@@ -470,6 +470,8 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Present only on a thread an agent spawned; drives sidebar nesting. */
+  parentThreadId: Schema.optional(ThreadId),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -572,6 +574,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Present only on a thread an agent spawned; drives sidebar nesting. */
+  parentThreadId: Schema.optional(ThreadId),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   // Optional so released clients and cached pre-feature snapshots interoperate.
   cacheWarmth: Schema.optional(Schema.NullOr(PromptCacheWarmth)),
@@ -816,6 +820,13 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * The thread whose agent spawned this one via `spawn_thread`. Absent for
+   * every thread a person started, which is the overwhelming majority, so it
+   * is optional rather than nullable — older servers and the released iOS
+   * client decode payloads that omit it unchanged.
+   */
+  parentThreadId: Schema.optional(ThreadId),
   createdAt: IsoDateTime,
 });
 
@@ -943,6 +954,8 @@ const ThreadTurnStartBootstrapCreateThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  /** Set when an agent spawned this thread to delegate work; see ThreadCreateCommand. */
+  parentThreadId: Schema.optional(ThreadId),
   createdAt: IsoDateTime,
 });
 
@@ -1386,6 +1399,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  parentThreadId: Schema.optional(ThreadId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
