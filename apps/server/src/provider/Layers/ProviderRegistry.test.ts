@@ -32,7 +32,11 @@ import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
-import { checkClaudeProviderStatus, type ClaudeQuotaUsageResponse } from "./ClaudeProvider.ts";
+import {
+  checkClaudeProviderStatus,
+  type ClaudeAgentProfile,
+  type ClaudeQuotaUsageResponse,
+} from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
@@ -53,7 +57,8 @@ const decodeServerSettings = Schema.decodeSync(ServerSettings);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
 
-const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const defaultClaudeSettings: ClaudeSettings = decodeClaudeSettings({});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
@@ -133,6 +138,7 @@ type TestClaudeCapabilities = {
   readonly tokenSource: string | undefined;
   readonly apiProvider: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
+  readonly agents: ReadonlyArray<ClaudeAgentProfile>;
   readonly usage?: ClaudeQuotaUsageResponse;
   readonly probedAt: string;
 };
@@ -148,6 +154,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       tokenSource: undefined,
       apiProvider: undefined,
       slashCommands: [],
+      agents: [],
       probedAt: PROBED_AT,
       ...overrides,
     });
@@ -1696,6 +1703,178 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             }),
           ),
         ),
+      );
+
+      it.effect("offers each discovered agent profile beside an explicit None default", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              agents: [
+                { name: "my-manager", description: "Plans work without touching code" },
+                { name: "my-intern", description: "Runs defined legwork", model: "haiku" },
+              ],
+            }),
+          );
+
+          // Every Claude model carries the profile select, not just the default
+          // one: the picker reads descriptors off whichever model is selected.
+          for (const model of status.models) {
+            const agentDescriptor = model.capabilities?.optionDescriptors?.find(
+              (descriptor) => descriptor.id === "agent",
+            );
+            assert.deepStrictEqual(
+              agentDescriptor,
+              {
+                id: "agent",
+                label: "Agent Profile",
+                type: "select",
+                options: [
+                  { id: "none", label: "None", isDefault: true },
+                  {
+                    id: "my-manager",
+                    label: "my-manager",
+                    description: "Plans work without touching code",
+                  },
+                  {
+                    id: "my-intern",
+                    label: "my-intern",
+                    description: "Runs defined legwork",
+                    // Carried as structured data, not baked into the
+                    // description, so the expanded picker can label it as
+                    // declared-but-not-applied without parsing prose.
+                    declaresModel: "haiku",
+                  },
+                ],
+                currentValue: "none",
+              },
+              `model ${model.slug} should carry the agent profile select`,
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.233\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("drops a probed profile that collides with the None sentinel", () =>
+        Effect.gen(function* () {
+          // "none" is the select's no-profile sentinel, so a profile of that
+          // name would emit a second option under the same id. It is dropped
+          // rather than offered ambiguously.
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              agents: [{ name: "none", description: "Collides with the sentinel" }],
+            }),
+          );
+
+          for (const model of status.models) {
+            assert.strictEqual(
+              model.capabilities?.optionDescriptors?.some(
+                (descriptor) => descriptor.id === "agent",
+              ) ?? false,
+              false,
+              `model ${model.slug} should carry no agent profile select`,
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.233\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect("offers agent profiles on custom Claude models too", () =>
+        Effect.gen(function* () {
+          // A custom model is the same CLI under a different slug, so `--agent`
+          // applies; it starts with an empty descriptor list of its own.
+          const status = yield* checkClaudeProviderStatus(
+            decodeClaudeSettings({ customModels: ["my-custom-claude"] }),
+            claudeCapabilities({ agents: [{ name: "my-manager" }] }),
+          );
+
+          const custom = status.models.find((model) => model.slug === "my-custom-claude");
+          assert.strictEqual(custom?.isCustom, true);
+          assert.deepStrictEqual(
+            custom?.capabilities?.optionDescriptors?.map((descriptor) => descriptor.id),
+            ["agent"],
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.233\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
+      it.effect(
+        "omits the agent profile select entirely when no profiles exist, rather than shipping a None-only select",
+        () =>
+          Effect.gen(function* () {
+            // The picker renders every select descriptor unconditionally, with
+            // no hide-when-single-option rule, so a None-only descriptor would
+            // be a permanently dead control in the popover. Absence is the
+            // honest signal that this machine has no agent profiles.
+            const status = yield* checkClaudeProviderStatus(
+              defaultClaudeSettings,
+              claudeCapabilities({ agents: [] }),
+            );
+
+            for (const model of status.models) {
+              assert.strictEqual(
+                model.capabilities?.optionDescriptors?.some(
+                  (descriptor) => descriptor.id === "agent",
+                ) ?? false,
+                false,
+                `model ${model.slug} should carry no agent profile select`,
+              );
+            }
+          }).pipe(
+            Effect.provide(
+              mockSpawnerLayer((args) => {
+                const joined = args.join(" ");
+                if (joined === "--version") return { stdout: "2.1.233\n", stderr: "", code: 0 };
+                if (joined === "auth status")
+                  return {
+                    stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                    stderr: "",
+                    code: 0,
+                  };
+                throw new Error(`Unexpected args: ${joined}`);
+              }),
+            ),
+          ),
       );
 
       it.effect("includes Claude Fable 5 on supported Claude Code versions", () =>

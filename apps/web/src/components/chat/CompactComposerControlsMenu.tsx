@@ -33,7 +33,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
       >
         <EllipsisIcon aria-hidden="true" className="size-4" />
       </MenuTrigger>
-      <MenuPopup align="start">
+      {/*
+        keepMounted so the agent-profile dialog the traits content can open
+        survives this menu closing; without it the dialog unmounts with the
+        popup. This is the compact composer's only path to that surface.
+      */}
+      <MenuPopup align="start" keepMounted>
         {props.traitsMenuContent ? (
           <>
             {props.traitsMenuContent}

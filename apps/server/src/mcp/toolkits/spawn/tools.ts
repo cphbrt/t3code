@@ -10,6 +10,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadBootstrapRunner } from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
+import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 
 /**
  * How many threads one provider session may spawn over its lifetime. A spawned
@@ -35,6 +36,10 @@ const dependencies = [
   ThreadBootstrapRunner,
   GitWorkflowService.GitWorkflowService,
   FileSystem.FileSystem,
+  // Reads the live provider snapshot to decide whether the child's model
+  // advertises the agent-profile select. The static catalog cannot answer, since
+  // the descriptor is injected by the capabilities probe.
+  ProviderRegistry,
   Path.Path,
   Crypto.Crypto,
 ];
@@ -64,6 +69,10 @@ export class SpawnThreadError extends Schema.TaggedErrorClass<SpawnThreadError>(
   "SpawnThreadError",
   {
     // capability-unavailable: this credential may not spawn threads.
+    // invalid-agent-profile: agentProfile named a profile the child's provider
+    //   and model cannot run. Refused rather than dropped, because a
+    //   profile-less child standing in for a profiled one is the failure the
+    //   calling agent is least able to see.
     // invalid-argument: prompt or title was empty, model was blank, or both
     //   directory and repositoryPath were given.
     // invalid-directory: directory was not an absolute path to an existing directory.
@@ -74,6 +83,7 @@ export class SpawnThreadError extends Schema.TaggedErrorClass<SpawnThreadError>(
     // rejected: the orchestrator refused one of the underlying commands.
     reason: Schema.Literals([
       "capability-unavailable",
+      "invalid-agent-profile",
       "invalid-argument",
       "invalid-directory",
       "invalid-path",
@@ -116,6 +126,13 @@ export const SpawnThreadResult = Schema.Struct({
  * fresh worktree on a new branch, which is what delegated work that edits
  * files wants: two agents in one checkout fight, and a worktree is how the
  * user's own composer avoids that.
+ *
+ * `agentProfile` is the one grant that deliberately does NOT inherit: a caller
+ * running under a profile spawns a profile-less child unless it names one,
+ * because a profile's instructions and tool policy were chosen for the
+ * caller's job and silently reapplying them to a different job is the wrong
+ * default. It is also not a model choice — the child keeps the inherited or
+ * named `model` either way — so `model` remains the only lever on cost.
  */
 export const SpawnThreadTool = Tool.make("spawn_thread", {
   description: `Spawn a new T3 Code thread that starts working on the prompt you pass, on its own fresh provider session, with this thread's permission mode. It is a real thread in the sidebar the user can open, read, and reply to — not a subagent, and it outlives your turn.
@@ -123,6 +140,8 @@ export const SpawnThreadTool = Tool.make("spawn_thread", {
 \`delegateAs\` decides who it answers to. Leave it alone or pass "hand-off" to start work on the user's behalf: a sibling thread the user follows, which cannot reach you and which you cannot message. Pass "teammate" to make it yours: it is nested under this thread in the sidebar, it can report results, answers, and blockers back to you, and you can send it more context with \`message_thread\`. Pick "teammate" when you need what it finds out; "hand-off" when you are only starting something the user will pick up.
 
 Where it works is also yours to choose: \`directory\` puts it in a checkout as it stands, and \`repositoryPath\` cuts it a fresh worktree of a repository on its own branch, which is what you want when the delegated work will change files.
+
+It runs on your provider and, unless you name a \`model\`, your model. \`agentProfile\` is separate from both: it gives the new thread a named agent's instructions and tool policy, and it does not change which model the new thread runs.
 
 The new thread starts with none of your context, so the prompt must be self-contained — include every path, decision, and constraint. Each spawn is a full agent spending the same account's allowance, so spawn deliberately; at most ${SPAWN_LIMIT_PER_SESSION} per session.`,
   parameters: Schema.Struct({
@@ -155,6 +174,12 @@ The new thread starts with none of your context, so the prompt must be self-cont
       Schema.String.annotate({
         description:
           "Model id for the new thread, on this thread's provider. Omit to use this thread's model. A cheaper model is usually right for narrow, well-specified delegated work.",
+      }),
+    ),
+    agentProfile: Schema.optional(
+      Schema.String.annotate({
+        description:
+          "Name of an agent profile for the new thread's session to run under, equivalent to `claude --agent <name>`. It supplies that agent's instructions and tool policy; it does not change which model the new thread runs — use `model` for that. Omit it and the new thread runs under no profile, including when your own session is running under one: a profile is never inherited, so pass the name explicitly if you want the new thread to have it. Passing \"none\" is the same as omitting. The new thread's provider and model must support profiles, or this call fails rather than starting a thread without one.",
       }),
     ),
     delegateAs: Schema.optional(

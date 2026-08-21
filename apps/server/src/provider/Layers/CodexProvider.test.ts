@@ -319,6 +319,31 @@ it("maps current Codex model capability fields", () => {
   ]);
 });
 
+it("emits no agent profile select for Codex models", () => {
+  // Agent profiles are a Claude-only capability (`claude --agent <name>`).
+  // Codex builds its descriptors from its own model catalog and must never
+  // grow an `agent` select, so a stray selection can only ever be an id the
+  // Codex adapter does not read.
+  const capabilities = mapCodexModelCapabilities({
+    additionalSpeedTiers: [],
+    defaultReasoningEffort: "medium",
+    defaultServiceTier: null,
+    description: "Test model",
+    displayName: "GPT Test",
+    hidden: false,
+    id: "gpt-test",
+    isDefault: true,
+    model: "gpt-test",
+    serviceTiers: [],
+    supportedReasoningEfforts: [{ description: "Balanced", reasoningEffort: "medium" }],
+  });
+
+  assert.strictEqual(
+    capabilities.optionDescriptors?.some((descriptor) => descriptor.id === "agent"),
+    false,
+  );
+});
+
 it("uses standard routing when the catalog has no default service tier", () => {
   const capabilities = mapCodexModelCapabilities({
     additionalSpeedTiers: ["fast"],

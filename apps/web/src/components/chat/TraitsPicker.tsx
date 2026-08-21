@@ -11,29 +11,33 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ZapIcon } from "lucide-react";
+import { ListIcon, UserRoundCogIcon, ZapIcon } from "lucide-react";
 import { buttonVariants } from "../ui/button";
 import {
   Menu,
   MenuGroup,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { AgentProfilePickerDialog } from "./AgentProfilePickerDialog";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import { getProviderModelOptionDescriptors } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { ComposerControl, ComposerControlChevron, ComposerControlIcon } from "./ComposerControl";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
+
+/** Descriptor id of the Claude agent-profile select. */
+const AGENT_DESCRIPTOR_ID = "agent";
 
 type TraitsPersistence =
   | {
@@ -89,6 +93,74 @@ function getDescriptorStringValue(
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * Whether a select descriptor is the agent-profile one and must render
+ * read-only. Claude reads its system prompt only when the session is created,
+ * so once a session exists a mid-thread change would silently do nothing —
+ * the control stays visible showing the active profile rather than offering an
+ * edit that cannot take effect.
+ */
+export function isAgentSelectLocked(input: {
+  descriptorId: string;
+  threadHasProviderSession: boolean;
+}): boolean {
+  return input.descriptorId === AGENT_DESCRIPTOR_ID && input.threadHasProviderSession;
+}
+
+/**
+ * The agent-profile label to show on the collapsed trigger, or null when there
+ * is nothing worth the horizontal space. The descriptor's own default choice —
+ * "None" today — is the overwhelmingly common case and stays silent; reading
+ * the default off the descriptor rather than hardcoding its id keeps this
+ * correct if the server ever changes it. A real profile is named because the
+ * selection is sticky across new threads and would otherwise be discoverable
+ * only by opening the popover.
+ *
+ * Falls back to the raw value when the option is missing: the server
+ * deliberately does not clamp the selection against the discovered list, so a
+ * persisted worktree-local profile can outlive its option.
+ */
+export function getAgentTriggerLabel(
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }> | null | undefined,
+): string | null {
+  if (!descriptor || descriptor.id !== AGENT_DESCRIPTOR_ID) {
+    return null;
+  }
+  const value = getProviderOptionCurrentValue(descriptor);
+  if (typeof value !== "string") {
+    return null;
+  }
+  const defaultOptionId = descriptor.options.find((option) => option.isDefault)?.id;
+  if (value === defaultOptionId) {
+    return null;
+  }
+  return getProviderOptionCurrentLabel(descriptor) ?? value;
+}
+
+/**
+ * The single row a locked agent select shows. Read-only means showing the
+ * active profile, not a wall of greyed-out alternatives the user cannot pick.
+ *
+ * Synthesizes a row when the value is not among the options, so the popover
+ * always agrees with the trigger rather than rendering an empty group. Reached
+ * only when callers pass a raw selection: `getProviderOptionDescriptors`
+ * clamps an unlisted value to the default before it gets here.
+ */
+export function getLockedAgentOptions(
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+  selectedValue: string,
+): ReadonlyArray<Extract<ProviderOptionDescriptor, { type: "select" }>["options"][number]> {
+  const matching = descriptor.options.filter((option) => option.id === selectedValue);
+  return matching.length > 0 ? matching : [{ id: selectedValue, label: selectedValue }];
+}
+
+/**
+ * Resolve the descriptors this picker renders.
+ *
+ * Shared with the dispatch payload via `getProviderModelOptionDescriptors`, so
+ * the agent-profile injection applies to both and the picker can never display
+ * a different profile than the one actually sent.
+ */
 function getSelectedTraits(
   provider: ProviderDriverKind,
   models: ReadonlyArray<ServerProviderModel>,
@@ -97,9 +169,10 @@ function getSelectedTraits(
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
 ) {
-  const caps = getProviderModelCapabilities(models, model, provider);
-  const descriptors = getProviderOptionDescriptors({
-    caps,
+  const descriptors = getProviderModelOptionDescriptors({
+    models,
+    model,
+    provider,
     selections: modelOptions,
   });
   const selectDescriptors = descriptors.filter(
@@ -113,7 +186,8 @@ function getSelectedTraits(
   const primarySelectDescriptor = selectDescriptors[0] ?? null;
   const contextWindowDescriptor =
     selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
-  const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
+  const agentDescriptor =
+    selectDescriptors.find((descriptor) => descriptor.id === AGENT_DESCRIPTOR_ID) ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
   const thinkingDescriptor =
@@ -135,13 +209,8 @@ function getSelectedTraits(
   const thinkingEnabled =
     typeof thinkingDescriptor?.currentValue === "boolean" ? thinkingDescriptor.currentValue : null;
   const contextWindow = getDescriptorStringValue(contextWindowDescriptor);
-  const selectedAgent = getDescriptorStringValue(agentDescriptor);
-  const selectedAgentLabel = agentDescriptor
-    ? getProviderOptionCurrentLabel(agentDescriptor)
-    : null;
 
   return {
-    caps,
     descriptors,
     selectDescriptors,
     booleanDescriptors,
@@ -155,8 +224,6 @@ function getSelectedTraits(
     contextWindow,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
-    selectedAgent,
-    selectedAgentLabel,
   };
 }
 
@@ -214,6 +281,12 @@ export interface TraitsMenuContentProps {
   onPromptChange: (prompt: string) => void;
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
+  /**
+   * True once the thread owns a provider session, which locks the agent-profile
+   * select. Defaults to false so the settings surfaces, which edit new-thread
+   * defaults and have no session at all, keep it editable.
+   */
+  threadHasProviderSession?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
 }
@@ -227,8 +300,14 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
+  threadHasProviderSession = false,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
+  // Owned here rather than by TraitsPicker because this content is also
+  // rendered inside CompactComposerControlsMenu's popup, a menu it does not
+  // own. Keeping the dialog with the row that opens it is the only placement
+  // that reaches both surfaces.
+  const [isAgentDialogOpen, setIsAgentDialogOpen] = useState(false);
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
   const updateModelOptions = useCallback(
     (nextOptions: ProviderOptions | undefined) => {
@@ -253,6 +332,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     selectDescriptors,
     booleanDescriptors,
     primarySelectDescriptor,
+    agentDescriptor,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
     hasAnyControls,
@@ -273,6 +353,9 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     value: string,
   ) => {
     if (!value) return;
+    // Ahead of every side effect below: a keyboard or programmatic pick must
+    // not persist a profile the running session will never read.
+    if (isAgentSelectLocked({ descriptorId: descriptor.id, threadHasProviderSession })) return;
     if (descriptor.promptInjectedValues?.includes(value)) {
       const nextPrompt =
         prompt.trim().length === 0
@@ -300,6 +383,11 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
             ? "ultrathink"
             : (getDescriptorStringValue(descriptor) ?? "");
+        const agentLocked = isAgentSelectLocked({
+          descriptorId: descriptor.id,
+          threadHasProviderSession,
+        });
+        const isAgentDescriptor = descriptor.id === AGENT_DESCRIPTOR_ID;
 
         return (
           <div key={descriptor.id}>
@@ -314,11 +402,40 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   option.
                 </div>
               ) : null}
+              {agentLocked ? (
+                <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+                  Fixed when this thread&apos;s session began. Start a new thread to use a different
+                  profile.
+                </div>
+              ) : null}
+              {isAgentDescriptor ? (
+                <MenuItem
+                  // Above the options, per the design: it is the way to read
+                  // what the names below actually mean.
+                  //
+                  // The menu closes on click, as a menu should. The dialog
+                  // survives that close because both hosts render their
+                  // MenuPopup with `keepMounted`: this content lives inside
+                  // menu popups it does not own, so without that the closing
+                  // menu would unmount the dialog with it.
+                  onClick={() => {
+                    setIsAgentDialogOpen(true);
+                  }}
+                >
+                  <span className="flex w-full items-center gap-2">
+                    <ListIcon aria-hidden="true" className="size-3.5 opacity-70" />
+                    <span>{agentLocked ? "View profile details…" : "Browse profiles…"}</span>
+                  </span>
+                </MenuItem>
+              ) : null}
               <MenuRadioGroup
                 value={selectedValue}
                 onValueChange={(value) => handleSelectChange(descriptor, value)}
               >
-                {descriptor.options.map((option) => (
+                {(agentLocked
+                  ? getLockedAgentOptions(descriptor, selectedValue)
+                  : descriptor.options
+                ).map((option) => (
                   <MenuRadioItem
                     key={option.id}
                     value={option.id}
@@ -326,7 +443,10 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                     // Base UI keeps radio menus open by default. Close on pick so
                     // the traits menu behaves like the model picker.
                     closeOnClick
-                    disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
+                    disabled={
+                      agentLocked ||
+                      (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id)
+                    }
                   >
                     <span className="flex w-full min-w-0 flex-col">
                       <span className="flex w-full min-w-0 items-center justify-between gap-3">
@@ -340,7 +460,15 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                           ) : null}
                         </span>
                       </span>
-                      {option.description ? (
+                      {/*
+                        The agent select is names-only: a description under
+                        every profile made this popover too tall to use. The
+                        descriptions are not lost — they still ride the
+                        descriptor and are the whole point of the expanded
+                        picker one row above. Scoped to this descriptor so
+                        every other select keeps its inline descriptions.
+                      */}
+                      {option.description && !isAgentDescriptor ? (
                         <span className="max-w-56 text-pretty text-muted-foreground/80 text-xs">
                           {option.description}
                         </span>
@@ -383,6 +511,22 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </div>
         );
       })}
+      {agentDescriptor ? (
+        <AgentProfilePickerDialog
+          descriptor={agentDescriptor}
+          selectedValue={getDescriptorStringValue(agentDescriptor) ?? ""}
+          open={isAgentDialogOpen}
+          onOpenChange={setIsAgentDialogOpen}
+          readOnly={isAgentSelectLocked({
+            descriptorId: agentDescriptor.id,
+            threadHasProviderSession,
+          })}
+          onSelect={(value) => {
+            handleSelectChange(agentDescriptor, value);
+            setIsAgentDialogOpen(false);
+          }}
+        />
+      ) : null}
     </>
   );
 });
@@ -399,9 +543,10 @@ export function buildTraitsTriggerDisplay(input: {
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
-}): { label: string; showFastModeIcon: boolean } {
+}): { label: string; showFastModeIcon: boolean; agentLabel: string | null } {
   let hasFastMode = false;
   let fastModeEnabled = false;
+  let agentLabel: string | null = null;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
@@ -422,6 +567,15 @@ export function buildTraitsTriggerDisplay(input: {
         continue;
       }
     }
+    // The agent profile is reported separately so the trigger can mark it as a
+    // profile rather than let a bare name read as another effort level. It
+    // stays out of the display entirely when it is None, so a Claude trigger
+    // does not grow a permanent "· None" for a control most threads never
+    // touch.
+    if (descriptor.id === AGENT_DESCRIPTOR_ID && descriptor.type === "select") {
+      agentLabel = getAgentTriggerLabel(descriptor);
+      continue;
+    }
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
@@ -437,9 +591,9 @@ export function buildTraitsTriggerDisplay(input: {
   // off an empty label list alone would also catch descriptors that resolved to
   // no label at all, printing a bogus "Normal" for a model without fast mode.
   if (labels.length === 0 && hasFastMode) {
-    return { label: fastModeEnabled ? "Fast" : "Normal", showFastModeIcon: false };
+    return { label: fastModeEnabled ? "Fast" : "Normal", showFastModeIcon: false, agentLabel };
   }
-  return { label: labels.join(" · "), showFastModeIcon: fastModeEnabled };
+  return { label: labels.join(" · "), showFastModeIcon: fastModeEnabled, agentLabel };
 }
 
 export const TraitsPicker = memo(function TraitsPicker({
@@ -451,6 +605,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   onPromptChange,
   modelOptions,
   allowPromptInjectedEffort = true,
+  threadHasProviderSession = false,
   triggerVariant,
   triggerClassName,
   ...persistence
@@ -478,7 +633,11 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const { label: triggerLabel, showFastModeIcon } = buildTraitsTriggerDisplay({
+  const {
+    label: triggerLabel,
+    showFastModeIcon,
+    agentLabel,
+  } = buildTraitsTriggerDisplay({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
@@ -496,6 +655,25 @@ export const TraitsPicker = memo(function TraitsPicker({
       <span className="sr-only">Fast mode on</span>
     </>
   ) : null;
+
+  // The agent-profile selection is sticky across new threads, so an active
+  // profile has to be readable without opening the popover. The icon marks it
+  // as a profile rather than another effort word, and the width bound keeps a
+  // long profile name from pushing the composer footer around.
+  const agentProfileSegment =
+    agentLabel === null ? null : (
+      <span className="flex min-w-0 items-center gap-1">
+        <ComposerControlIcon icon={UserRoundCogIcon} className="opacity-80" />
+        <span className="sr-only">agent profile </span>
+        {/*
+          No native title here: repo lint forbids it as a tooltip, and wrapping
+          the whole MenuTrigger in a Tooltip would change hover behaviour for
+          every trait, not just a clipped name. The popover already shows the
+          full name un-truncated one click away.
+        */}
+        <span className="min-w-0 max-w-24 truncate">{agentLabel}</span>
+      </span>
+    );
 
   const isCodexStyle = provider === "codex";
 
@@ -522,18 +700,24 @@ export const TraitsPicker = memo(function TraitsPicker({
         {isCodexStyle ? (
           <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
             {fastModeIcon}
-            <span className="min-w-0 truncate">{triggerLabel}</span>
+            {triggerLabel ? <span className="min-w-0 truncate">{triggerLabel}</span> : null}
+            {agentProfileSegment}
             <ComposerControlChevron />
           </span>
         ) : (
           <>
             {fastModeIcon}
-            <span>{triggerLabel}</span>
+            {triggerLabel ? <span>{triggerLabel}</span> : null}
+            {agentProfileSegment}
             <ComposerControlChevron />
           </>
         )}
       </MenuTrigger>
-      <MenuPopup align="start">
+      {/*
+        keepMounted so the agent-profile dialog this content can open survives
+        the menu closing; without it the dialog unmounts with its host popup.
+      */}
+      <MenuPopup align="start" keepMounted>
         <TraitsMenuContent
           provider={provider}
           {...(instanceId ? { instanceId } : {})}
@@ -543,6 +727,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           onPromptChange={onPromptChange}
           modelOptions={modelOptions}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
+          threadHasProviderSession={threadHasProviderSession}
           {...persistence}
         />
       </MenuPopup>

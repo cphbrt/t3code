@@ -8,13 +8,12 @@ import {
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentValue,
-  getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
+import { getProviderModelOptionDescriptors } from "../../providerModels";
 import { shouldRenderTraitsControls, TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
@@ -46,6 +45,11 @@ type TraitsRenderInput = {
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
+  /**
+   * True once the thread owns a provider session. Locks the agent-profile
+   * select, which Claude only reads at session creation.
+   */
+  threadHasProviderSession?: boolean;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -53,15 +57,13 @@ export function getComposerPromptInjectionState(prompt: string): ComposerPromptI
 }
 
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {
-  const {
-    provider,
-    model,
+  const { provider, model, models, modelOptions, promptInjectionState = "none" } = input;
+  const descriptors = getProviderModelOptionDescriptors({
     models,
-    modelOptions,
-    promptInjectionState = "none",
-  } = input;
-  const caps = getProviderModelCapabilities(models, model, provider);
-  const descriptors = getProviderOptionDescriptors({ caps, selections: modelOptions });
+    model,
+    provider,
+    selections: modelOptions,
+  });
   const primarySelectDescriptor = descriptors.find(
     (descriptor): descriptor is Extract<(typeof descriptors)[number], { type: "select" }> =>
       descriptor.type === "select",
@@ -100,6 +102,7 @@ function renderTraitsControl(
     modelOptions,
     prompt,
     onPromptChange,
+    threadHasProviderSession = false,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
@@ -125,6 +128,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      threadHasProviderSession={threadHasProviderSession}
     />
   );
 }

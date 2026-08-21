@@ -4,6 +4,7 @@ import {
   ThreadId,
   type ModelSelection,
   type OrchestrationThreadShell,
+  type ProviderInstanceId,
   type ProviderInteractionMode,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -21,6 +22,7 @@ import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
 import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadBootstrapRunner } from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
+import { ProviderRegistry } from "../../../provider/Services/ProviderRegistry.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import {
   DEFAULT_SPAWN_DELEGATE_AS,
@@ -104,6 +106,84 @@ Your reply arrives as that thread's next turn, so there is nothing to wait for h
  * the user opens a thread by hand — rather than by a second copy of it that
  * can drift.
  */
+/** The option id the agent-profile select is published under. */
+const AGENT_PROFILE_OPTION_ID = "agent";
+
+/**
+ * The descriptor's explicit None choice. Spelled here rather than imported from
+ * `ClaudeProvider`, which would drag the Claude SDK and the whole provider
+ * snapshot graph into this toolkit's module graph for one string. This gate is
+ * provider-neutral by design — it tests for a descriptor id, never for Claude —
+ * so depending on a Claude module would also be the wrong direction. Kept in
+ * step with `CLAUDE_NO_AGENT_PROFILE_VALUE`, whose own doc comment records why
+ * a profile actually named `none` is unreachable.
+ *
+ * Deriving the sentinel from the descriptor's own `isDefault` option was
+ * considered and rejected: on an unsupporting model there is no descriptor at
+ * all, and `none` must still strip-and-spawn there rather than be refused. A
+ * derivation would therefore need this literal as its fallback anyway, and one
+ * documented literal beats two mechanisms that disagree in the case that
+ * matters.
+ */
+const NO_AGENT_PROFILE_VALUE = "none";
+
+/**
+ * Does the model the child will run on advertise the agent-profile select?
+ *
+ * Answered against the live provider snapshot, never the static catalog: the
+ * descriptor is injected by the capabilities probe and the catalog cannot see
+ * it. Codex rejection falls out for free, since no descriptor is ever emitted
+ * for a Codex model.
+ *
+ * Unknown counts as unsupported. A missing instance or a model the snapshot has
+ * no entry for is not evidence of support, and the alternative — spawning
+ * ungated — produces a child silently running without the profile it was asked
+ * for, which is the outcome the calling agent is least able to notice.
+ */
+const modelSupportsAgentProfile = Effect.fn("SpawnToolkit.modelSupportsAgentProfile")(function* (
+  instanceId: ProviderInstanceId,
+  model: string,
+) {
+  const registry = yield* ProviderRegistry;
+  const providers = yield* registry.getProviders;
+  const descriptors = providers
+    .find((provider) => provider.instanceId === instanceId)
+    ?.models.find((entry) => entry.slug === model)?.capabilities?.optionDescriptors;
+  return descriptors?.some((descriptor) => descriptor.id === AGENT_PROFILE_OPTION_ID) === true;
+});
+
+/**
+ * Builds the child's model selection from the base the child will run on —
+ * the parent's, or the parent's instance with a named model substituted.
+ *
+ * Any inherited `agent` entry is stripped unconditionally before the requested
+ * one is applied. The child otherwise inherits the parent's selection wholesale,
+ * so a parent running under a profile would mint children carrying it — which is
+ * backwards for delegation, where a manager profile spawning workers must not
+ * produce more managers. A profile is therefore only ever set by asking for it,
+ * and `none` asks for the same thing as silence.
+ *
+ * The name itself is passed through unvalidated: the discovered list is scanned
+ * from the server's cwd while the child resolves profiles against its own
+ * worktree, so a target-repo profile this process cannot see may still be
+ * legitimate. Support is strict, the value is lenient.
+ */
+const buildChildModelSelection = (
+  base: ModelSelection,
+  agentProfile: string | undefined,
+): ModelSelection => {
+  const inherited = (base.options ?? []).filter((option) => option.id !== AGENT_PROFILE_OPTION_ID);
+  const options =
+    agentProfile === undefined
+      ? inherited
+      : [...inherited, { id: AGENT_PROFILE_OPTION_ID, value: agentProfile }];
+  // An empty list is dropped rather than persisted, so a child of a parent with
+  // no selections looks exactly as it did before this parameter existed.
+  return options.length === 0
+    ? { instanceId: base.instanceId, model: base.model }
+    : { instanceId: base.instanceId, model: base.model, options };
+};
+
 export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (params: {
   readonly prompt: string;
   readonly title: string;
@@ -113,6 +193,7 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
   readonly model?: string | undefined;
   readonly delegateAs?: SpawnDelegateAs | undefined;
   readonly interactionMode?: ProviderInteractionMode | undefined;
+  readonly agentProfile?: string | undefined;
 }) {
   const invocation = yield* McpInvocationContext.McpInvocationContext;
   if (!invocation.capabilities.has("spawn")) {
@@ -343,12 +424,36 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
     worktreePath = null;
   }
 
+  // `none` is the descriptor's own None choice, so an agent reading the option
+  // list will pass it; it means what omitting the parameter means. Normalized to
+  // `undefined` here so one value flows through assembly and gating alike —
+  // stripping a profile needs no capability, so neither asks the registry.
+  const requestedProfile = params.agentProfile?.trim();
+  const agentProfile =
+    requestedProfile === undefined ||
+    requestedProfile === "" ||
+    requestedProfile === NO_AGENT_PROFILE_VALUE
+      ? undefined
+      : requestedProfile;
+
   // A different model drops the parent's per-model option selections rather
-  // than carrying settings chosen for another model.
-  const modelSelection: ModelSelection =
+  // than carrying settings chosen for another model. Either way the child's
+  // model is what the profile has to be gated against, not the parent's.
+  const childBase: ModelSelection =
     model !== undefined
       ? { instanceId: parent.modelSelection.instanceId, model }
       : parent.modelSelection;
+
+  if (agentProfile !== undefined) {
+    const supported = yield* modelSupportsAgentProfile(childBase.instanceId, childBase.model);
+    if (!supported) {
+      return yield* new SpawnThreadError({
+        reason: "invalid-agent-profile",
+        message: `The new thread's provider and model do not support agent profiles, so it cannot run under '${agentProfile}'. Retry without the agentProfile parameter to start it with no profile.`,
+      });
+    }
+  }
+  const modelSelection = buildChildModelSelection(childBase, agentProfile);
 
   const crypto = yield* Crypto.Crypto;
   const threadId = ThreadId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));

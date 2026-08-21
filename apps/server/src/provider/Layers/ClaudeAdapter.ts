@@ -84,6 +84,7 @@ import { isShutdownRequested } from "../../processShutdown.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
+  CLAUDE_NO_AGENT_PROFILE_VALUE,
   getClaudeModelCapabilities,
   isClaudeUltracodeEffort,
   normalizeClaudeCliEffort,
@@ -4914,6 +4915,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const initialContextWindow = selectedClaudeContextWindow(modelSelection);
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort = resolveClaudeEffort(caps, rawEffort) ?? null;
+      // Read raw, never descriptor-resolved; see buildClaudeAgentOptionDescriptor.
+      // The name is forwarded unclamped because this list is scanned from the
+      // server cwd while the CLI resolves profiles against the thread cwd.
+      const rawAgentProfile = getModelSelectionStringOptionValue(modelSelection, "agent");
+      const agentProfile =
+        rawAgentProfile === CLAUDE_NO_AGENT_PROFILE_VALUE ? undefined : rawAgentProfile;
       const fastModeSupported = descriptors.some(
         (descriptor) => descriptor.type === "boolean" && descriptor.id === "fastMode",
       );
@@ -4952,6 +4959,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
+        ...(agentProfile ? { agent: agentProfile } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
         systemPrompt: {
           type: "preset",
@@ -5028,6 +5036,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.cwd": input.cwd ?? "",
         "claude.query.model": apiModelId ?? "",
         "claude.query.effort": effectiveEffort ?? "",
+        "claude.query.agent": agentProfile ?? "",
         "claude.query.permission_mode": permissionMode ?? "",
         "claude.query.allow_dangerously_skip_permissions": permissionMode === "bypassPermissions",
         "claude.query.resume": existingResumeSessionId ?? "",

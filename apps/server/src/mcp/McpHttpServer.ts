@@ -239,12 +239,21 @@ export const ArtifactToolkitRegistrationLive = McpServer.toolkit(ArtifactToolkit
   Layer.provide(ArtifactToolkitHandlersLive),
 );
 
-export const UsageToolkitRegistrationLive = McpServer.toolkit(UsageToolkit).pipe(
-  Layer.provide(UsageToolkitHandlersLive.pipe(Layer.provide(ProviderUsageStatus.layer))),
-);
-
+/**
+ * Nothing is provided here on purpose. `spawn_thread` reads `ProviderRegistry`
+ * to gate agent profiles, and that requirement bubbles out to `makeRoutesLayer`
+ * where `RuntimeDependenciesLive` satisfies it — same as this toolkit's
+ * orchestration and git dependencies, and the same shape the artifact toolkit
+ * documents above. The usage toolkit provides a layer here only because
+ * `ProviderUsageStatus` owns a refresh throttle that must be one instance per
+ * MCP server; the registry has no such per-server state to pin.
+ */
 export const SpawnToolkitRegistrationLive = McpServer.toolkit(SpawnToolkit).pipe(
   Layer.provide(SpawnToolkitHandlersLive),
+);
+
+export const UsageToolkitRegistrationLive = McpServer.toolkit(UsageToolkit).pipe(
+  Layer.provide(UsageToolkitHandlersLive.pipe(Layer.provide(ProviderUsageStatus.layer))),
 );
 
 const McpTransportLive = McpServer.layerHttp({

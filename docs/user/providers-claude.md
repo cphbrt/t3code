@@ -53,6 +53,31 @@ hide it until that explicit reset time.
 
 For an idle existing thread, the Send menu also offers **Send after usage resets**. The prompt waits on the server, remains outside the transcript until it is actually sent, and releases one minute after the provider's reset. A waiting prompt survives restarts and can be cancelled or sent immediately from the composer.
 
+## Agent Profiles
+
+If you keep agent profiles in `~/.claude/agents` or a project's `.claude/agents`, CPH Code offers
+them in the model picker as an **Agent Profile** control, alongside reasoning effort and the other
+per-thread options. This only appears for Claude models, and only once CPH Code has found at least
+one profile; if none exist, no control is shown.
+
+The list refreshes every few minutes, so a profile you just added may take a little while to show
+up.
+
+Picking a profile is equivalent to running `claude --agent <name>` for that thread — it supplies
+that agent's instructions and tool policy. The model you pick is always the one used; a profile's
+own model preference does not override your choice. **None** is the default and means the thread
+runs with no profile.
+
+The choice is sticky, the same way your model and reasoning-effort choices are: it carries into
+your next new thread. When a thread has an active profile, its name appears next to an icon on the
+composer's trait control so it is never invisible. Threads with no profile show nothing extra.
+
+Once a thread's first session has started, the profile is fixed for that thread. The control still
+shows the active profile, but it can no longer be changed — the picker explains this with "Fixed
+when this thread's session began." Start a new thread if you want a different profile.
+
+Codex models never show this control.
+
 ## Where Claude Skills Are Loaded
 
 T3 Code looks for Claude skills in the Claude config directory's `skills` folder, then
