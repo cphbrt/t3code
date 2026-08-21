@@ -40,6 +40,7 @@ import {
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistryHydration.ts";
+import * as OpenCodeRuntime from "../opencodeRuntime.ts";
 import {
   haveProvidersChanged,
   mergeProviderSnapshot,
@@ -1297,6 +1298,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(QuotaHistoryStore.layerTest),
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1387,6 +1389,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(QuotaHistoryStore.layerTest),
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),
@@ -1506,6 +1509,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const providerRegistryLayer = ProviderRegistryLive.pipe(
             Layer.provideMerge(QuotaHistoryStore.layerTest),
             Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+            Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
             ),

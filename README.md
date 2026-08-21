@@ -6,7 +6,7 @@
 > Its goals are to:
 >
 > - keep a desktop-first coding-agent workspace, primarily for macOS and Linux (Windows code remains for now);
-> - support OpenAI Codex and Anthropic Claude Code, not Cursor, Grok, or OpenCode;
+> - support OpenAI Codex, Anthropic Claude Code, and OpenCode, not Cursor or Grok;
 > - focus source control on Git and GitHub rather than GitLab, Azure DevOps, Bitbucket, or Jujutsu;
 > - minimize avoidable phone-home behavior by omitting upstream product analytics and automatic desktop-update traffic;
 > - remove unused surfaces and deployment machinery, including the in-repo mobile app, marketing site, and relay infrastructure, while retaining compatibility with the official T3 Code iOS client; and
@@ -103,10 +103,11 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex and Claude. Install and authenticate at least one provider before use:
+> T3 Code currently supports Codex, Claude, and OpenCode. Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
 > - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
+> - OpenCode: install [OpenCode](https://opencode.ai) and configure its upstream providers with `opencode auth login`
 
 ### Try it out (install-free)
 

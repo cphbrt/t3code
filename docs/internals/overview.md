@@ -102,8 +102,8 @@ build production behavior on receipts.
 
 ## Provider drivers
 
-Two drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
-Codex and Claude. A driver declares its kind and config schema and creates a
+Three drivers ship built in, registered in [`builtInDrivers.ts`][drivers] as `BUILT_IN_DRIVERS`:
+Codex, Claude, and OpenCode. A driver declares its kind and config schema and creates a
 scoped adapter; `ProviderInstanceRegistry` owns live instances and `ProviderAdapterRegistry` resolves
 an instance to its adapter, so `ProviderService` routes session and turn operations without knowing
 which agent is behind them. See [providers.md](./providers.md).

@@ -7,7 +7,7 @@ CPH Code is a fork of T3 Code slimmed down to the features relevant to Chris Heb
 Its goals are to:
 
 - Keep a desktop-first coding-agent workspace, primarily for macOS and Linux; Windows code remains for now, but is not a feature-expansion target.
-- Support the providers Chris uses—OpenAI Codex and Anthropic Claude Code—and do not carry Cursor, Grok, OpenCode, or their implementation-only supporting paths. Legacy provider identifiers may remain only at persistence and wire boundaries where removing them would break existing settings or released clients.
+- Support the providers Chris uses—OpenAI Codex, Anthropic Claude Code, and OpenCode (which fronts local runtimes such as LM Studio and aggregators such as OpenRouter)—and do not carry Cursor, Grok, or their implementation-only supporting paths. Legacy provider identifiers may remain only at persistence and wire boundaries where removing them would break existing settings or released clients.
 - Keep source control focused on Git and GitHub rather than GitLab, Azure DevOps, Bitbucket, or Jujutsu. Legacy host variants may remain in shared contracts and URL parsing for persisted-data and wire compatibility, but do not retain their server providers, credentials, or command implementations.
 - Minimize avoidable phone-home behavior by omitting upstream product analytics and automatic desktop-update checks, downloads, and installs.
 - Remove unused product surfaces and deployment machinery, such as the mobile app, marketing site, and relay infrastructure, to reduce maintenance cost.
@@ -213,7 +213,7 @@ We need to be on the same page with terminology. When communicating, use this la
 - **we, us, and maintainers** mean Theo, Julius and the people building T3 Code. These are who you are talking to now.
 - **user** means the person using T3 Code to direct coding agents.
 - **agent** means the coding agent a user runs inside T3 Code. Depending on context, that may also include you.
-- **provider** means the agent runtime or harness CPH Code talks to: Codex or Claude.
+- **provider** means the agent runtime or harness CPH Code talks to: Codex, Claude, or OpenCode.
 - **client** means the web or desktop UI.
 - **environment** means one running T3 server and the machine, filesystem, provider credentials, and state it owns.
 - **project** means an environment-local workspace record rooted at a directory.
@@ -233,7 +233,7 @@ The most common defect in this repo is a change that works on the path you teste
 
 - **Entry points.** A behavior reachable from the chat view is usually also reachable from Settings, the command palette, and a keybinding. Fixing one is not fixing the feature.
 - **Clients.** Maintained source clients are web and desktop (which wraps web and adds Electron shell/IPC). The released official T3 Code iOS app is an external compatibility client for the direct Tailscale path. Shared logic lives in `packages/client-runtime`.
-- **Providers.** Codex and Claude each have an adapter. Provider-shaped features need a decision for both, even when one remains explicitly unimplemented pending a real provider payload.
+- **Providers.** Codex, Claude, and OpenCode each have an adapter. Provider-shaped features need a decision for both, even when one remains explicitly unimplemented pending a real provider payload.
 - **Contracts.** Anything crossing the wire is typed in `packages/contracts`. Change the schema and the server, web, desktop, and released iOS compatibility path all follow.
 - **Reverse states.** If you added a way in, add the way out and the way to see it. Snooze needs unsnooze. Close needs reopen. A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel behave differently. Multi-device and multi-environment cases are real.

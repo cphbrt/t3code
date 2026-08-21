@@ -34,6 +34,7 @@ import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRe
 import * as ProviderEventLoggers from "./provider/Layers/ProviderEventLoggers.ts";
 import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
+import * as OpenCodeRuntime from "./provider/opencodeRuntime.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as CheckpointStore from "./checkpointing/CheckpointStore.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
@@ -390,6 +391,11 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Provided once at the runtime level so every consumer sees the same
   // logger instances.
   Layer.provideMerge(ProviderEventLoggers.layer),
+  // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; the instance registry
+  // reads snapshots off the drivers and does not transitively provide it.
+  // Exposing it at the runtime level keeps a single Live for all opencode
+  // consumers.
+  Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
