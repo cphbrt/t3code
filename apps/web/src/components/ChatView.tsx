@@ -199,6 +199,7 @@ import { useNowMinute } from "../hooks/useNowMinute";
 import { providerUsageLimitBannerMessage } from "../providerUsageLimit";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import { isFloatingLayerVisible } from "../lib/floatingLayer";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { reportInAppShortcut } from "../lib/inAppActionSignals";
@@ -513,7 +514,7 @@ function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
 
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
-  if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
+  if (isFloatingLayerVisible(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
 
   // The right-panel surface launcher claims its shortcut letters while it is
   // visible (data attribute set in RightPanelTabs); those keys open surfaces
@@ -5199,7 +5200,7 @@ function ChatViewContent(props: ChatViewProps) {
           readingFocusAvailable,
           defaultPrevented: event.defaultPrevented,
           isComposing: event.isComposing,
-          floatingLayerOpen: document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) !== null,
+          floatingLayerOpen: isFloatingLayerVisible(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR),
           shortcutLabel: shortcutLabelForCommand(keybindings, "chat.readingFocus.enable"),
           hideComposer: hideComposerForReadingFocus,
           reportShortcut: reportInAppShortcut,
