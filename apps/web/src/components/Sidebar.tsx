@@ -91,6 +91,10 @@ import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
+  buildThreadDelegationTree,
+  flattenThreadDelegationTree,
+} from "@t3tools/client-runtime/state/thread-delegation";
+import {
   buildSidebarProjectSnapshots,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
@@ -826,6 +830,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // third-row hover actions.
   pinningSupported: boolean;
   isPinned: boolean;
+  // True when this thread's agent was started by another thread's agent. The
+  // row indents under its parent so the delegation is visible as structure
+  // rather than as a badge the eye has to hunt for.
+  isSpawned: boolean;
   // Present only on pinned cards whose server supports reordering: dnd-kit
   // sortable bag applied to the card root so the whole card drags (the
   // pointer sensor's distance constraint keeps plain clicks working).
@@ -1346,7 +1354,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
-        className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
+        className={cn(
+          "list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]",
+          props.isSpawned && "ml-3 border-l border-sidebar-border pl-2",
+        )}
       >
         <Tooltip>
           <TooltipTrigger
@@ -1506,6 +1517,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {...(sortable?.listeners ?? {})}
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_96px]",
+        // A delegated thread reads as belonging to the row above it: indented,
+        // with a rule tying it back to its parent. Static — no repainting
+        // gradient — because these rows sit in a list users scroll all day.
+        props.isSpawned && "ml-3 border-l border-sidebar-border pl-2",
         sortable?.isDragging && "z-20 opacity-80",
       )}
     >
@@ -2449,9 +2464,32 @@ export default function Sidebar() {
     () => setActiveShelfExpanded((value) => !value),
     [setActiveShelfExpanded],
   );
+  // A thread an agent spawned belongs to its parent's work, so it renders
+  // directly beneath it rather than competing for a place in the activity
+  // order. Nesting is applied before the shelf's own preview/collapse rules so
+  // a collapsed shelf cannot show a child with its parent hidden.
+  const activeDelegationNodes = useMemo(
+    () => buildThreadDelegationTree(activeThreads),
+    [activeThreads],
+  );
+  const nestedActiveThreads = useMemo(
+    () => flattenThreadDelegationTree(activeDelegationNodes),
+    [activeDelegationNodes],
+  );
+  const spawnedThreadKeys = useMemo(
+    () =>
+      new Set(
+        activeDelegationNodes.flatMap((node) =>
+          node.children.map((child) =>
+            scopedThreadKey(scopeThreadRef(child.environmentId, child.id)),
+          ),
+        ),
+      ),
+    [activeDelegationNodes],
+  );
   const visibleActiveThreads = useMemo(
-    () => shelfRows(activeThreads, activeShelfExpanded, routeThreadKey),
-    [activeShelfExpanded, activeThreads, routeThreadKey],
+    () => shelfRows(nestedActiveThreads, activeShelfExpanded, routeThreadKey),
+    [activeShelfExpanded, nestedActiveThreads, routeThreadKey],
   );
 
   const orderedThreads = useMemo(
@@ -3963,6 +4001,7 @@ export default function Sidebar() {
                           serverConfigs.get(thread.environmentId)?.environment.capabilities
                             .threadPinning === true
                         }
+                        isSpawned={spawnedThreadKeys.has(threadKey)}
                         isPinned={section === "pinned"}
                         sortable={sortable}
                         snoozeWakeLabelText={

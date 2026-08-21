@@ -135,6 +135,10 @@
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
     },
+    "./state/thread-delegation": {
+      "types": "./src/state/threadDelegation.ts",
+      "default": "./src/state/threadDelegation.ts"
+    },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",
       "default": "./src/state/threadSort.ts"
