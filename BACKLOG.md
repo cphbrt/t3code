@@ -49,6 +49,15 @@ subject, never as the entry's identifier.
   worktree path length is the obvious suspect, unconfirmed). Compare against
   a baseline you measured yourself, in the same tree, and treat a drift of
   tens of bytes as noise rather than a regression.
+  Note the cost of leaving this open: because all four byte budgets already
+  fail at base by roughly 30%, the test cannot report a regression a change
+  actually introduces. Its failure is unconditional, so a new payload cost
+  lands as a larger number in an already-failing assertion rather than a
+  red-to-green transition anyone would notice. Any series touching wire
+  payloads has to measure base against tip by hand — comparing the decoded
+  figures, which reproduce within a checkout, and disregarding the gzip wire
+  figures, which drift in both directions between runs. Restoring a
+  meaningful guardrail means resolving this entry, not adjusting the caps.
 - **Batched peer-message deliveries have no marker.** When several
   inter-session messages arrive during one turn, the provider reports a
   single batched terminal `origin` (sometimes with no body), so individual
