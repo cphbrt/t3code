@@ -7,8 +7,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { OrchestrationEngineService } from "../../../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ThreadBootstrapRunner } from "../../../orchestration/Services/ThreadBootstrapRunner.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { SPAWN_LIMIT_PER_SESSION, SpawnThreadError, SpawnToolkit } from "./tools.ts";
 
@@ -47,9 +47,11 @@ const SPAWN_CONFIRMATION =
  * is given work to do, not a plan to propose, even when the parent itself is
  * in plan mode.
  *
- * The two dispatches mirror the client bootstrap path in `ws.ts`, including
- * its compensating delete: a thread whose first turn never started must not
- * survive as an empty sidebar row.
+ * Bootstrap goes through `ThreadBootstrapRunner`, the same service the
+ * client's own `dispatchCommand` uses, so a spawned thread is created,
+ * started, and cleaned up after a failure by exactly the code that runs when
+ * the user opens a thread by hand — rather than by a second copy of it that
+ * can drift.
  */
 export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (params: {
   readonly prompt: string;
@@ -202,56 +204,51 @@ export const spawnThread = Effect.fn("SpawnToolkit.spawn_thread")(function* (par
   const commandId = (step: string) =>
     CommandId.make(`spawn-${step}:${invocation.providerSessionId}:${millis}:${spawnCallOrdinal}`);
 
-  const engine = yield* OrchestrationEngineService;
-  const rejected = (detail: string, error: { readonly message: string }) =>
-    Effect.logWarning(`spawn_thread ${detail} rejected`, {
-      threadId: invocation.threadId,
-      spawnedThreadId: threadId,
-      error,
-    }).pipe(
-      Effect.andThen(
-        Effect.fail(
-          new SpawnThreadError({
-            reason: "rejected",
-            message: `T3 Code refused to spawn the thread: ${error.message}`,
-          }),
-        ),
-      ),
-    );
-
-  yield* engine
-    .dispatch({
-      type: "thread.create",
-      commandId: commandId("create"),
-      threadId,
-      projectId,
-      title,
-      modelSelection,
-      runtimeMode: parent.runtimeMode,
-      interactionMode: "default",
-      branch: null,
-      worktreePath,
-      createdAt,
-    })
-    .pipe(Effect.catch((error) => rejected("thread create", error)));
-
-  yield* engine
-    .dispatch({
+  const runner = yield* ThreadBootstrapRunner;
+  yield* runner
+    .dispatchBootstrapTurnStart({
       type: "thread.turn.start",
-      commandId: commandId("turn"),
+      commandId: commandId("bootstrap"),
       threadId,
       message: { messageId, role: "user", text: prompt, attachments: [] },
+      modelSelection,
       runtimeMode: parent.runtimeMode,
+      // A delegation is given work to do, not a plan to propose, so the
+      // interaction mode is "default" even when the parent itself is planning.
       interactionMode: "default",
+      titleSeed: title,
+      bootstrap: {
+        createThread: {
+          projectId,
+          title,
+          modelSelection,
+          runtimeMode: parent.runtimeMode,
+          interactionMode: "default",
+          branch: null,
+          worktreePath,
+          createdAt,
+        },
+      },
       createdAt,
     })
     .pipe(
-      // Mirror of the ws bootstrap's cleanupCreatedThread: a create whose
-      // first turn never started must not survive as an empty sidebar row.
+      // The runner owns the compensating delete, so a bootstrap that fails
+      // after creating the thread never leaves an empty sidebar row behind.
       Effect.catch((error) =>
-        engine
-          .dispatch({ type: "thread.delete", commandId: commandId("cleanup"), threadId })
-          .pipe(Effect.ignoreCause({ log: true }), Effect.andThen(rejected("turn start", error))),
+        Effect.logWarning("spawn_thread bootstrap rejected", {
+          threadId: invocation.threadId,
+          spawnedThreadId: threadId,
+          error,
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new SpawnThreadError({
+                reason: "rejected",
+                message: `T3 Code refused to spawn the thread: ${error.message}`,
+              }),
+            ),
+          ),
+        ),
       ),
     );
 
