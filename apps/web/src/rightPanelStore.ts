@@ -650,13 +650,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               (surface) => surface.id === current.activeSurfaceId,
             );
             const fallbackBrowser = surfaces.find((surface) => surface.kind === "preview");
-            return {
-              ...current,
-              surfaces,
-              activeSurfaceId: activeStillExists
-                ? current.activeSurfaceId
-                : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
-            };
+            const activeSurfaceId = activeStillExists
+              ? current.activeSurfaceId
+              : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null);
+            // Every preview wire event hands this a fresh session map, so without
+            // an identity bailout a burst of agent browser activity rewrites the
+            // panel state — and re-renders every subscriber — once per event.
+            const unchanged =
+              activeSurfaceId === current.activeSurfaceId &&
+              surfaces.length === current.surfaces.length &&
+              surfaces.every((surface, index) => surface === current.surfaces[index]);
+            if (unchanged) return current;
+            return { ...current, surfaces, activeSurfaceId };
           }),
         })),
       reconcileFileSurfaces: (ref, workspaceAvailable) =>

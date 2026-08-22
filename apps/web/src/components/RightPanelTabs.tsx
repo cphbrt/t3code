@@ -126,6 +126,25 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="autocomplete-popup"]',
 ].join(",");
 
+const RIGHT_PANEL_SURFACE_CONTENT_SELECTOR = "[data-right-panel-surface-content]";
+
+/**
+ * Whether the surface launcher may take the caret as it mounts.
+ *
+ * It mounts whenever the panel's last surface goes away, and a background event
+ * can cause that — an agent closing its browser tab, a project going away —
+ * while the user is typing somewhere else entirely. So claim focus only when
+ * nothing else holds it, or when focus is still inside the panel and would
+ * otherwise be stranded on the surface that just closed.
+ */
+export function shouldClaimLauncherFocus(
+  activeElement: Element | null,
+  body: Element | null,
+): boolean {
+  if (activeElement === null || activeElement === body) return true;
+  return activeElement.closest(RIGHT_PANEL_SURFACE_CONTENT_SELECTOR) !== null;
+}
+
 /** One-line unavailability hints for the empty-state cards. */
 const SURFACE_UNAVAILABLE_HINTS = {
   browser: "Only available in the desktop app.",
@@ -400,7 +419,9 @@ function RightPanelEmptyState(props: {
   // Stable identity so React only runs this callback ref on mount/unmount;
   // an inline arrow would re-attach and re-focus on every render.
   const focusOnMount = useCallback((node: HTMLDivElement | null) => {
-    node?.focus();
+    if (!node) return;
+    if (!shouldClaimLauncherFocus(document.activeElement, document.body)) return;
+    node.focus();
   }, []);
 
   const isHighlighted = (action: SurfaceAction) =>
