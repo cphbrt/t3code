@@ -4,10 +4,20 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   RightPanelTabs,
+  shouldClaimLauncherFocus,
   surfaceShortcutActionForKey,
   surfaceShortcutTargetsTypingContext,
   tabMuteMenuItem,
 } from "./RightPanelTabs";
+
+/** Minimal stand-in for a focused element; only `closest` is consulted. */
+const focusedElement = (insideRightPanel: boolean) =>
+  ({
+    closest: (selector: string) =>
+      insideRightPanel && selector === "[data-right-panel-surface-content]" ? {} : null,
+  }) as unknown as Element;
+
+const fakeBody = {} as unknown as Element;
 
 function shortcutEvent(
   key: string,
@@ -145,6 +155,21 @@ describe("RightPanelTabs preview favicon", () => {
   it("hides a capture while the server session still describes another origin", () => {
     const html = renderTabs(favicon("data:image/png;base64,AAAA", "https://example.com/"));
     expect(html).not.toContain("data:image/png;base64,AAAA");
+  });
+});
+
+describe("surface launcher mount focus", () => {
+  it("claims the caret when nothing else holds it", () => {
+    expect(shouldClaimLauncherFocus(null, fakeBody)).toBe(true);
+    expect(shouldClaimLauncherFocus(fakeBody, fakeBody)).toBe(true);
+  });
+
+  it("reclaims focus stranded inside the right panel", () => {
+    expect(shouldClaimLauncherFocus(focusedElement(true), fakeBody)).toBe(true);
+  });
+
+  it("leaves the caret alone when the user is typing elsewhere", () => {
+    expect(shouldClaimLauncherFocus(focusedElement(false), fakeBody)).toBe(false);
   });
 });
 

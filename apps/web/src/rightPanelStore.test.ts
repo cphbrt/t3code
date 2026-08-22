@@ -803,4 +803,48 @@ describe("rightPanelStore", () => {
       ),
     ).toEqual(["terminal:term-1", "browser:tab-b", "browser:tab-c"]);
   });
+
+  it("reconciling an unchanged browser tab set leaves the store untouched", () => {
+    useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    // The first reconcile settles the canonical ordering; from there a repeat
+    // must be a no-op, because every preview wire event replays this call.
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, ["tab-a"]);
+
+    const settled = useRightPanelStore.getState().byThreadKey;
+    const settledThread = selectThreadRightPanelState(settled, refA);
+
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, ["tab-a"]);
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, ["tab-a"]);
+
+    const after = useRightPanelStore.getState().byThreadKey;
+    expect(after).toBe(settled);
+    expect(selectThreadRightPanelState(after, refA)).toBe(settledThread);
+  });
+
+  it("reconciling a changed browser tab set still produces new state", () => {
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, ["tab-a"]);
+
+    const settled = useRightPanelStore.getState().byThreadKey;
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, ["tab-a", "tab-b"]);
+
+    expect(useRightPanelStore.getState().byThreadKey).not.toBe(settled);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["browser:tab-a", "browser:tab-b"]);
+  });
+
+  it("reconciling away the last browser tab clears the active surface", () => {
+    useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().reconcileBrowserSurfaces(refA, []);
+
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: null,
+      surfaces: [],
+    });
+  });
 });
