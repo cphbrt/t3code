@@ -734,8 +734,9 @@ cleanly` and into `chore(providers): support only Codex and Claude`, where the
   prunes them; eleven (~4.6 GB) were swept manually on 2026-08-16 after the
   live build was confirmed good. They will re-accumulate until the install
   step adopts a keep-last-N convention. (Three more accumulated during the
-  2026-08-17 deliveries, and seven were present after the 2026-08-21 OpenCode
-  delivery; sweep after the next confirmed-good relaunch.)
+  2026-08-17 deliveries, seven were present after the 2026-08-21 OpenCode
+  delivery, and the 2026-08-21 preview-focus delivery made eight (~3.4 GB);
+  sweep after the next confirmed-good relaunch.)
 - The composer model-picker search appears to match display names only:
   during the 2026-08-21 OpenCode verification, searching `gpt-oss` found
   nothing while `lmstudio` surfaced "gpt-oss-20b (local)". Consider matching
