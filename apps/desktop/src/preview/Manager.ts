@@ -1163,6 +1163,42 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  /** Which WebContents holds focus, read before automation activates a guest. */
+  const captureFocusedWebContents = (tabId: string, wc: Electron.WebContents, operation: string) =>
+    attempt({ operation: `${operation}.getFocusedWebContents`, tabId, webContentsId: wc.id }, () =>
+      webContents.getFocusedWebContents(),
+    );
+
+  /**
+   * Puts focus back where it was before automation activated a guest.
+   *
+   * `getFocusedWebContents()` reports null whenever no WebContents holds focus,
+   * so a restore conditioned on that snapshot alone silently does nothing and
+   * strands the user's caret in the preview. Fall back to the host window's own
+   * renderer, but only while that window is already focused: focusing a
+   * background window's contents would raise the app, and agent automation must
+   * never pull the user's machine forward. A guest that already had focus keeps
+   * it, so an agent action never interrupts someone driving the preview.
+   */
+  const restoreHostFocus = Effect.fn("PreviewManager.restoreHostFocus")(function* (
+    tabId: string,
+    wc: Electron.WebContents,
+    operation: string,
+    previouslyFocused: Electron.WebContents | null,
+  ) {
+    const mainWindow = yield* Ref.get(mainWindowRef);
+    const fallback =
+      Option.isSome(mainWindow) && !mainWindow.value.isDestroyed() && mainWindow.value.isFocused()
+        ? mainWindow.value.webContents
+        : null;
+    const target = previouslyFocused ?? fallback;
+    if (!target || target.id === wc.id || target.isDestroyed()) return;
+    yield* attempt(
+      { operation: `${operation}.restoreFocusedWebContents`, tabId, webContentsId: target.id },
+      () => target.focus(),
+    ).pipe(Effect.ignore);
+  });
+
   const withControlSession = Effect.fn("PreviewManager.withControlSession")(function* <A>(
     tabId: string,
     wc: Electron.WebContents,
@@ -3245,6 +3281,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const performAutomationClick = Effect.fn("PreviewManager.performAutomationClick")(function* (
     tabId: string,
+    wc: Electron.WebContents,
     input: PreviewAutomationClickInput,
     send: SendCommand,
   ) {
@@ -3265,39 +3302,45 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         viewportHeight: viewport.height,
       });
     }
-    const moveSequence = yield* nextCounter(pointerSequenceRef);
-    const moveCreatedAt = yield* currentIso;
-    yield* emitPointerEvent({
-      tabId,
-      phase: "move",
-      ...point,
-      sequence: moveSequence,
-      createdAt: moveCreatedAt,
-    });
-    yield* Effect.sleep(AGENT_CURSOR_MOVE_MS);
-    const clickSequence = yield* nextCounter(pointerSequenceRef);
-    const clickCreatedAt = yield* currentIso;
-    yield* emitPointerEvent({
-      tabId,
-      phase: "click",
-      ...point,
-      sequence: clickSequence,
-      createdAt: clickCreatedAt,
-    });
-    yield* Effect.sleep(AGENT_CURSOR_CLICK_LEAD_MS);
-    yield* expectAgentInput(tabId, { kind: "pointer", ...point, button: 0 });
-    yield* send("Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      ...point,
-      button: "left",
-      clickCount: 1,
-    });
-    yield* send("Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      ...point,
-      button: "left",
-      clickCount: 1,
-    });
+    // A synthesized press lands on the guest as real input, so Chromium can
+    // hand the guest view focus and leave the user's caret in the preview.
+    // Snapshot and restore around the dispatch the same way a key press does.
+    const previouslyFocused = yield* captureFocusedWebContents(tabId, wc, "automationClick");
+    yield* Effect.gen(function* () {
+      const moveSequence = yield* nextCounter(pointerSequenceRef);
+      const moveCreatedAt = yield* currentIso;
+      yield* emitPointerEvent({
+        tabId,
+        phase: "move",
+        ...point,
+        sequence: moveSequence,
+        createdAt: moveCreatedAt,
+      });
+      yield* Effect.sleep(AGENT_CURSOR_MOVE_MS);
+      const clickSequence = yield* nextCounter(pointerSequenceRef);
+      const clickCreatedAt = yield* currentIso;
+      yield* emitPointerEvent({
+        tabId,
+        phase: "click",
+        ...point,
+        sequence: clickSequence,
+        createdAt: clickCreatedAt,
+      });
+      yield* Effect.sleep(AGENT_CURSOR_CLICK_LEAD_MS);
+      yield* expectAgentInput(tabId, { kind: "pointer", ...point, button: 0 });
+      yield* send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        ...point,
+        button: "left",
+        clickCount: 1,
+      });
+      yield* send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        ...point,
+        button: "left",
+        clickCount: 1,
+      });
+    }).pipe(Effect.ensuring(restoreHostFocus(tabId, wc, "automationClick", previouslyFocused)));
   });
 
   const automationClick = Effect.fn("PreviewManager.automationClick")(function* (
@@ -3306,7 +3349,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const wc = yield* requireWebContents(tabId);
     yield* withControlSession(tabId, wc, "click", (send) =>
-      performAutomationClick(tabId, input, send),
+      performAutomationClick(tabId, wc, input, send),
     );
   });
 
@@ -3447,10 +3490,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const keySequence = makePreviewAutomationKeySequence(input, {
       isMac: hostPlatform === "darwin",
     });
-    const previouslyFocused = yield* attempt(
-      { operation: "automationPress.getFocusedWebContents", tabId, webContentsId: wc.id },
-      () => webContents.getFocusedWebContents(),
-    );
+    const previouslyFocused = yield* captureFocusedWebContents(tabId, wc, "automationPress");
     let keyDownAttempted = false;
     const releaseInput = Effect.gen(function* () {
       if (keyDownAttempted) {
@@ -3459,16 +3499,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* sendCleanup("Emulation.setFocusEmulationEnabled", { enabled: false }).pipe(
         Effect.ignore,
       );
-      if (previouslyFocused && previouslyFocused.id !== wc.id && !previouslyFocused.isDestroyed()) {
-        yield* attempt(
-          {
-            operation: "automationPress.restoreFocusedWebContents",
-            tabId,
-            webContentsId: previouslyFocused.id,
-          },
-          () => previouslyFocused.focus(),
-        ).pipe(Effect.ignore);
-      }
+      yield* restoreHostFocus(tabId, wc, "automationPress", previouslyFocused);
     });
 
     // Focus the guest WebContents itself, not its containing BrowserWindow. This

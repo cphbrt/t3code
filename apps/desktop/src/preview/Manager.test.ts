@@ -188,6 +188,55 @@ const makeTestPreviewWebContents = (
     capturePage,
   }) as never;
 
+/**
+ * A registered guest webview wired for automation: the debugger accepts
+ * commands and the human-input IPC channel is handed back to the test so it can
+ * acknowledge the agent-input signals that click and press wait on.
+ */
+const makeAutomationWebContents = (options: {
+  readonly humanInputSink: (listener: (event: unknown, signal: unknown) => void) => void;
+  readonly sendCommand: (
+    method: string,
+    params?: Record<string, unknown>,
+  ) => Promise<unknown> | unknown;
+  readonly focus?: () => void;
+  readonly hostWebContents?: unknown;
+  readonly id?: number;
+}) =>
+  ({
+    id: options.id ?? 42,
+    isDestroyed: () => false,
+    getType: () => "webview",
+    hostWebContents: options.hostWebContents,
+    getURL: () => "https://example.com",
+    getTitle: () => "Example",
+    isLoading: () => false,
+    isDevToolsOpened: () => false,
+    focus: options.focus ?? vi.fn(),
+    getZoomFactor: () => 1,
+    setZoomFactor: vi.fn(),
+    setAudioMuted: vi.fn(),
+    isCurrentlyAudible: () => false,
+    on: vi.fn(),
+    off: vi.fn(),
+    ipc: {
+      on: vi.fn((channel: string, listener: (event: unknown, signal: unknown) => void) => {
+        if (channel === "preview:human-input") options.humanInputSink(listener);
+      }),
+      off: vi.fn(),
+    },
+    send: webviewSend,
+    navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+    setWindowOpenHandler: vi.fn(),
+    debugger: {
+      isAttached: () => false,
+      attach: vi.fn(),
+      sendCommand: options.sendCommand,
+      on: vi.fn(),
+      off: vi.fn(),
+    },
+  }) as never;
+
 const TEST_FAVICON = "data:image/png;base64,cG5n";
 
 const makeSourcePng = (width = 1, height = 1): Buffer => {
@@ -3147,6 +3196,142 @@ describe("PreviewManager", () => {
           unmodifiedText: "!",
         });
         expect(restoreFocus).toHaveBeenCalledTimes(3);
+      }),
+    ),
+  );
+
+  effectIt.effect("returns focus to the host renderer when nothing held it before a press", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (
+            method === "Input.dispatchKeyEvent" &&
+            (params?.["type"] === "keyDown" || params?.["type"] === "rawKeyDown")
+          ) {
+            humanInput?.({}, { kind: "key", key: params["key"], code: params["code"] ?? "KeyX" });
+          }
+          return undefined;
+        });
+        // The app is in the foreground but focus sits outside any WebContents,
+        // which is exactly when getFocusedWebContents reports null.
+        getFocusedWebContents.mockReturnValue(null);
+        const hostFocus = vi.fn();
+        let windowFocused = true;
+        const hostWebContents = { id: 7, isDestroyed: () => false, focus: hostFocus };
+        fromId.mockReturnValue(
+          makeAutomationWebContents({
+            hostWebContents,
+            humanInputSink: (fn) => (humanInput = fn),
+            sendCommand,
+          }),
+        );
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => windowFocused,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+
+        yield* manager.createTab("tab_focus_fallback");
+        yield* manager.registerWebview("tab_focus_fallback", 42);
+        yield* manager.automationPress("tab_focus_fallback", { key: "x" });
+
+        expect(hostFocus).toHaveBeenCalledOnce();
+
+        // A background window must not be raised by agent automation, so the
+        // fallback stays out of the way entirely.
+        windowFocused = false;
+        yield* manager.automationPress("tab_focus_fallback", { key: "x" });
+
+        expect(hostFocus).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("restores host focus after an automation click activates the guest", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method === "Runtime.evaluate") {
+            return { result: { value: { width: 800, height: 600 } } };
+          }
+          if (method === "Input.dispatchMouseEvent" && params?.["type"] === "mousePressed") {
+            humanInput?.({}, { kind: "pointer", x: params["x"], y: params["y"], button: 0 });
+          }
+          return undefined;
+        });
+        const restoreFocus = vi.fn();
+        getFocusedWebContents.mockReturnValue({
+          id: 7,
+          isDestroyed: () => false,
+          focus: restoreFocus,
+        } as never);
+        fromId.mockReturnValue(
+          makeAutomationWebContents({ humanInputSink: (fn) => (humanInput = fn), sendCommand }),
+        );
+
+        yield* manager.createTab("tab_click_focus");
+        yield* manager.registerWebview("tab_click_focus", 42);
+        const click = yield* manager
+          .automationClick("tab_click_focus", { x: 120, y: 80 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(200);
+        yield* Fiber.join(click);
+
+        expect(restoreFocus).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
+  effectIt.effect("leaves guest focus alone when the guest already had it", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((_event: unknown, signal: unknown) => void) | undefined;
+        const sendCommand = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+          if (method === "Runtime.evaluate") {
+            return { result: { value: { width: 800, height: 600 } } };
+          }
+          if (method === "Input.dispatchMouseEvent" && params?.["type"] === "mousePressed") {
+            humanInput?.({}, { kind: "pointer", x: params["x"], y: params["y"], button: 0 });
+          }
+          return undefined;
+        });
+        const guestFocus = vi.fn();
+        // The user was driving the preview themselves; the agent's click must
+        // not bounce their focus back out to the chat.
+        getFocusedWebContents.mockReturnValue({
+          id: 42,
+          isDestroyed: () => false,
+          focus: guestFocus,
+        } as never);
+        const hostFocus = vi.fn();
+        const hostWebContents = { id: 7, isDestroyed: () => false, focus: hostFocus };
+        fromId.mockReturnValue(
+          makeAutomationWebContents({
+            hostWebContents,
+            humanInputSink: (fn) => (humanInput = fn),
+            sendCommand,
+          }),
+        );
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isFocused: () => true,
+          once: vi.fn(),
+          webContents: hostWebContents,
+        } as never);
+
+        yield* manager.createTab("tab_guest_focus");
+        yield* manager.registerWebview("tab_guest_focus", 42);
+        const click = yield* manager
+          .automationClick("tab_guest_focus", { x: 120, y: 80 })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* TestClock.adjust(200);
+        yield* Fiber.join(click);
+
+        expect(guestFocus).not.toHaveBeenCalled();
+        expect(hostFocus).not.toHaveBeenCalled();
       }),
     ),
   );
