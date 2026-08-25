@@ -29,21 +29,6 @@ const HOUR_BOUNDS = {
 } as const;
 
 /**
- * Style hooks the shared `.settings-slider` look reads (see `index.css`).
- *
- * Copied from the glass-opacity row rather than abstracted, because it is two
- * derived numbers and the alternative is a wrapper whose only job is to hide
- * them.
- */
-function sliderStyle(value: number, min: number, max: number): CSSProperties {
-  const ratio = max === min ? 0 : (value - min) / (max - min);
-  return {
-    "--settings-slider-progress": `${ratio * 100}%`,
-    "--settings-slider-fill-offset": `${0.5 - ratio}rem`,
-  } as CSSProperties;
-}
-
-/**
  * Formats a schedule bound as a wall-clock time in the user's chosen clock.
  *
  * Routed through the app's own timestamp formatter rather than a local
@@ -158,27 +143,15 @@ export function UsagePaceScheduleControl({ className }: { readonly className?: s
 
       {schedule.workHoursOnly ? (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-card/40 px-3 py-2.5">
-          <HourSlider
-            id={startId}
-            label="Day starts"
-            ariaLabel="Counted day starts"
-            value={schedule.startHour}
-            min={MIN_USAGE_PACE_START_HOUR}
-            max={MAX_USAGE_PACE_START_HOUR}
-            display={formatHour(schedule.startHour)}
-            onChange={(value) => setHour("start", value)}
+          <ScheduleHourRange
+            startId={startId}
+            endId={endId}
+            startHour={schedule.startHour}
+            endHour={schedule.endHour}
+            startDisplay={formatHour(schedule.startHour)}
+            endDisplay={formatHour(schedule.endHour)}
+            onChange={setHour}
           />
-          <HourSlider
-            id={endId}
-            label="Day ends"
-            ariaLabel="Counted day ends"
-            value={schedule.endHour}
-            min={MIN_USAGE_PACE_END_HOUR}
-            max={MAX_USAGE_PACE_END_HOUR}
-            display={formatHour(schedule.endHour)}
-            onChange={(value) => setHour("end", value)}
-          />
-          <ScheduleDayStrip startHour={schedule.startHour} endHour={schedule.endHour} />
         </div>
       ) : null}
 
@@ -197,77 +170,122 @@ export function UsagePaceScheduleControl({ className }: { readonly className?: s
   );
 }
 
-function HourSlider({
-  id,
-  label,
-  ariaLabel,
-  value,
-  min,
-  max,
-  display,
-  onChange,
-}: {
-  readonly id: string;
-  readonly label: string;
-  readonly ariaLabel: string;
-  readonly value: number;
-  readonly min: number;
-  readonly max: number;
-  readonly display: string;
-  readonly onChange: (value: number) => void;
-}) {
-  return (
-    <div className="flex items-center gap-3">
-      <span className="w-20 shrink-0 text-xs text-muted-foreground">{label}</span>
-      <output
-        className="min-w-16 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium text-foreground tabular-nums"
-        htmlFor={id}
-      >
-        {display}
-      </output>
-      <input
-        aria-label={ariaLabel}
-        className="settings-slider min-w-0 flex-1"
-        id={id}
-        max={max}
-        min={min}
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-        step={1}
-        style={sliderStyle(value, min, max)}
-        type="range"
-        value={value}
-      />
-    </div>
-  );
+/** The day the range is drawn against, and the handle width the track is inset by. */
+const DAY_HOURS = 24;
+const HANDLE_REM = 1;
+
+/** Position of an hour along the drawn track, in the handles' own travel. */
+function hourOffset(hour: number): string {
+  return `calc(${HANDLE_REM / 2}rem + (100% - ${HANDLE_REM}rem) * ${hour / DAY_HOURS})`;
+}
+
+/** Width of a span of hours in that same geometry. */
+function hourSpan(hours: number): string {
+  return `calc((100% - ${HANDLE_REM}rem) * ${hours / DAY_HOURS})`;
 }
 
 /**
- * A day drawn end to end with the counted stretch filled.
+ * Geometry for one overlaid input.
  *
- * Two sliders on separate tracks say what each bound is but not what the pair
- * means; this says it in one glance. Static — it repaints only when a bound
- * changes.
+ * Each input keeps its own min/max, so its handle travels across only part of
+ * the day. Sizing the input to exactly that part — plus one handle width, since
+ * a native handle's centre stops half a handle inside either end — puts the
+ * handle where the drawn track says the hour is.
  */
-function ScheduleDayStrip({
+function rangeInputStyle(min: number, max: number): CSSProperties {
+  return {
+    left: hourSpan(min),
+    width: `calc(${HANDLE_REM}rem + ${hourSpan(max - min)})`,
+  };
+}
+
+/**
+ * The counted day as one track with a handle at each end.
+ *
+ * A barbell rather than two stacked sliders because the pair is a single range;
+ * separate tracks stated each bound but left the shape of the day to be
+ * assembled by eye. The tick labels beneath are the day itself, so the same
+ * track carries both the values and their context.
+ *
+ * The handles are two ordinary range inputs stacked on the drawn track, so
+ * focus, arrow keys, Home/End and Page keys are the browser's own and match
+ * every other slider in Settings. Crossing is prevented by the shared
+ * `coerceScheduleHours`, which pushes the other bound rather than swapping.
+ *
+ * Static: it repaints only when a bound changes.
+ */
+function ScheduleHourRange({
+  startId,
+  endId,
   startHour,
   endHour,
+  startDisplay,
+  endDisplay,
+  onChange,
 }: {
+  readonly startId: string;
+  readonly endId: string;
   readonly startHour: number;
   readonly endHour: number;
+  readonly startDisplay: string;
+  readonly endDisplay: string;
+  readonly onChange: (moved: "start" | "end", value: number) => void;
 }) {
   return (
-    <div className="flex flex-col gap-1 pt-0.5">
-      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-muted" aria-hidden>
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-3">
+        <label className="flex items-center gap-2 text-xs text-muted-foreground" htmlFor={startId}>
+          Day starts
+          <span className="rounded-md bg-muted px-2 py-1 font-mono text-xs font-medium text-foreground tabular-nums">
+            {startDisplay}
+          </span>
+        </label>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground" htmlFor={endId}>
+          <span className="rounded-md bg-muted px-2 py-1 font-mono text-xs font-medium text-foreground tabular-nums">
+            {endDisplay}
+          </span>
+          Day ends
+        </label>
+      </div>
+
+      <div className="relative h-6 w-full">
         <div
-          className="absolute inset-y-0 bg-primary"
-          style={{
-            left: `${(startHour / 24) * 100}%`,
-            width: `${((endHour - startHour) / 24) * 100}%`,
-          }}
+          className="absolute inset-x-2 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-muted"
+          aria-hidden
+        />
+        <div
+          className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary"
+          style={{ left: hourOffset(startHour), width: hourSpan(endHour - startHour) }}
+          aria-hidden
+        />
+        <input
+          aria-label="Counted day starts"
+          className="settings-slider settings-range-input"
+          id={startId}
+          max={MAX_USAGE_PACE_START_HOUR}
+          min={MIN_USAGE_PACE_START_HOUR}
+          onChange={(event) => onChange("start", Number(event.currentTarget.value))}
+          step={1}
+          style={rangeInputStyle(MIN_USAGE_PACE_START_HOUR, MAX_USAGE_PACE_START_HOUR)}
+          type="range"
+          value={startHour}
+        />
+        <input
+          aria-label="Counted day ends"
+          className="settings-slider settings-range-input"
+          id={endId}
+          max={MAX_USAGE_PACE_END_HOUR}
+          min={MIN_USAGE_PACE_END_HOUR}
+          onChange={(event) => onChange("end", Number(event.currentTarget.value))}
+          step={1}
+          style={rangeInputStyle(MIN_USAGE_PACE_END_HOUR, MAX_USAGE_PACE_END_HOUR)}
+          type="range"
+          value={endHour}
         />
       </div>
+
       <div
-        className="flex justify-between text-[10px] text-muted-foreground tabular-nums"
+        className="flex justify-between px-2 text-[10px] text-muted-foreground tabular-nums"
         aria-hidden
       >
         <span>12a</span>

@@ -1336,6 +1336,45 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       0 0 0 5px var(--ring);
   }
 
+  /*
+   * Two `.settings-slider` inputs stacked on one drawn track to make a
+   * dual-handle range. The inputs keep their own min/max and their native
+   * keyboard behaviour; only their painted track is dropped, because the
+   * filled range between the two handles is drawn underneath them.
+   *
+   * Inputs are transparent to the pointer so the lower one never swallows the
+   * upper one's handle; the handles themselves take pointer events back.
+   */
+  .settings-range-input {
+    position: absolute;
+    top: 0;
+    height: 1.5rem;
+    pointer-events: none;
+    background: transparent;
+  }
+
+  .settings-range-input::-webkit-slider-runnable-track {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .settings-range-input::-moz-range-track {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .settings-range-input::-moz-range-progress {
+    background: transparent;
+  }
+
+  .settings-range-input::-webkit-slider-thumb {
+    pointer-events: auto;
+  }
+
+  .settings-range-input::-moz-range-thumb {
+    pointer-events: auto;
+  }
+
   @media (forced-colors: active) {
     .settings-slider {
       appearance: auto;
