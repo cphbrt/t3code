@@ -735,8 +735,9 @@ cleanly` and into `chore(providers): support only Codex and Claude`, where the
   live build was confirmed good. They will re-accumulate until the install
   step adopts a keep-last-N convention. (Three more accumulated during the
   2026-08-17 deliveries, seven were present after the 2026-08-21 OpenCode
-  delivery, and the 2026-08-21 preview-focus delivery made eight (~3.4 GB);
-  sweep after the next confirmed-good relaunch.)
+  delivery, the 2026-08-21 preview-focus delivery made eight (~3.4 GB), and
+  the 2026-08-24 barbell-slider delivery made nine (~3.8 GB); sweep after the
+  next confirmed-good relaunch.)
 - Two verification footguns observed on 2026-08-24 while shipping the barbell
   hours slider. (1) The in-app preview automation's capture pipeline stalled:
   `preview_snapshot` and `preview_recording_start` failed or timed out while
