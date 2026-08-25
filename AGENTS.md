@@ -165,6 +165,8 @@ Preserve and build upon this narrative structure with every future change. Befor
 
 Before rebasing, curate and reorder the fork commits when needed so they read in dependency order and remain understandable one at a time. The goal is a series that is easy for us to carry and resolve against upstream, and clear enough that an outside reader—including an upstream maintainer—could evaluate or adopt a useful CPH Code change without first reconstructing its development history.
 
+Migrations are renumbered in one direction only. The migration runner is a max-id high-water mark that tolerates gaps and treats names as decorative, so at each rebase any new upstream migration is renumbered to append after CPH Code's latest id and its entry is appended at the end of `migrationEntries`. Never renumber a CPH Code migration: its id may already be recorded in a local database, and moving it would re-run or skip a migration on an existing install. Fold the renumber into whichever fork commit first collides with the upstream migration, and check `makeMigrationLoader` callers for tests pinned to numeric ids.
+
 Continue using this rebase strategy while conflicts and patch maintenance remain reasonably straightforward. If upstream changes make the rebase unwieldy or materially risky, stop and ask Chris before switching to a merge-based or other integration strategy. After validating a rebased branch, update `origin/main` with `--force-with-lease`, never plain `--force`.
 
 # Upstream: T3 Code

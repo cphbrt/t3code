@@ -691,6 +691,60 @@ registered"` on a repeating PR-lookup cycle. The message is malformed — "No
   properly needs per-thread-cwd discovery and new wire plumbing to carry a
   per-thread list, which the design explicitly puts out of scope.
 
+- **Bootstrap-path turns carry no client attribution.** Upstream stamps every
+  client-dispatched command with the connecting client's surface and app
+  version, via a `dispatchFromClient` wrapper in `apps/server/src/ws.ts` that
+  passes `{ origin }` to `OrchestrationEngine.dispatch`. CPH Code extracts
+  bootstrap turn starts into `ThreadBootstrapRunner`, whose
+  `dispatchBootstrapTurnStart` takes no origin and dispatches through the
+  engine directly, so a bootstrapped turn and the `thread.create` /
+  `thread.meta.update` commands it issues are recorded with no origin. The
+  non-bootstrap path keeps its stamping. Threading an origin through the runner
+  is an open design question because the runner is shared with `spawn_thread`,
+  where there is no client connection and therefore no origin to carry: the
+  parameter would have to be optional, or the runner would need a notion of
+  "server-originated" distinct from "client origin unknown".
+
+- **Pre-existing test failures on `main`, re-confirmed during the 2026-08-24
+  upstream sync.** Each was reproduced by detaching to `main` in a worktree and
+  running the same file, so none is caused by the rebase:
+  - Three `ActivityPayloadProjection.test.ts` cases — "keeps a bounded Codex
+    command output summary", "keeps bounded Claude and ACP command output
+    summaries", and "normalizes Claude and OpenCode command inputs before
+    slimming provider data" — assert a projected payload under 500 or 200
+    bytes and get roughly 1,130-1,170. The content assertions all pass; the
+    excess is an inlined `output` field capped at `COMMAND_OUTPUT_MAX_BYTES`
+    (1,000). `projectActivityPayload` defaults to
+    `options?.inlineCommandOutput ?? true`, so a direct call with no options
+    inlines, while these tests were written against non-inlining behavior.
+    Suspect "perf(orchestration): load history command output on demand",
+    which introduced the on-demand gate. Either the default or the tests are
+    wrong; deciding which is the actual work.
+  - `ProjectionSnapshotQuery.test.ts` "hydrates read model from projection
+    tables and computes snapshot sequence" — the projected thread carries an
+    extra `scheduledTurn: null` the expectation does not list.
+  - `ProviderRuntimeIngestion.activity.test.ts` "persists tool.updated with the
+    wire projection of data, not the accumulated stream" — 1,202 bytes against
+    a 1,000 cap, same inlining family as the projection cases above.
+  - `AppRoot.test.tsx` "shares the application atom registry with routed UI and
+    renderer-wide desktop hosts".
+
+- **Two upstream tests are environment-sensitive and fail on this machine.**
+  Both arrived new from upstream in the 2026-08-24 sync and neither is a fork
+  regression:
+  - `entrypoint.test.ts` "matches through a symlinked entrypoint, as npm and
+    npx install it" builds its fixture under `os.tmpdir()` without resolving
+    it. On macOS that path is itself a symlink (`/var/...` to
+    `/private/var/...`), so `isEntrypoint` compares a module URL under `/var`
+    against a `realpathSync` result under `/private/var` and returns false.
+    It should pass on Linux CI. Fixing it means realpathing the temp dir in
+    the test, which is an upstream change.
+  - `runtimeAbi.test.ts` fails to load at all: it imports
+    `./vendor/ghostty-vt.wasm?inline` and `./vendor/ghostty-write-pty.wasm?inline`,
+    while `apps/web/vite.config.ts` declares only
+    `assetsInclude: ["**/*.wasm"]`, which does not match the `?inline` query.
+    That config file is byte-identical to upstream's.
+
 ## Next fork-series curation pass
 
 - Move the deletion of `apps/server/src/provider/opencodeRuntime.environment.test.ts`
