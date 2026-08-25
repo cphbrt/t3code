@@ -737,6 +737,15 @@ cleanly` and into `chore(providers): support only Codex and Claude`, where the
   2026-08-17 deliveries, seven were present after the 2026-08-21 OpenCode
   delivery, and the 2026-08-21 preview-focus delivery made eight (~3.4 GB);
   sweep after the next confirmed-good relaunch.)
+- Two verification footguns observed on 2026-08-24 while shipping the barbell
+  hours slider. (1) The in-app preview automation's capture pipeline stalled:
+  `preview_snapshot` and `preview_recording_start` failed or timed out while
+  `preview_click` and `preview_evaluate` on the same session worked, so the
+  break looks specific to screenshot/recording rather than to the preview
+  session itself. (2) Vite dev answers `431 Request Header Fields Too Large`
+  on `localhost` because of cookies accumulated for that host across dev
+  servers, while the same port over `127.0.0.1` serves normally; prefer the
+  loopback IP when a dev origin starts returning 431.
 - The composer model-picker search appears to match display names only:
   during the 2026-08-21 OpenCode verification, searching `gpt-oss` found
   nothing while `lmstudio` surfaced "gpt-oss-20b (local)". Consider matching
