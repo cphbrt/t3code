@@ -407,7 +407,7 @@ export function projectActivityPayload(
   }
 
   const itemStatus = asRecord(data.item)?.status;
-  const projectedPayload =
+  const statusCorrectedPayload =
     payload.status === "completed" && (itemStatus === "failed" || itemStatus === "declined")
       ? { ...payload, status: itemStatus }
       : payload;
@@ -422,7 +422,7 @@ export function projectActivityPayload(
     return {
       ...activity,
       payload: {
-        ...projectedPayload,
+        ...statusCorrectedPayload,
         data: restoreAgentTranscriptData(projectMcpToolCallData(data), data, agentTranscriptRow),
       },
     };

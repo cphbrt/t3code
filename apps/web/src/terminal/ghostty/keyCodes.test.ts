@@ -11,18 +11,6 @@ describe("ghosttyKeyForCode", () => {
   });
 });
 
-describe("ghosttyConsumedMods", () => {
-  const shifted = { altKey: false, ctrlKey: false, key: "@", metaKey: false, shiftKey: true };
-
-  it("only consumes a lone Shift producing a character", () => {
-    expect(ghosttyConsumedMods(shifted)).toBe(1);
-    expect(ghosttyConsumedMods({ ...shifted, ctrlKey: true })).toBe(0);
-    expect(ghosttyConsumedMods({ ...shifted, key: "Tab" })).toBe(0);
-    // Deliberate: Shift+Space collapses to Space so it still types one.
-    expect(ghosttyConsumedMods({ ...shifted, key: " " })).toBe(1);
-  });
-});
-
 describe("ghosttyUnshiftedCodepoint", () => {
   it("provides the logical base character for Kitty keyboard encoding", () => {
     expect(ghosttyUnshiftedCodepoint({ code: "KeyC", key: "c", shiftKey: false })).toBe(

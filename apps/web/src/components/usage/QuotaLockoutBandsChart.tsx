@@ -17,7 +17,7 @@ import {
   type UsageChartBand,
   type UsageChartMetric,
 } from "./UsageProviderChart";
-import { quotaSeriesColor } from "./usageProviders";
+import { PROVIDER_ORDER, quotaSeriesColor } from "./usageProviders";
 
 /**
  * The ordinary spend chart, with the stretches you were locked out shaded in.
@@ -96,6 +96,9 @@ export function QuotaLockoutBandsChart({
   return (
     <div className="flex flex-col gap-2">
       <UsageProviderChart
+        // Upstream parameterised the chart's provider series; this fork's quota
+        // chart kept the full provider order it always rendered inline.
+        providers={PROVIDER_ORDER}
         bands={bands}
         days={days}
         daily={daily}

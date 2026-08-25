@@ -132,6 +132,8 @@ export const layer = Layer.effect(
         const targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
         let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
 
+        // Reports whether it actually deleted, so a failed bootstrap can tell
+        // the client the half-created thread is gone rather than orphaned.
         const cleanupCreatedThread = () =>
           createdThread
             ? serverCommandId("bootstrap-thread-delete").pipe(
@@ -142,9 +144,9 @@ export const layer = Layer.effect(
                     threadId: command.threadId,
                   }),
                 ),
-                Effect.ignoreCause({ log: true }),
+                Effect.as(true),
               )
-            : Effect.void;
+            : Effect.succeed(false);
 
         const recordSetupScriptLaunchFailure = (input: {
           readonly error: ProjectSetupScriptRunner.ProjectSetupScriptRunnerError;
@@ -334,7 +336,27 @@ export const layer = Layer.effect(
             if (Cause.hasInterruptsOnly(cause)) {
               return Effect.fail(dispatchError);
             }
-            return cleanupCreatedThread().pipe(Effect.flatMap(() => Effect.fail(dispatchError)));
+            return Effect.uninterruptible(cleanupCreatedThread()).pipe(
+              Effect.matchCauseEffect({
+                onFailure: (cleanupCause) =>
+                  Effect.logWarning("bootstrap thread cleanup failed", {
+                    threadId: command.threadId,
+                    detail: Cause.pretty(cleanupCause),
+                  }).pipe(Effect.flatMap(() => Effect.fail(dispatchError))),
+                onSuccess: (threadDeleted) =>
+                  Effect.fail(
+                    threadDeleted
+                      ? new OrchestrationDispatchCommandError({
+                          message: dispatchError.message,
+                          ...(dispatchError.cause !== undefined
+                            ? { cause: dispatchError.cause }
+                            : {}),
+                          bootstrapThreadDisposition: "deleted",
+                        })
+                      : dispatchError,
+                  ),
+              }),
+            );
           }),
         );
       });

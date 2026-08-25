@@ -99,6 +99,7 @@ describe("buildTraitsTriggerDisplay", () => {
     expect(display([EFFORT, serviceTierDescriptor("flex")])).toEqual({
       label: "High · Flex",
       showFastModeIcon: false,
+      agentLabel: null,
     });
   });
 
@@ -106,10 +107,12 @@ describe("buildTraitsTriggerDisplay", () => {
     expect(display([serviceTierDescriptor("default")])).toEqual({
       label: "Standard",
       showFastModeIcon: false,
+      agentLabel: null,
     });
     expect(display([serviceTierDescriptor("priority")])).toEqual({
       label: "Fast",
       showFastModeIcon: false,
+      agentLabel: null,
     });
   });
 

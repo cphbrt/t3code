@@ -25,6 +25,14 @@ import {
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { CanonicalItemType, ToolFileChange } from "./providerRuntime.ts";
 
+// `providerRuntime.ts` imports ProviderApprovalOption from this module, so the
+// two form a cycle: whichever module is imported first sees the other's exports
+// still undefined. Suspending defers both references to first use.
+const CanonicalItemTypeRef = Schema.suspend(
+  (): Schema.Codec<CanonicalItemType> => CanonicalItemType,
+);
+const ToolFileChangeRef = Schema.suspend((): Schema.Codec<ToolFileChange> => ToolFileChange);
+
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getWorkflowScript: "orchestration.getWorkflowScript",
@@ -2073,13 +2081,13 @@ export const OrchestrationSubagentTranscriptEntry = Schema.Struct({
   tone: OrchestrationThreadActivityTone,
   kind: TrimmedNonEmptyString,
   summary: TrimmedNonEmptyString,
-  itemType: CanonicalItemType,
+  itemType: CanonicalItemTypeRef,
   status: Schema.optional(Schema.Literals(["inProgress", "completed", "failed", "declined"])),
   /** Assistant text, thinking text, or the user/launch prompt. */
   text: Schema.optional(Schema.String),
   /** `{ toolName, input, result }`, matching the persisted tool activity payload. */
   data: Schema.optional(Schema.Unknown),
-  fileChanges: Schema.optional(Schema.Array(ToolFileChange)),
+  fileChanges: Schema.optional(Schema.Array(ToolFileChangeRef)),
   usage: Schema.optional(OrchestrationSubagentTranscriptUsage),
   model: Schema.optional(TrimmedNonEmptyString),
 });

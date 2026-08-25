@@ -513,9 +513,11 @@ function itemLifecyclePayload(
     lifecycle === "item.started"
       ? ("inProgress" as const)
       : lifecycle === "item.completed"
-        ? "status" in item && (item.status === "failed" || item.status === "declined")
-          ? item.status
-          : ("completed" as const)
+        ? "status" in item && item.status === "failed"
+          ? ("failed" as const)
+          : "status" in item && item.status === "declined"
+            ? ("declined" as const)
+            : ("completed" as const)
         : undefined;
 
   return {

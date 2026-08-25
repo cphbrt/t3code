@@ -16,6 +16,13 @@ import {
 import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 import { ProviderApprovalOption } from "./orchestration.ts";
 
+// `orchestration.ts` imports this module for CanonicalItemType/ToolFileChange, so
+// the two form a cycle and `ProviderApprovalOption` is still undefined while this
+// module evaluates. Suspending defers the reference to first use.
+const ProviderApprovalOptionRef = Schema.suspend(
+  (): Schema.Codec<ProviderApprovalOption> => ProviderApprovalOption,
+);
+
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 
@@ -483,7 +490,7 @@ const RequestOpenedPayload = Schema.Struct({
   requestType: CanonicalRequestType,
   detail: Schema.optional(TrimmedNonEmptyStringSchema),
   appName: Schema.optional(TrimmedNonEmptyStringSchema),
-  options: Schema.optional(Schema.Array(ProviderApprovalOption)),
+  options: Schema.optional(Schema.Array(ProviderApprovalOptionRef)),
   args: Schema.optional(Schema.Unknown),
 });
 export type RequestOpenedPayload = typeof RequestOpenedPayload.Type;

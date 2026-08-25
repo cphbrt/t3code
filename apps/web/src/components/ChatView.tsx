@@ -340,7 +340,6 @@ import {
   hasServerAcknowledgedLocalDispatch,
   isBranchMismatchDismissedForSession,
   shouldDockDraftHeroForSubmission,
-  shouldReleaseTimelineAnchorForToolActivity,
   shouldShowBranchMismatchBanner,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -1247,20 +1246,6 @@ type LocalThreadErrorEntry = {
 
 function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
-}
-
-/**
- * Drops the send-time anchored end space. That space is what holds a sent
- * message near the top while its turn streams, and it keeps LegendList's
- * maintainScrollAtEnd switched off for as long as it is installed — ChatView
- * drives the streaming scrolls itself, but only in "anchoring-new-turn" mode.
- * So every return to the live edge has to release the anchor too, otherwise the
- * timeline settles into "following-end" with nothing following anything.
- */
-function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
-  current: T,
-): T {
-  return current.messageId === null ? current : { ...current, messageId: null };
 }
 
 function ChatViewContent(props: ChatViewProps) {
@@ -7162,6 +7147,7 @@ function ChatViewContent(props: ChatViewProps) {
                 onOpenAgents={addAgentsSurface}
                 key={activeThreadKey ?? activeThread.id}
                 isWorking={isWorking}
+                activeTurnInProgress={isWorking || !latestTurnSettled}
                 workingStepLabel={workingStepLabel}
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
@@ -7390,7 +7376,7 @@ function ChatViewContent(props: ChatViewProps) {
                             onImplementPlanInNewThread={onImplementPlanInNewThread}
                             usageResetScheduleLabel={usageResetSchedule?.label ?? null}
                             onScheduleAfterUsageReset={() =>
-                              void onSend(undefined, undefined, true)
+                              void onSend(undefined, "foreground", undefined, true)
                             }
                             onRespondToApproval={onRespondToApproval}
                             onSelectActivePendingUserInputOption={

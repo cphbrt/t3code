@@ -1056,8 +1056,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "dmg",
         "1.2.3-nightly.20260815.1",
         false,
-        false,
-        undefined,
         undefined,
       );
 
