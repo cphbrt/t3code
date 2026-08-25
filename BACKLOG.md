@@ -734,16 +734,18 @@ cleanly` and into `chore(providers): support only Codex and Claude`, where the
   (~3.3 GB) were swept that night; this one was held back because the
   still-running app's processes hold open file descriptors inside it — the
   install moves the previous bundle aside, so the live app keeps executing
-  from the rollback path until it is relaunched. Delete it once Chris has
-  relaunched.
+  from the moved-aside path until it is relaunched. It is not a rollback
+  copy — installs keep none — just an install leftover. Delete it once Chris
+  has relaunched.
 - There is no scripted build-and-install path, so each delivery reconstructs
   the convention — `pnpm dist:desktop:dmg:arm64`, mount the DMG `-nobrowse`,
   rename `/Applications/CPH Code.app` to a timestamped hidden
   `.rollback-<stamp>`, `ditto` the new bundle in, detach — from these backlog
   notes. Worth a `scripts/install-desktop-local.ts` that does exactly that,
   verifies the artifact rather than trusting the build script's exit code
-  (see the exit-0-on-failure entry above), keeps only the last N rollback
-  bundles, and skips deleting a bundle the running app still has open.
+  (see the exit-0-on-failure entry above), and then deletes the moved-aside
+  bundle in the same run so nothing accumulates — skipping only the deletion,
+  with a printed reminder, while the running app still holds it open.
 - Two verification footguns observed on 2026-08-24 while shipping the barbell
   hours slider. (1) The in-app preview automation's capture pipeline stalled:
   `preview_snapshot` and `preview_recording_start` failed or timed out while

@@ -149,6 +149,8 @@ When a requested change is complete and confidently verified, commit it to `main
 
 When Chris requests a change, "done" typically means shipped: commit, push, build the macOS desktop release, and install it to `/Applications`. Do not quit or restart the running CPH Code app as part of the install; Chris relaunches when he feels like it. Skip the build-and-install step whenever Chris indicates in any way that he wants something short of fully shipped—seeing it in dev, a test pass, a review, an experiment—and just do what was asked.
 
+The install replaces `/Applications/CPH Code.app` outright and keeps no backup bundle: Git history is the rollback, so recovery is reverting the commit and rebuilding rather than restoring a copy. Moving the old bundle aside first is an install mechanic, not an archive—the running app executes out of the old bundle's inodes, so replacing it in place can break the app Chris is still using—and the moved-aside bundle is deleted as part of the same delivery, or as soon as the app it belongs to is no longer running. Never leave one behind to accumulate.
+
 When an upstream T3 Code default conflicts with this smaller scope, prefer the fork's goals unless Chris explicitly asks otherwise.
 
 Clean up your own background tasks when done working.
