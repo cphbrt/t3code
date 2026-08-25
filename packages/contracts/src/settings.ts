@@ -534,9 +534,11 @@ export type ClaudeSettings = typeof ClaudeSettings.Type;
 
 export const CursorSettings = makeProviderSettingsSchema(
   {
-    // Enabled by default alongside Codex and Claude Agent.
+    // Off by default (like Grok and OpenCode): CPH Code does not carry the
+    // Cursor provider, so it is never probed on install. The setting survives
+    // only for persisted-settings compatibility.
     enabled: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("cursor-agent").pipe(
