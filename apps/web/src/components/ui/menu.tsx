@@ -28,7 +28,6 @@ function MenuPopup({
   alignOffset,
   side = "bottom",
   anchor,
-  keepMounted = false,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props["align"];
@@ -36,12 +35,6 @@ function MenuPopup({
   alignOffset?: MenuPrimitive.Positioner.Props["alignOffset"];
   side?: MenuPrimitive.Positioner.Props["side"];
   anchor?: MenuPrimitive.Positioner.Props["anchor"];
-  /**
-   * Keep the portal mounted while the menu is closed, so a surface owned by
-   * menu content (such as a dialog it opens) survives the menu closing.
-   * Defaults to false, matching Base UI, so no other menu changes behaviour.
-   */
-  keepMounted?: boolean;
 }) {
   const hasExplicitWidthClass =
     typeof className === "string" &&
@@ -51,7 +44,7 @@ function MenuPopup({
     });
 
   return (
-    <MenuPrimitive.Portal keepMounted={keepMounted}>
+    <MenuPrimitive.Portal>
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

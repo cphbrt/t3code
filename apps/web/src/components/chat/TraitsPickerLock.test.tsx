@@ -89,6 +89,7 @@ function renderMenuWithEffort(input: {
           onPromptChange={() => {}}
           modelOptions={[{ id: "agent", value: input.selection }]}
           threadHasProviderSession={input.threadHasProviderSession}
+          onBrowseAgentProfiles={() => {}}
           draftId={DraftId.make("draft-1")}
         />
       </div>
@@ -114,6 +115,7 @@ function renderMenu(input: { selection: string; threadHasProviderSession: boolea
           onPromptChange={() => {}}
           modelOptions={modelOptions}
           threadHasProviderSession={input.threadHasProviderSession}
+          onBrowseAgentProfiles={() => {}}
           draftId={DraftId.make("draft-1")}
         />
       </div>

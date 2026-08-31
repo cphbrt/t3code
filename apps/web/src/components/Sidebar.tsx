@@ -53,6 +53,7 @@ import {
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
+  UserRoundCogIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -149,6 +150,7 @@ import {
   resolveAdjacentThreadId,
   resolveSettledTimestamp,
   resolveSidebarRowSection,
+  resolveSidebarThreadAgentProfile,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
   shouldCreateNewThreadInCurrentProject,
@@ -426,6 +428,7 @@ function SidebarThreadTooltip({
   terminalProcessCount: number;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
+  const agentProfile = resolveSidebarThreadAgentProfile(thread);
   const workingDirectoryLabel = formatWorkingDirectoryForDisplay(
     resolveThreadWorkingDirectory({
       worktreePath: thread.worktreePath,
@@ -501,6 +504,21 @@ function SidebarThreadTooltip({
                 {showInstanceBadge && providerEntry
                   ? `${modelLabel} · ${providerEntry.displayName}`
                   : modelLabel}
+              </div>
+            </div>
+          ) : null}
+          {/*
+            Same class of information as the provider/model row above — what
+            this thread is running as — so it sits directly beneath it. Absent
+            entirely without a profile: most threads have none, and a permanent
+            "None" would be noise in a tooltip that is already dense.
+          */}
+          {agentProfile ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <UserRoundCogIcon aria-hidden className="size-3 shrink-0 stroke-muted-foreground" />
+              <div className="min-w-0 truncate text-foreground/75">
+                <span className="sr-only">Agent profile </span>
+                {agentProfile}
               </div>
             </div>
           ) : null}
