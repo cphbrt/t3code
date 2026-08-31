@@ -111,6 +111,7 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderState";
+import { useAgentProfileDialog } from "./TraitsPicker";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { resolveContextWindowModelDisplayName } from "./ContextWindowMeter.logic";
 import { PromptCacheWarmthMeter } from "./PromptCacheWarmthMeter";
@@ -1298,7 +1299,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // genuinely still mutable. Unlike `phase`, this stays true for a stopped or
   // interrupted thread, whose session row remains set.
   const traitsThreadHasProviderSession = activeThread?.session != null;
-  const providerTraitsMenuContent = renderProviderTraitsMenuContent({
+  // The compact menu's traits rows, plus the agent-profile dialog they can
+  // open. The dialog is built here and rendered by the compact menu as a
+  // sibling of its popup, so the menu closing on click cannot unmount it.
+  const compactAgentProfileDialog = useAgentProfileDialog({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
@@ -1309,6 +1313,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     prompt,
     onPromptChange: setPromptFromTraits,
     threadHasProviderSession: traitsThreadHasProviderSession,
+  });
+  const compactTraitsMenuContent = renderProviderTraitsMenuContent({
+    provider: selectedProvider,
+    instanceId: selectedInstanceId,
+    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
+    ...(routeKind === "draft" && draftId ? { draftId } : {}),
+    model: selectedModel,
+    models: selectedProviderModels,
+    modelOptions: composerModelOptions?.[selectedInstanceId],
+    prompt,
+    onPromptChange: setPromptFromTraits,
+    threadHasProviderSession: traitsThreadHasProviderSession,
+    onBrowseAgentProfiles: compactAgentProfileDialog.open,
   });
   const providerTraitsPicker = renderProviderTraitsPicker({
     provider: selectedProvider,
@@ -3447,7 +3464,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                      traitsMenuContent={providerTraitsMenuContent}
+                      traitsMenuContent={compactTraitsMenuContent}
+                      agentProfileDialog={compactAgentProfileDialog.element}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
                     />

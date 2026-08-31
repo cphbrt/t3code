@@ -287,29 +287,31 @@ export interface TraitsMenuContentProps {
    * defaults and have no session at all, keep it editable.
    */
   threadHasProviderSession?: boolean;
+  /**
+   * Open the host's agent-profile dialog. The dialog belongs to the host, not
+   * to this content, because this content renders inside menu popups it does
+   * not own and a closing menu would unmount anything it rendered itself.
+   * Omitted by hosts with no dialog, which simply drop the row.
+   */
+  onBrowseAgentProfiles?: () => void;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
 }
 
-export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
-  provider,
-  instanceId,
-  models,
-  model,
-  prompt,
-  onPromptChange,
-  modelOptions,
-  allowPromptInjectedEffort = true,
-  threadHasProviderSession = false,
-  ...persistence
-}: TraitsMenuContentProps & TraitsPersistence) {
-  // Owned here rather than by TraitsPicker because this content is also
-  // rendered inside CompactComposerControlsMenu's popup, a menu it does not
-  // own. Keeping the dialog with the row that opens it is the only placement
-  // that reaches both surfaces.
-  const [isAgentDialogOpen, setIsAgentDialogOpen] = useState(false);
+/**
+ * Persist a new descriptor selection, through whichever persistence the caller
+ * supplied. Shared by the menu content and by the hosts' agent-profile dialog,
+ * so a profile picked in either surface is written the same way.
+ */
+function useModelOptionsWriter(input: {
+  provider: ProviderDriverKind;
+  instanceId: ProviderInstanceId | undefined;
+  model: string | null | undefined;
+  persistence: TraitsPersistence;
+}) {
+  const { provider, instanceId, model, persistence } = input;
   const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
-  const updateModelOptions = useCallback(
+  return useCallback(
     (nextOptions: ProviderOptions | undefined) => {
       if ("onModelOptionsChange" in persistence) {
         persistence.onModelOptionsChange(nextOptions);
@@ -327,12 +329,103 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     },
     [instanceId, model, persistence, provider, setProviderModelOptions],
   );
+}
+
+/**
+ * Everything a host needs to own the agent-profile dialog itself.
+ *
+ * The dialog is rendered by each menu's host as a sibling of the menu, not by
+ * the menu content, so a closing menu cannot unmount it. That is the pattern
+ * every other menu-opened dialog in the app already uses (see
+ * `GitActionsControl`). The content only reports that its row was clicked.
+ *
+ * Both hosts derive this from the same props they already pass down, so the
+ * dialog always shows the descriptor the menu is showing.
+ */
+export function useAgentProfileDialog(input: TraitsMenuContentProps & TraitsPersistence) {
+  const {
+    provider,
+    instanceId,
+    models,
+    model,
+    prompt,
+    modelOptions,
+    allowPromptInjectedEffort = true,
+    threadHasProviderSession = false,
+    ...persistence
+  } = input;
+  const [isOpen, setIsOpen] = useState(false);
+  const updateModelOptions = useModelOptionsWriter({
+    provider,
+    instanceId,
+    model,
+    persistence: persistence as TraitsPersistence,
+  });
+  const { descriptors, agentDescriptor } = getTraitsSectionVisibility({
+    provider,
+    models,
+    model,
+    prompt,
+    modelOptions,
+    allowPromptInjectedEffort,
+  });
+
+  const open = () => {
+    setIsOpen(true);
+  };
+
+  const element =
+    agentDescriptor === null ? null : (
+      <AgentProfilePickerDialog
+        descriptor={agentDescriptor}
+        selectedValue={getDescriptorStringValue(agentDescriptor) ?? ""}
+        open={isOpen}
+        onOpenChange={setIsOpen}
+        readOnly={isAgentSelectLocked({
+          descriptorId: agentDescriptor.id,
+          threadHasProviderSession,
+        })}
+        onSelect={(value) => {
+          if (isAgentSelectLocked({ descriptorId: agentDescriptor.id, threadHasProviderSession })) {
+            return;
+          }
+          updateModelOptions(
+            buildProviderOptionSelectionsFromDescriptors(
+              replaceDescriptorCurrentValue(descriptors, agentDescriptor.id, value),
+            ),
+          );
+          setIsOpen(false);
+        }}
+      />
+    );
+
+  return { open, element };
+}
+
+export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
+  provider,
+  instanceId,
+  models,
+  model,
+  prompt,
+  onPromptChange,
+  modelOptions,
+  allowPromptInjectedEffort = true,
+  threadHasProviderSession = false,
+  onBrowseAgentProfiles,
+  ...persistence
+}: TraitsMenuContentProps & TraitsPersistence) {
+  const updateModelOptions = useModelOptionsWriter({
+    provider,
+    instanceId,
+    model,
+    persistence: persistence as TraitsPersistence,
+  });
   const {
     descriptors,
     selectDescriptors,
     booleanDescriptors,
     primarySelectDescriptor,
-    agentDescriptor,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
     hasAnyControls,
@@ -408,19 +501,15 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                   profile.
                 </div>
               ) : null}
-              {isAgentDescriptor ? (
+              {isAgentDescriptor && onBrowseAgentProfiles ? (
                 <MenuItem
                   // Above the options, per the design: it is the way to read
                   // what the names below actually mean.
                   //
-                  // The menu closes on click, as a menu should. The dialog
-                  // survives that close because both hosts render their
-                  // MenuPopup with `keepMounted`: this content lives inside
-                  // menu popups it does not own, so without that the closing
-                  // menu would unmount the dialog with it.
-                  onClick={() => {
-                    setIsAgentDialogOpen(true);
-                  }}
+                  // The menu closes on click, as a menu should, and the click
+                  // only flips state the host owns. The host renders the dialog
+                  // outside this menu, so the close cannot take it down.
+                  onClick={onBrowseAgentProfiles}
                 >
                   <span className="flex w-full items-center gap-2">
                     <ListIcon aria-hidden="true" className="size-3.5 opacity-70" />
@@ -511,22 +600,6 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
           </div>
         );
       })}
-      {agentDescriptor ? (
-        <AgentProfilePickerDialog
-          descriptor={agentDescriptor}
-          selectedValue={getDescriptorStringValue(agentDescriptor) ?? ""}
-          open={isAgentDialogOpen}
-          onOpenChange={setIsAgentDialogOpen}
-          readOnly={isAgentSelectLocked({
-            descriptorId: agentDescriptor.id,
-            threadHasProviderSession,
-          })}
-          onSelect={(value) => {
-            handleSelectChange(agentDescriptor, value);
-            setIsAgentDialogOpen(false);
-          }}
-        />
-      ) : null}
     </>
   );
 });
@@ -611,6 +684,20 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  // Owned here and rendered as a sibling of the menu below, so the menu closing
+  // on click cannot unmount it.
+  const agentProfileDialog = useAgentProfileDialog({
+    provider,
+    ...(instanceId ? { instanceId } : {}),
+    models,
+    model,
+    prompt,
+    onPromptChange,
+    modelOptions,
+    allowPromptInjectedEffort,
+    threadHasProviderSession,
+    ...persistence,
+  } as TraitsMenuContentProps & TraitsPersistence);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -678,59 +765,65 @@ export const TraitsPicker = memo(function TraitsPicker({
   const isCodexStyle = provider === "codex";
 
   return (
-    <Menu
-      open={isMenuOpen}
-      onOpenChange={(open) => {
-        setIsMenuOpen(open);
-      }}
-    >
-      <MenuTrigger
-        render={
-          <ComposerControl
-            variant={triggerVariant ?? "ghost"}
-            className={cn(
-              isCodexStyle
-                ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
-                : "shrink-0 whitespace-nowrap",
-              triggerClassName,
-            )}
-          />
-        }
+    <>
+      <Menu
+        open={isMenuOpen}
+        onOpenChange={(open) => {
+          setIsMenuOpen(open);
+        }}
       >
-        {isCodexStyle ? (
-          <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
-            {fastModeIcon}
-            {triggerLabel ? <span className="min-w-0 truncate">{triggerLabel}</span> : null}
-            {agentProfileSegment}
-            <ComposerControlChevron />
-          </span>
-        ) : (
-          <>
-            {fastModeIcon}
-            {triggerLabel ? <span>{triggerLabel}</span> : null}
-            {agentProfileSegment}
-            <ComposerControlChevron />
-          </>
-        )}
-      </MenuTrigger>
+        <MenuTrigger
+          render={
+            <ComposerControl
+              variant={triggerVariant ?? "ghost"}
+              className={cn(
+                isCodexStyle
+                  ? "min-w-0 max-w-40 shrink justify-start overflow-hidden whitespace-nowrap sm:max-w-48"
+                  : "shrink-0 whitespace-nowrap",
+                triggerClassName,
+              )}
+            />
+          }
+        >
+          {isCodexStyle ? (
+            <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
+              {fastModeIcon}
+              {triggerLabel ? <span className="min-w-0 truncate">{triggerLabel}</span> : null}
+              {agentProfileSegment}
+              <ComposerControlChevron />
+            </span>
+          ) : (
+            <>
+              {fastModeIcon}
+              {triggerLabel ? <span>{triggerLabel}</span> : null}
+              {agentProfileSegment}
+              <ComposerControlChevron />
+            </>
+          )}
+        </MenuTrigger>
+        <MenuPopup align="start">
+          <TraitsMenuContent
+            provider={provider}
+            {...(instanceId ? { instanceId } : {})}
+            models={models}
+            model={model}
+            prompt={prompt}
+            onPromptChange={onPromptChange}
+            modelOptions={modelOptions}
+            allowPromptInjectedEffort={allowPromptInjectedEffort}
+            threadHasProviderSession={threadHasProviderSession}
+            onBrowseAgentProfiles={agentProfileDialog.open}
+            {...persistence}
+          />
+        </MenuPopup>
+      </Menu>
+
       {/*
-        keepMounted so the agent-profile dialog this content can open survives
-        the menu closing; without it the dialog unmounts with its host popup.
+        A sibling of the menu, never inside it: the menu unmounts its popup
+        subtree when it closes, and this dialog is opened by a row in that very
+        popup. Same shape as every other menu-opened dialog in the app.
       */}
-      <MenuPopup align="start" keepMounted>
-        <TraitsMenuContent
-          provider={provider}
-          {...(instanceId ? { instanceId } : {})}
-          models={models}
-          model={model}
-          prompt={prompt}
-          onPromptChange={onPromptChange}
-          modelOptions={modelOptions}
-          allowPromptInjectedEffort={allowPromptInjectedEffort}
-          threadHasProviderSession={threadHasProviderSession}
-          {...persistence}
-        />
-      </MenuPopup>
-    </Menu>
+      {agentProfileDialog.element}
+    </>
   );
 });

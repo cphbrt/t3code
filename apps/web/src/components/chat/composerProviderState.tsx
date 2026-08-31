@@ -50,6 +50,12 @@ type TraitsRenderInput = {
    * select, which Claude only reads at session creation.
    */
   threadHasProviderSession?: boolean;
+  /**
+   * Open the host's agent-profile dialog. Forwarded to the menu content, whose
+   * row only flips state the host owns — the dialog itself is rendered by the
+   * host beside its menu.
+   */
+  onBrowseAgentProfiles?: () => void;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -103,6 +109,7 @@ function renderTraitsControl(
     prompt,
     onPromptChange,
     threadHasProviderSession = false,
+    onBrowseAgentProfiles,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
@@ -129,6 +136,7 @@ function renderTraitsControl(
       prompt={prompt}
       onPromptChange={onPromptChange}
       threadHasProviderSession={threadHasProviderSession}
+      {...(onBrowseAgentProfiles ? { onBrowseAgentProfiles } : {})}
     />
   );
 }

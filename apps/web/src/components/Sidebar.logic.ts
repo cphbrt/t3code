@@ -1034,3 +1034,41 @@ export function sortScopedProjectsForSidebar<
       left.id.localeCompare(right.id),
   );
 }
+
+/**
+ * Descriptor id of the Claude agent-profile select, and the sentinel value the
+ * server uses for "no profile". Duplicated from the composer's picker rather
+ * than shared: this reads the persisted selection, which is a different (and
+ * strictly poorer) input than the live descriptor the composer sees.
+ */
+const AGENT_DESCRIPTOR_ID = "agent";
+const AGENT_PROFILE_NONE = "none";
+
+/**
+ * The agent-profile name to name in a sidebar thread tooltip, or null when the
+ * thread is running without one.
+ *
+ * Reads the raw persisted selection instead of the provider's option
+ * descriptors, because the sidebar row deliberately holds no capabilities: the
+ * value on the thread is the whole truth available here, and a profile the
+ * probe never discovered is still a legitimate live selection worth naming.
+ * That means no option label and no descriptor-supplied default, so the "none"
+ * sentinel is matched literally — as are absent, non-string, and empty values,
+ * which all mean the same thing to a reader: show no row at all rather than a
+ * permanent "None" on the overwhelming majority of threads.
+ */
+export function resolveSidebarThreadAgentProfile(
+  thread: Pick<SidebarThreadSummary, "modelSelection">,
+): string | null {
+  const value = thread.modelSelection.options?.find(
+    (option) => option.id === AGENT_DESCRIPTOR_ID,
+  )?.value;
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed === AGENT_PROFILE_NONE) {
+    return null;
+  }
+  return trimmed;
+}
